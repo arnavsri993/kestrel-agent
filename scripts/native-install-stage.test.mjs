@@ -33,6 +33,8 @@ it("rejects a staged bundle whose fingerprint differs from the evidence manifest
   expect(result.status).not.toBe(0);
   expect(result.stderr).toContain("does not match the complete candidate bundle");
   expect(result.stderr).toContain("missing receipt or receipt digest");
+  expect(result.stderr).toContain("native-local-vault: missing");
+  expect(result.stderr).toContain("native-browser-local-vault: missing");
   expect(result.stdout).not.toContain("Native Chromium signing");
   expect(await candidateDigest(staged)).not.toBe("0".repeat(64));
 });

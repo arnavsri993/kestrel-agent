@@ -10,7 +10,7 @@ export const RETIREMENT_GATES = Object.freeze([
   "native-extensions", "native-user-extensions", "native-extension-parity",
   "native-durable-browser-library", "native-download-capture", "native-browser-backend",
   "native-isolated-automation", "native-credential-bootstrap", "packaged-native-arm64",
-  "real-keychain-credential-bootstrap", "isolated-automation-session",
+  "native-local-vault", "native-browser-local-vault", "isolated-automation-session",
   "existing-ui-and-onboarding", "provider-sign-in", "local-models", "agents-and-tools",
   "approvals", "workspace-and-files", "settings", "autofill", "restart-recovery",
   "developer-id-signing-and-notarization", "profile-transfer-and-rollback",
@@ -68,6 +68,36 @@ export async function candidateDigest(candidate) {
   return hash.digest("hex");
 }
 
+// A generic passed wrapper cannot substitute for a production-mode vault
+// canary. This verifies the recorded observations, not their independent truth;
+// release reviewers must inspect the supporting run and its provenance.
+async function validateLocalVaultArtifact(gate, wrapper, wrapperPath, candidateSha256) {
+  const kind = gate === "native-local-vault" ? "native-local-vault-canary" : "native-browser-local-vault-canary";
+  const artifacts = wrapper.artifacts.filter(artifact => artifact?.kind === kind);
+  if (artifacts.length !== 1) throw new Error(`expected exactly one ${kind} artifact`);
+  const artifact = artifacts[0];
+  if (typeof artifact.path !== "string" || !artifact.path || isAbsolute(artifact.path) || !SHA256.test(artifact.sha256 ?? ""))
+    throw new Error("invalid vault canary artifact reference");
+  const base = await realpath(dirname(wrapperPath));
+  const path = resolve(dirname(wrapperPath), artifact.path);
+  if (!isContainedPath(resolve(dirname(wrapperPath)), path)) throw new Error("vault canary artifact escapes receipt directory");
+  const canonical = await realpath(path);
+  if (!isContainedPath(base, canonical)) throw new Error("vault canary artifact escapes through a symlink");
+  const stat = await lstat(path);
+  if (!stat.isFile() || stat.size === 0 || stat.size > MAX_RECEIPT_BYTES) throw new Error("vault canary artifact is invalid");
+  const bytes = await readFile(path);
+  if (digest().update(bytes).digest("hex") !== artifact.sha256) throw new Error("vault canary artifact digest mismatch");
+  const proof = JSON.parse(bytes.toString("utf8"));
+  const required = ["freshGeneratedProfile", "productionProvider", "cleanRestart", "sameProfileRestartReadback", "encryptedDataVerified", "plaintextAbsent", "noMockProvider", "noTestKey", "noKeychainItemAPIs"];
+  const provider = gate === "native-local-vault" ? "secure-enclave-local-vault" : "chromium-local-vault";
+  if (!SHA256.test(candidateSha256 ?? "") || proof?.version !== 1 || proof.kind !== kind || proof.gate !== gate ||
+      proof.result !== "passed" || proof.provider !== provider || proof.candidateSha256 !== candidateSha256 ||
+      proof.candidateSha256After !== candidateSha256 || required.some(key => proof.checks?.[key] !== true))
+    throw new Error("vault canary lacks candidate-bound production restart, encryption, or no-Keychain evidence");
+  if (gate === "native-browser-local-vault" && (proof.checks?.persistentCookieReadback !== true || proof.checks?.encryptedCookieRow !== true))
+    throw new Error("browser vault canary lacks persistent encrypted cookie evidence");
+}
+
 // Evidence manifest v1: { version: 1, candidateSha256, gates: { gateId:
 // { receipt: "relative/path.json", sha256: "..." } } }. Each receipt is a
 // separately produced JSON record { version: 1, gate, candidateSha256,
@@ -109,6 +139,9 @@ export async function validateRetirementEvidence(candidate, manifestPath) {
           typeof receipt.observedAt !== "string" || !Number.isFinite(Date.parse(receipt.observedAt)) ||
           typeof receipt.summary !== "string" || !receipt.summary.trim() || !Array.isArray(receipt.artifacts) || !receipt.artifacts.length) {
         throw new Error("receipt is invalid, unverified, or for a different candidate");
+      }
+      if (gate === "native-local-vault" || gate === "native-browser-local-vault") {
+        await validateLocalVaultArtifact(gate, receipt, path, candidateSha256);
       }
       for (const artifact of receipt.artifacts) {
         if (!artifact || typeof artifact.path !== "string" || !artifact.path || !SHA256.test(artifact.sha256 ?? "")) throw new Error("invalid supporting artifact");

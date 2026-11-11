@@ -54,6 +54,7 @@
 #include "kestrel_extension_workbench.h"
 #include "kestrel_native_credentials.h"
 #include "kestrel_native_core_keychain.h"
+#include "kestrel_browser_local_vault.h"
 #include "kestrel_chrome_window_mac.h"
 #include "kestrel_live_extension_control.h"
 
@@ -1370,8 +1371,13 @@ class KestrelClient : public CefClient,
       const NativeCredentialStorageMode credential_mode =
           real_keychain_enabled ? NativeCredentialStorageMode::Keychain
                                 : NativeCredentialStorageMode::ProfileSealed;
-      if (!credential_store_.Open(isolated_profile_root_, credential_mode,
+      // This legacy workbench's sealed fixture format keeps a local raw key.
+      // Production UI credentials belong to the protected Core store. Never
+      // turn this historical test format into the no-Keychain production path.
+      if (!disposable_test_profile_key_enabled ||
+          !credential_store_.Open(isolated_profile_root_, credential_mode,
                                   &credential_error)) {
+        if (credential_error.empty()) credential_error = "Legacy credential fixtures require an explicitly marked disposable test profile.";
         credential_store_opened_ = false;
         std::cerr << "Kestrel credential bootstrap unavailable: "
                   << credential_error << std::endl;
@@ -6154,6 +6160,14 @@ int main(int argc, char* argv[]) {
       return 1;
     }
   }
+  for (int i = 1; i < argc; ++i) {
+    const std::string option(argv[i]);
+    if (option == "--type" || option.rfind("--type=", 0) == 0 ||
+        option == "--kestrel-real-keychain") {
+      std::cerr << "This browser entrypoint requires local-vault storage and cannot run helper or Keychain modes." << std::endl;
+      return 1;
+    }
+  }
   CefScopedLibraryLoader library_loader;
   if (!library_loader.LoadInMain()) {
     std::cerr << "Kestrel could not load the bundled Chromium framework." << std::endl;
@@ -6199,6 +6213,10 @@ int main(int argc, char* argv[]) {
         has_argument(argc, argv, "--kestrel-real-keychain") ||
         (std::getenv("KESTREL_USE_REAL_KEYCHAIN") != nullptr &&
          std::string(std::getenv("KESTREL_USE_REAL_KEYCHAIN")) == "1");
+    if (real_keychain_enabled) {
+      std::cerr << "Keychain credential storage is disabled; existing credentials were preserved." << std::endl;
+      return 1;
+    }
     if (std::getenv("KESTREL_USE_MOCK_KEYCHAIN") != nullptr &&
         std::string(std::getenv("KESTREL_USE_MOCK_KEYCHAIN")) == "1") {
       real_keychain_enabled = false;
@@ -6420,6 +6438,13 @@ int main(int argc, char* argv[]) {
       return 1;
     }
     isolated_profile_path = resolved_profile;
+    std::string vault_error;
+    if (!ConfigureNativeBrowserLocalVault(isolated_profile_path,
+          disposable_test_profile_key_enabled && durable_profile_enabled,
+          &vault_error)) {
+      std::cerr << vault_error << std::endl;
+      return 1;
+    }
     if (private_chrome_pipe) live_extension_control =
         std::make_shared<KestrelLiveExtensionControl>(private_chrome_pipe, isolated_profile_path, [] {
           if (main_client_owner) main_client_owner->CloseBrowser();

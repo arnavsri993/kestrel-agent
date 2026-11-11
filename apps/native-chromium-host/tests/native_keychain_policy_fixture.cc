@@ -15,38 +15,24 @@ class SwitchSet {
 };
 
 int main() {
-  SwitchSet defaults;
-  defaults.switches.insert("unrelated");
-  const bool default_mock = kestrel::ConfigureKeychainPolicy(defaults);
+  // All combinations cover inherited conflicts and incomplete test markers.
+  for (unsigned bits = 0; bits < 16; ++bits) {
+    SwitchSet command_line;
+    command_line.switches.insert("unrelated");
+    if (bits & 1) command_line.switches.insert("kestrel-test-profile-key");
+    if (bits & 2) command_line.switches.insert("kestrel-durable-profile");
+    if (bits & 4) command_line.switches.insert("use-mock-keychain");
+    if (bits & 8) command_line.switches.insert("kestrel-real-keychain");
+    const bool selected = kestrel::ConfigureKeychainPolicy(command_line);
 #if KESTREL_NATIVE_RELEASE_BUILD
-  if (default_mock || defaults.HasSwitch("use-mock-keychain")) return 1;
+    const bool expected = false;
 #else
-  if (!default_mock || !defaults.HasSwitch("use-mock-keychain")) return 2;
+    const bool expected = (bits & 3) == 3;
 #endif
-  if (!defaults.HasSwitch("unrelated")) return 3;
-
-  SwitchSet explicit_real;
-  explicit_real.switches.insert("kestrel-real-keychain");
-  explicit_real.switches.insert("use-mock-keychain");
-  explicit_real.switches.insert("unrelated");
-  const bool explicit_real_mock =
-      kestrel::ConfigureKeychainPolicy(explicit_real);
-  if (explicit_real_mock || explicit_real.HasSwitch("use-mock-keychain"))
-    return 4;
-  if (!explicit_real.HasSwitch("kestrel-real-keychain") ||
-      !explicit_real.HasSwitch("unrelated"))
-    return 5;
-
-  SwitchSet inherited_mock;
-  inherited_mock.switches.insert("use-mock-keychain");
-  const bool inherited_mock_selected =
-      kestrel::ConfigureKeychainPolicy(inherited_mock);
-#if KESTREL_NATIVE_RELEASE_BUILD
-  if (inherited_mock_selected || inherited_mock.HasSwitch("use-mock-keychain"))
-    return 6;
-#else
-  if (!inherited_mock_selected || !inherited_mock.HasSwitch("use-mock-keychain"))
-    return 7;
-#endif
+    if (selected != expected || command_line.HasSwitch("use-mock-keychain") != expected ||
+        command_line.HasSwitch("kestrel-real-keychain") || !command_line.HasSwitch("unrelated") ||
+        command_line.HasSwitch("kestrel-test-profile-key") != bool(bits & 1) ||
+        command_line.HasSwitch("kestrel-durable-profile") != bool(bits & 2)) return 1;
+  }
   return 0;
 }

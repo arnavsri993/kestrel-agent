@@ -1,3 +1,4 @@
+import { compileNativeLocalVaultCrypto, nativeLocalVaultLinkFlags } from "./build-native-local-vault.mjs";
 import { describe, beforeAll, afterAll, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -11,9 +12,12 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 	beforeAll(() => {
 		const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 		temporary = realpathSync(mkdtempSync(join(tmpdir(), "kestrel-profile-selection-"))); executable = join(temporary, "selection-fixture");
+		const crypto = compileNativeLocalVaultCrypto(join(temporary, "vault.o"));
 		const sdk = execFileSync("/usr/bin/xcrun", ["--show-sdk-path"], { encoding: "utf8", timeout: 5000 }).trim();
 		execFileSync("/usr/bin/xcrun", ["clang++", "-std=c++20", "-fobjc-arc", "-Wall", "-Wextra", "-Werror", "-mmacosx-version-min=13.0", "-isysroot", sdk,
 			"-I", join(repository, "apps/native-chromium-host/src"),
+			crypto, ...nativeLocalVaultLinkFlags(),
+			... ["kestrel_local_vault.mm", "kestrel_local_vault_crypto_process.mm"].map(file => join(repository, "apps/native-chromium-host/src", file)),
 			... ["kestrel_native_core_keychain.mm", "kestrel_native_prepared_profiles.mm", "kestrel_legacy_core_key.cc", "kestrel_legacy_keychain.mm"].map(file => join(repository, "apps/native-chromium-host/src", file)),
 			join(repository, "apps/native-chromium-host/tests/profile_selection_fixture.mm"), "-framework", "Foundation", "-framework", "AppKit", "-framework", "Security", "-framework", "LocalAuthentication", "-o", executable], { timeout: 30000, stdio: "pipe" });
 	// A cold CI SDK/compiler may exceed Vitest's default ten-second hook.

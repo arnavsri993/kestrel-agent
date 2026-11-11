@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
+import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
 
 const app = process.env.KESTREL_NATIVE_TEST_APP
 	? resolve(process.env.KESTREL_NATIVE_TEST_APP)
@@ -14,6 +15,7 @@ const executable = join(app, "Contents", "MacOS", "Kestrel");
 const profile = await mkdtemp(
 	join(tmpdir(), "kestrel-native-isolated-automation-"),
 );
+await markDisposableNativeTestProfile(profile);
 const uploadFixture = join(profile, "smoke-upload.txt");
 await writeFile(uploadFixture, "kestrel-native-upload-smoke\n", "utf8");
 
@@ -90,6 +92,8 @@ const child = spawn(
 		"--kestrel-cache-path",
 		profile,
 		"--kestrel-ephemeral-core",
+		"--kestrel-durable-profile",
+		"--kestrel-test-profile-key",
 		"--kestrel-smoke-isolated-automation",
 		"--kestrel-smoke-isolated-automation-url",
 		pageUrl,

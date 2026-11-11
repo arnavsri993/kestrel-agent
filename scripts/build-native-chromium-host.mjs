@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -9,6 +9,8 @@ import { buildNativeChromiumWrapper } from "./build-native-chromium-wrapper.mjs"
 import { buildNativeChromiumRenderer } from "./build-native-chromium-renderer.mjs";
 import { buildNativeExtensionService } from "./build-native-extension-service.mjs";
 import { buildNativeUi } from "./build-native-ui.mjs";
+import { compileNativeLocalVaultCrypto, nativeLocalVaultLinkFlags } from "./build-native-local-vault.mjs";
+import { validateNativeVaultCefRuntime } from "./native-vault-cef-runtime.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = join(root, ".tmp");
@@ -79,7 +81,7 @@ async function createHelperBundles({ helperExecutable, frameworks }) {
 	}
 }
 
-export async function buildNativeChromiumHost({ output } = {}) {
+export async function buildNativeChromiumHost({ output, vaultCefRuntime } = {}) {
 	if (process.platform !== "darwin" || process.arch !== "arm64")
 		throw new Error("The native Chromium host can only be built on Apple Silicon macOS.");
 	const destination = resolve(
@@ -101,7 +103,24 @@ export async function buildNativeChromiumHost({ output } = {}) {
 	// --output selects the final app only. These imported builders also have
 	// standalone CLIs; pass their own paths so they cannot consume the host's
 	// flag and overwrite one another's runtime and renderer artifacts.
-	const runtime = await prepareNativeChromiumRuntime({ output: join(temporaryRoot, "native-chromium-runtime") });
+	const selectedVaultRuntime = vaultCefRuntime ?? argumentValue("--vault-cef-runtime");
+	if (releaseBuild && !selectedVaultRuntime)
+		throw new Error("A release requires --vault-cef-runtime naming a reviewed local vault-enabled CEF distribution. Stock CEF is for disposable development fixtures only.");
+	let runtime;
+	let vaultRuntimeEvidence;
+	if (selectedVaultRuntime) {
+		const reviewed = await validateNativeVaultCefRuntime({ runtime: selectedVaultRuntime });
+		// The wrapper builder mutates its runtime cache. Preserve the original
+		// reviewed distribution and revalidate this dedicated local staging copy.
+		await mkdir(temporaryRoot, { recursive: true });
+		runtime = await mkdtemp(join(temporaryRoot, "native-vault-cef-runtime-"));
+		run("/usr/bin/ditto", ["--rsrc", "--extattr", "--acl", reviewed.runtime, runtime]);
+		vaultRuntimeEvidence = await validateNativeVaultCefRuntime({ runtime });
+		if (vaultRuntimeEvidence.frameworkSha256 !== reviewed.frameworkSha256)
+			throw new Error("Custom CEF changed while staging. No app was built.");
+	} else {
+		runtime = await prepareNativeChromiumRuntime({ output: join(temporaryRoot, "native-chromium-runtime") });
+	}
 	const wrapper = await buildNativeChromiumWrapper({ runtime });
 	const renderer = await buildNativeChromiumRenderer({ output: join(temporaryRoot, "native-chromium-renderer") });
 	const extensions = await buildNativeExtensionService();
@@ -126,6 +145,13 @@ export async function buildNativeChromiumHost({ output } = {}) {
 		);
 		await copyFile(join(runtime, "LICENSE.txt"), join(paths.resources, "CEF_LICENSE.txt"));
 		await copyFile(join(root, "apps/desktop/build/icon.icns"), join(paths.resources, "AppIcon.icns"));
+		if (vaultRuntimeEvidence) {
+			const { apiVersion, frameworkSha256, cefVersion, chromiumVersion, pins, patches } = vaultRuntimeEvidence;
+			await writeFile(join(paths.resources, "native-vault-engine.json"), JSON.stringify({
+				apiVersion, frameworkSha256, cefVersion, chromiumVersion, pins, patches,
+				sourceProvenance: "builder-attestation-not-independent-proof", runtimeBehaviorVerified: false,
+			}, null, 2) + "\n");
+		}
 		run("/usr/bin/ditto", [
 			"--rsrc",
 			"--extattr",
@@ -217,6 +243,13 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			"-Wl,-dead_strip",
 			"-Wl,-rpath,@executable_path/../Frameworks",
 		];
+		const vaultCrypto = compileNativeLocalVaultCrypto(join(staging, "local-vault-crypto.o"));
+		const vaultLinkFlags = nativeLocalVaultLinkFlags();
+		run(compiler, ["-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-arch", "arm64", "-mmacosx-version-min=13.0", "-isysroot", sdkPath,
+			join(nativeHostRoot, "src", "kestrel_local_vault_crypto_helper.cc"), vaultCrypto,
+			...vaultLinkFlags, "-o", join(paths.app, "Contents/MacOS/Kestrel Vault")]);
+		run("/usr/bin/codesign", ["--force", "--sign", signingIdentity, "--options", "runtime",
+			join(paths.app, "Contents/MacOS/Kestrel Vault")]);
 		run(compiler, [
 			...compileFlags,
 			"-F",
@@ -232,6 +265,10 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			join(nativeHostRoot, "src", "kestrel_live_extension_control.mm"),
 			join(nativeHostRoot, "src", "kestrel_native_credentials.mm"),
 			join(nativeHostRoot, "src", "kestrel_native_core_keychain.mm"),
+			join(nativeHostRoot, "src", "kestrel_local_vault.mm"),
+			join(nativeHostRoot, "src", "kestrel_browser_local_vault.mm"),
+			join(nativeHostRoot, "src", "kestrel_local_vault_crypto_process.mm"),
+			vaultCrypto,
 			join(nativeHostRoot, "src", "kestrel_native_core_key_dispatch.mm"),
 			join(nativeHostRoot, "src", "kestrel_native_profile_transfer.mm"),
 			join(nativeHostRoot, "src", "kestrel_native_prepared_profiles.mm"),
@@ -242,6 +279,7 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			"-o",
 			paths.executable,
 			...linkFlags,
+			...vaultLinkFlags,
 		]);
 		await chmod(paths.executable, 0o755);
 		run(compiler, ["-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-arch", "arm64", "-mmacosx-version-min=13.0", "-isysroot", sdkPath,

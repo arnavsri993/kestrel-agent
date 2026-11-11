@@ -47,6 +47,7 @@
 #include "native_microphone_policy.h"
 #include "native_broker_environment.h"
 #include "kestrel_native_core_keychain.h"
+#include "kestrel_browser_local_vault.h"
 #include "kestrel_native_core_key_dispatch.h"
 #include "kestrel_native_profile_transfer.h"
 
@@ -670,6 +671,18 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     std::cerr << "This native Kestrel profile is already in use or unavailable." << std::endl; return 1;
   }
   struct LockOwner { int fd; ~LockOwner() { close(fd); } } lock_owner{lock_fd};
+  std::string vault_error;
+  const bool browser_test = disposable_test_key &&
+      HasArgument(argc, argv, "--kestrel-test-profile-key") &&
+      HasArgument(argc, argv, "--kestrel-durable-profile");
+  if (!ConfigureNativeBrowserLocalVault(resolved, browser_test, &vault_error)) {
+    std::cerr << vault_error << std::endl;
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = @"Local vault unavailable";
+    alert.informativeText = [NSString stringWithUTF8String:vault_error.c_str()];
+    [alert runModal];
+    return 1;
+  }
   NSDictionary* core_selection = KestrelResolveNativeCoreProfileSelection(profile,&error);
   NSString* core_profile = core_selection[@"profilePath"];
   if (!core_profile) { NSAlert* alert = [[NSAlert alloc] init]; alert.messageText = @"Core profile unavailable"; alert.informativeText = error.localizedDescription ?: @"Existing profiles were preserved."; [alert runModal]; return 1; }

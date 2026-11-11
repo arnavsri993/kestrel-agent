@@ -7,7 +7,117 @@ from a private first-party MV3 extension. The agent companion uses Chromium's
 side panel. There is no AppKit window reparenting, clipped duplicate shell, or
 Electron process in this path.
 
-## Current checkpoint — native portable history and deletion feedback, 2026-11-11
+## Current checkpoint — remove Keychain dependency, 2026-11-11
+
+The user has retired the Keychain route because its repeated permission prompt
+is unreliable. This supersedes the older Keychain acceptance requirements and
+historical commands below. No further real-Keychain probe is authorized by this
+work. The automatic real-Keychain CI job and package commands are removed; both
+old standalone canaries now stop before launching an app. The prior cookie
+readiness experiment is retained privately under `.tmp/retired-*`, not shipped.
+
+Fresh production Core profiles now use a versioned local vault. CryptoKit's
+Secure Enclave P-256 key agreement wraps a random 32-byte master with HKDF-SHA256
+and AES-256-GCM; the file contains only the opaque enclave key representation,
+public derivation material and authenticated ciphertext. Separate HKDF purposes
+derive Core and browser keys. There is no software, plaintext, fixed-password or
+Keychain-item fallback. The authentication context forbids interaction. The
+private 0600 envelope is created exclusively and published without overwriting,
+then reopened and authenticated. Missing, malformed, inaccessible or moved
+vaults fail closed. Creation requires a conservative empty-directory allowlist,
+checked again after crypto, rather than absence of selected database filenames.
+An existing profile without its vault needs an explicit supported migration;
+this change never recreates or rotates that profile's key.
+
+CryptoKit can abort on a deliberately crafted opaque key representation. A
+separately signed `Kestrel Vault` executable contains that parsing behind a
+bounded private socket, empty environment, closed standard streams and a
+10-second deadline. Its abnormal exit is an unlock failure in the parent.
+Secret keys never enter command arguments, environment, JavaScript or logs.
+The checksum detects accidental representation damage; authenticated encryption
+protects the envelope. This is device-bound storage, not a portable backup:
+recovery after losing/replacing this Mac remains unfinished. Swift/Data runtime
+copies and crash-memory erasure are not guaranteed.
+
+The native host no longer calls Keychain password-item APIs for Core or legacy
+credentials. Legacy protected-profile transfer/recovery refuses before a key
+query; it preserves both profiles. Development plaintext-source fixtures remain
+bounded. The legacy workbench's profile-sealed credential format is restricted to
+explicitly marked disposable development profiles and does not prove production
+vault custody. Normal Kestrel UI credentials are
+owned by the encrypted Core path. Existing legacy credentials are not migrated.
+
+Stock downloaded CEF has no supported custom encryption provider. Production
+startup now checks two versioned C exports and stops before Core or Chromium
+startup if they are absent. The exact pinned CEF/Chromium source patches in
+`apps/native-chromium-host/cef-patches` add that API and replace the macOS
+Keychain provider with a browser-only AES-256-GCM provider using a distinct
+`v99` prefix. Missing keys stop initialization before profile access; provider
+errors are temporary, never permission to discard ciphertext. These patches
+are **uncompiled**: actual framework exports, cookies/passwords, restart,
+code-signing and browser encryption remain unverified.
+
+The host builder accepts a future reviewed local distribution through
+`--vault-cef-runtime /absolute/canonical/path`. Its read-only validator checks
+pinned headers, actual arm64 exported symbols, strict local signature, contained
+framework links and a framework-hash-bound build receipt. A receipt is only a
+builder attestation; it does not independently prove source provenance or runtime
+behavior. The builder copies the validated distribution into its own temporary
+wrapper cache and validates the copy, preserving the original. Release builds
+refuse the stock engine. No compatible custom distribution currently exists on
+this Mac; the actual stock binary was rejected without loading it.
+ The stock development
+engine supports mock storage only for explicitly marked temporary fixtures with
+both durable/test-profile switches. The custom engine rejects mock mode and
+requires a fresh production-vault test profile.
+
+Six focused CEF preparation tests pass, including real `git apply --check`
+against 228,724 bytes of SHA256-verified pinned upstream files. Source preparation
+refuses wrong commits, dirty targets, insufficient space or missing toolchain.
+This Mac currently has about 51 GiB free and only Command Line Tools; the
+specified build lane requires 150 GiB and full Xcode/depot_tools. No engine
+build, signing bypass or untrusted prebuilt engine was used.
+
+Hardware crypto and isolation tests pass, including cross-process reopening,
+context mismatch, every-byte single-bit corruption and a crafted representation
+with a recomputed checksum whose helper failure leaves the caller alive. A
+separate **standalone production Core-key fixture** passes through the default
+store and bundled helper across two processes; it refuses pre-existing Core
+data without a vault. Its receipt explicitly reports no candidate binding or
+encrypted-database/browser proof. Neither fixture can satisfy release evidence.
+
+Retirement now requires separate `native-local-vault` and
+`native-browser-local-vault` artifacts bound to the exact candidate, production
+provider, clean restart/readback and encrypted data, with no mock/test key or
+Keychain-item APIs. Browser evidence additionally requires encrypted persistent
+cookie readback. Old system-configured/Keychain receipts cannot satisfy these
+gates. Missing proof blocks both cutover planning and installation staging.
+
+Local validation passes: the full source suite has 3,218 passing tests and three
+explicit skips (including optional network verification), type checking and the
+production-secret scan. The first parallel full-suite attempt hit five timeout
+failures under build contention; all 99 affected-file tests passed on retry and
+the complete suite then passed with two workers. Additional browser-loader and
+custom-runtime fixtures passed after that broad run. These generated framework
+fixtures do not execute Chromium or substitute for actual engine evidence.
+
+The latest stock development candidate is
+`a1487b535943868e7d9c16275778f3576cf742514a5f32d617be988f1cd5dc61`
+at `.tmp/native-local-vault-host/Kestrel.app`. Its actual browser-backend flow
+passes create/context/click/screenshot/tabs, and all 11 history phases pass across
+three starts with matching before/after bundle hashes. History receipt:
+`.tmp/native-history-transfer-1794424001959/receipt.json`; native Save As was
+not exercised. These flows deliberately use marked generated mock-storage
+profiles and do not prove production vault/browser custody. The protected
+reserved native bundle remains byte-identical (`c7015edb...`), and the main
+checkout's unrelated WIP is unchanged.
+
+The canonical `/Applications/Kestrel.app` is unchanged. No installed native
+cutover, user-profile migration, Developer ID signing, notarization or complete
+release is claimed. The older history/Store receipts below describe their own
+candidate, not this new vault candidate.
+
+## Previous checkpoint — native portable history and deletion feedback, 2026-11-11
 
 Native Settings now offers a reviewed history transfer beside bookmarks and Home
 settings. It accepts a bounded native history file or validates a complete
@@ -62,6 +172,34 @@ clear button followed by another restart. The storage failure is an explicit
 in-memory API fault in the owned first-party worker, not a real disk failure.
 Receipt: `.tmp/native-history-transfer-1794415900518/receipt.json`.
 
+The current bundle also passes two real production Core-Keychain starts,
+without test/legacy key files, with encrypted conversation readback and generated
+profile cleanup. Its profile-scoped Keychain item remains; no key value was
+exported. Receipt:
+`.tmp/native-real-keychain-evidence-1794417103954-4666a174-5651-413f-8417-15bb20cd7c9a/receipt.json`.
+This same-build Core result remains separate from Chromium browser Safe Storage.
+
+The same current `986545bc...` bundle now also passes **six genuine Store
+update phases**. Chromium's official callback returned `update_available` for
+uBlock Origin Lite `2026.1110.1816`, replacing the original normal-Store
+`2026.1103.1743` installation. Activation used a clean browser restart. Both
+original generated Core conversations, normal-install provenance, JSON Formatter
+function and extension-owned tab isolation survived activation and another clean
+restart; candidate hashes stayed equal. Evidence is
+`.tmp/native-history-replay-store-recovered-evidence/receipt.json`.
+
+The generated fixture's original temporary folder had disappeared. Its preserved
+test snapshot was revalidated and exclusively recovered at the original canonical
+path: 1,717 entries / 77,639,393 bytes. Original Store receipts, checkpoint and
+backup stayed unchanged, and loader/test-profile guards passed. The recovery
+helper initially invoked the loader with incorrect argument indexing; its failure
+receipt remains preserved alongside the independent successful guard receipt.
+The candidate then exercised the real Core and official Store flow above. This
+is transparent recovery of generated test data, not a supported product browser
+restore or real-profile migration. No extension version or provenance was edited.
+The six-phase continuation is not by itself a complete 16-check Store parity
+manifest or the full retirement manifest.
+
 The separate predecessor `b53e2fb1...` passed all 11 of its then-current phases,
 including the actual Cocoa Save As panel, completed download and original-data
 readback: `.tmp/native-history-transfer-1794414983723/receipt.json`. That receipt
@@ -72,7 +210,7 @@ Its layout follows the existing Settings rows and labels, without a new design
 system or dependencies.
 
 The CI workflow now runs the history canary on a separately copied owned
-candidate and uploads only receipts and screenshots. The final local suite passes **3,211 tests / 343 files**, with the same two
+candidate and uploads only receipts and screenshots. The broad history implementation passes **3,211 tests / 343 files**, with the same two
 ownership-mutation skips, in 109.04 seconds. All workspace type checks, source
 syntax/diff checks, CI YAML parsing, production-secret scanning and dependency
 policy checks pass. Production dependency auditing reports no known
@@ -84,6 +222,35 @@ explicit and expires December 1. Logs are `.tmp/native-history-replay-full-unit.
 was not rerun because its native default build path is the preserved user-used
 bundle; separate candidate builds, focused native workflows and remote CI keep
 that boundary intact. New exact-head CI remains separate.
+Published `4e1e928c` passes Core, packaged Desktop and all four CodeQL
+analyses. Its verified native artifact has eight matching-candidate receipts
+covering 93 passing phases, including the new 11-phase history workflow. The
+separate system-configured cookie job fails at second-start `home-ready` after
+its first encrypted-cookie phase passed. Both app exits are clean. Its coarse
+14.795-second failure does not establish a Keychain fault or a specific target
+lifecycle cause. Evidence is
+`.tmp/ci-4e1e928c-evidence/system-receipt.json`; native receipts are under
+`.tmp/ci-4e1e928c-evidence/native-receipts/`.
+
+The cookie canary now reacquires only its generated profile's exact first-party
+Home URL and confirms the evaluated target remains live. Within its existing
+30-second deadline, it retries only internally classified target/session/context
+disappearance on the relevant read-only protocol operations. Transport errors,
+unknown errors, assertions, cookie creation and all security checks remain fatal
+or unchanged. Diagnostics retain bounded method/code/reason enums and Home
+suboperations, without raw protocol messages, URLs, payloads or child output.
+Twenty focused synthetic cases pass; the historical CI failure's cause remains
+unconfirmed. This follow-up changes the canary, not the app bundle.
+
+A fresh isolated local browser-storage check was justified by the Mac's verified
+November 9 reboot after the earlier November 8 stall. It confirmed system policy,
+no mock switch, exact Home readiness and disabled CLI discovery, then failed at
+`seed:create-tab` with no cookie response and app exit 2. The computer tool timed
+out inspecting the owned window; no protected dialog was operated. Receipt:
+`.tmp/native-real-browser-storage-1794419273841-0b978c02-dc33-4679-87b1-dbc702e9eb64/receipt.json`.
+The generated profile remains private. Local protected browser acceptance stays
+open; no shared Keychain item, ACL, clone or system security service was changed.
+
 Published predecessor `e5826263` passed all three CI jobs and four CodeQL
 analyses. Its verified artifacts contain seven shared-candidate receipts with
 82 phases and, on a separate candidate, two system-configured encrypted-cookie
@@ -94,7 +261,7 @@ acceptance, a Store upgrade, signing continuity or canonical cutover.
 No user profile or canonical app was replaced. The reserved `c7015edb...` bundle
 remains unchanged; its earlier PID is no longer present and was not closed by
 this work. Real browser credential and local Keychain acceptance, real-profile
-activation/rollback, a published Store upgrade, Developer ID signing/notarization
+activation/rollback, consolidated Store parity, Developer ID signing/notarization
 and canonical Electron retirement remain open.
 
 ## Previous checkpoint — browser storage diagnostic and broker isolation, 2026-11-08

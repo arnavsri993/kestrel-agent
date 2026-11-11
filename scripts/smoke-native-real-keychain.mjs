@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+throw new Error("Keychain diagnostics are disabled. Production storage now requires the native local-vault integration; no app was launched.");
 // Explicit, disposable acceptance canary for the production Native Core
 // Keychain path. Never use this against the installed or a user profile.
 import { createHash, randomUUID } from "node:crypto";

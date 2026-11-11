@@ -512,6 +512,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
     if (!envelope) { owner.busy = NO; Alert(@"Profile key unavailable",@"This profile's protected database key could not be read safely. Existing data was preserved."); return; }
     const auto format = InspectLegacyKestrelCoreKey(std::span<const uint8_t>(static_cast<const uint8_t*>(envelope.bytes),static_cast<size_t>(envelope.length)));
     if (format == NativeLegacyCoreKeyFormat::Unsupported) { owner.busy = NO; Alert(@"Unsupported profile",@"This profile uses an unsupported key format. Existing data was preserved."); return; }
+    if (format != NativeLegacyCoreKeyFormat::DevelopmentPlaintext) { owner.busy = NO; Alert(@"Protected profile preserved",@"This profile needs the retired Keychain storage path. Transfer from this format is unavailable until a supported migration is ready. No keys were accessed and all files were preserved."); return; }
     if (owner.testKeys && format != NativeLegacyCoreKeyFormat::DevelopmentPlaintext) { owner.busy = NO; Alert(@"Development fixture required",@"This disposable test session cannot request a real Keychain password. Use a generated development profile."); return; }
     NSAlert* consent = [[NSAlert alloc] init]; consent.messageText = @"Review this Kestrel profile?";
     consent.informativeText = format == NativeLegacyCoreKeyFormat::DevelopmentPlaintext
@@ -522,7 +523,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
     owner.selectedSource = source;
     dispatch_async(owner.queue, ^{ @autoreleasepool {
       std::array<uint8_t,32> key{}; std::string failure; auto reader = CreateNativeLegacyKestrelKeychainReader();
-      const bool unlocked = UnlockLegacyKestrelCoreKey(std::span<const uint8_t>(static_cast<const uint8_t*>(envelope.bytes),static_cast<size_t>(envelope.length)),*reader,NativeLegacyKeychainPromptPolicy::AllowUserPrompt,format == NativeLegacyCoreKeyFormat::DevelopmentPlaintext,&key,&failure);
+      const bool unlocked = UnlockLegacyKestrelCoreKey(std::span<const uint8_t>(static_cast<const uint8_t*>(envelope.bytes),static_cast<size_t>(envelope.length)),*reader,NativeLegacyKeychainPromptPolicy::DoNotPrompt,format == NativeLegacyCoreKeyFormat::DevelopmentPlaintext,&key,&failure);
       NSDictionary* planned = nil;
       if (unlocked && !owner.stopped) {
         NSString* destination_key = [owner destinationKey];
@@ -726,6 +727,9 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   if (!inputWitness || ![RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness] || reviewedFormat == NativeLegacyCoreKeyFormat::Unsupported || (self.testKeys && reviewedFormat != NativeLegacyCoreKeyFormat::DevelopmentPlaintext)) {
     [self finishInterruptedWithTitle:@"Source key unavailable" message:@"The original source key is missing, unsafe or unsupported. All files and existing keys were preserved."]; return;
   }
+  if (reviewedFormat != NativeLegacyCoreKeyFormat::DevelopmentPlaintext) {
+    [self finishInterruptedWithTitle:@"Protected source preserved" message:@"Recovery from the retired Keychain format is unavailable until a supported migration is ready. No keys were accessed and all files were preserved."]; return;
+  }
   NSAlert* review = [[NSAlert alloc] init]; review.messageText = @"Recover this interrupted transfer?";
   review.informativeText = [NSString stringWithFormat:@"Original source:\n%@\n\n%@\n\n%@ Kestrel will authenticate the original and prepared data using their existing keys. A separate choice lets you use the recovered profile after verification. Your current profile stays selected until then.",source,CountSummary(reviewed[@"preview"]),
       reviewedFormat == NativeLegacyCoreKeyFormat::DevelopmentPlaintext ? @"This development source stores its encryption key without protection." : @"Kestrel will unlock the protected keys. macOS may ask for Keychain access."];
@@ -746,7 +750,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
         const auto format = InspectLegacyKestrelCoreKey(bytes);
         if (format == reviewedFormat) {
           auto reader = CreateNativeLegacyKestrelKeychainReader();
-          if (UnlockLegacyKestrelCoreKey(bytes,*reader,NativeLegacyKeychainPromptPolicy::AllowUserPrompt,format == NativeLegacyCoreKeyFormat::DevelopmentPlaintext,&sourceKey,&failure) && [self interruptedRowIsCurrent:row selection:selection]) {
+          if (UnlockLegacyKestrelCoreKey(bytes,*reader,NativeLegacyKeychainPromptPolicy::DoNotPrompt,format == NativeLegacyCoreKeyFormat::DevelopmentPlaintext,&sourceKey,&failure) && [self interruptedRowIsCurrent:row selection:selection]) {
             NativeCoreProfileKeyStore store;
             const bool existing = self.testKeys
                 ? store.GetExistingDisposableTestKey(std::string([row[@"path"] fileSystemRepresentation]),std::string(NSBundle.mainBundle.bundleIdentifier.UTF8String ?: ""),std::string(NSBundle.mainBundle.bundlePath.fileSystemRepresentation ?: ""),&destinationKey,&failure)

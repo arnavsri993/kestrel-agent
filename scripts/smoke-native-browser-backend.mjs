@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
+import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const app = process.env.KESTREL_NATIVE_TEST_APP
@@ -15,6 +16,7 @@ const executable = join(app, "Contents", "MacOS", "Kestrel");
 const profile = await mkdtemp(
 	join(tmpdir(), "kestrel-native-browser-backend-"),
 );
+await markDisposableNativeTestProfile(profile);
 
 let pageHits = 0;
 let actHits = 0;
@@ -63,6 +65,8 @@ const child = spawn(
 		"--kestrel-cache-path",
 		profile,
 		"--kestrel-ephemeral-core",
+		"--kestrel-durable-profile",
+		"--kestrel-test-profile-key",
 		"--kestrel-smoke-browser-backend",
 		"--kestrel-smoke-browser-backend-url",
 		pageUrl,

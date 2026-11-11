@@ -47,6 +47,8 @@ it("does not treat generic synthetic gate attestations as native Store parity", 
 	const plan = await createNativeCutoverPlan(f);
 	expect(plan.preCutover.evidenceComplete).toBe(false);
 	expect(plan.preCutover.evidenceProblems.some(p => p.startsWith("native-extension-parity:"))).toBe(true);
+	expect(plan.preCutover.evidenceProblems.some(p => p.startsWith("native-local-vault:"))).toBe(true);
+	expect(plan.preCutover.evidenceProblems.some(p => p.startsWith("native-browser-local-vault:"))).toBe(true);
 	expect(await readFile(f.manifestPath, "utf8")).toBe(before);
 });
 

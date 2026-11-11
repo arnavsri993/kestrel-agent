@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+throw new Error("Keychain diagnostics are disabled. Production storage now requires the native local-vault integration; no app was launched.");
 // Disposable Chromium cookie persistence canary. Never accepts a profile path.
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";

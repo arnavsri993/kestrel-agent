@@ -22,7 +22,15 @@ async function fixture(t) {
   await writeFile(join(root, "artifact.txt"), artifact);
   const manifest = { version: 1, candidateSha256, gates: {} };
   for (const gate of RETIREMENT_GATES) {
-    const receipt = Buffer.from(JSON.stringify({ version: 1, gate, candidateSha256, result: "passed", observedAt: "2026-10-29T12:00:00Z", summary: "Observed the required workflow", artifacts: [{ path: "artifact.txt", sha256: sha(artifact) }] }));
+    const artifacts = [{ path: "artifact.txt", sha256: sha(artifact) }];
+    if (["native-local-vault", "native-browser-local-vault"].includes(gate)) {
+      // Synthetic unit fixtures exercise the validator only; they are not release evidence.
+      const kind = `${gate}-canary`;
+      const proof = Buffer.from(JSON.stringify({ version: 1, kind, gate, result: "passed", provider: gate === "native-local-vault" ? "secure-enclave-local-vault" : "chromium-local-vault", candidateSha256, candidateSha256After: candidateSha256, checks: { freshGeneratedProfile: true, productionProvider: true, cleanRestart: true, sameProfileRestartReadback: true, encryptedDataVerified: true, plaintextAbsent: true, noMockProvider: true, noTestKey: true, noKeychainItemAPIs: true, persistentCookieReadback: true, encryptedCookieRow: true } }));
+      await writeFile(join(root, `${kind}.json`), proof);
+      artifacts.push({ kind, path: `${kind}.json`, sha256: sha(proof) });
+    }
+    const receipt = Buffer.from(JSON.stringify({ version: 1, gate, candidateSha256, result: "passed", observedAt: "2026-10-29T12:00:00Z", summary: "Observed the required workflow", artifacts }));
     await writeFile(join(root, `${gate}.json`), receipt);
     manifest.gates[gate] = { receipt: `${gate}.json`, sha256: sha(receipt) };
   }
@@ -100,6 +108,39 @@ async function writeDesktopParityArtifact(f, desktop) {
 test("accepts complete candidate-bound receipts with unchanged artifacts", async t => {
   const f = await fixture(t);
   assert.deepEqual((await validateRetirementEvidence(f.candidate, f.manifestPath)).problems, []);
+});
+test("requires both dedicated production vault proofs and rejects incomplete or stale observations", async t => {
+  const f = await fixture(t);
+  for (const gate of ["native-local-vault", "native-browser-local-vault"]) {
+    const path = join(f.root, `${gate}-canary.json`);
+    const original = JSON.parse(await readFile(path));
+    const wrapperPath = join(f.root, `${gate}.json`);
+    const wrapper = JSON.parse(await readFile(wrapperPath));
+    const artifact = wrapper.artifacts.find(a => a.kind === `${gate}-canary`);
+    async function setProof(proof) {
+      const bytes = Buffer.from(JSON.stringify(proof)); await writeFile(path, bytes); artifact.sha256 = sha(bytes);
+      const wrapperBytes = Buffer.from(JSON.stringify(wrapper)); await writeFile(wrapperPath, wrapperBytes);
+      f.manifest.gates[gate].sha256 = sha(wrapperBytes); await f.save();
+    }
+    for (const mutation of [
+      proof => { proof.candidateSha256After = "0".repeat(64); },
+      proof => { proof.checks.noMockProvider = false; },
+      proof => { delete proof.checks.noTestKey; },
+      proof => { proof.checks.noKeychainItemAPIs = false; },
+      proof => { proof.checks.sameProfileRestartReadback = false; },
+      proof => { proof.checks.encryptedDataVerified = false; },
+      proof => { proof.provider = "system-keychain"; },
+      ...(gate === "native-browser-local-vault" ? [proof => { proof.checks.encryptedCookieRow = false; }] : []),
+    ]) {
+      const proof = structuredClone(original); mutation(proof); await setProof(proof);
+      assert((await validateRetirementEvidence(f.candidate, f.manifestPath)).problems.some(p => p.startsWith(`${gate}:`)));
+    }
+    await setProof(original);
+    wrapper.artifacts = wrapper.artifacts.filter(a => a.kind !== `${gate}-canary`);
+    const bytes = Buffer.from(JSON.stringify(wrapper)); await writeFile(wrapperPath, bytes);
+    f.manifest.gates[gate].sha256 = sha(bytes); await f.save();
+    assert((await validateRetirementEvidence(f.candidate, f.manifestPath)).problems.some(p => p.includes(`${gate}: expected exactly one`)));
+  }
 });
 test("rejects missing gates and an incorrect candidate", async t => {
   const f = await fixture(t);

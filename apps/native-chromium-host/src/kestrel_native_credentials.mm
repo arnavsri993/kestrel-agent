@@ -1,5 +1,4 @@
 #import <Foundation/Foundation.h>
-#import <Security/Security.h>
 
 #include "kestrel_native_credentials.h"
 
@@ -19,7 +18,6 @@
 namespace {
 
 constexpr char kSealedPrefix[] = "kestrel-native-cred-v1\n";
-constexpr char kKeychainService[] = "Kestrel Native Safe Storage";
 constexpr size_t kMasterKeyBytes = 32;
 constexpr size_t kIvBytes = kCCBlockSizeAES128;
 
@@ -205,6 +203,10 @@ bool NativeCredentialStore::Open(const std::string& isolated_profile_root,
   ready_ = false;
   master_key_.clear();
   mode_ = mode;
+  if (mode == NativeCredentialStorageMode::Keychain) {
+    if (error) *error = "Keychain credential storage is disabled; existing credentials were preserved.";
+    return false;
+  }
   if (isolated_profile_root.empty() || isolated_profile_root.front() != '/') {
     if (error) *error = "Credential storage requires an absolute isolated profile.";
     return false;
@@ -340,51 +342,13 @@ bool NativeCredentialStore::RemoveSealed(const std::string& credential_id,
   return false;
 }
 
-bool NativeCredentialStore::WriteKeychain(const std::string& credential_id,
-                                          const std::string& value,
+bool NativeCredentialStore::WriteKeychain(const std::string&, const std::string&,
                                           std::string* error) {
-  NSData* data = [NSData dataWithBytes:value.data() length:value.size()];
-  NSDictionary* query = @{
-    (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
-    (__bridge id)kSecAttrService : @(kKeychainService),
-    (__bridge id)kSecAttrAccount : @(credential_id.c_str()),
-  };
-  SecItemDelete((__bridge CFDictionaryRef)query);
-  NSMutableDictionary* add = [query mutableCopy];
-  add[(__bridge id)kSecValueData] = data;
-  add[(__bridge id)kSecAttrAccessible] =
-      (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;
-  const OSStatus status = SecItemAdd((__bridge CFDictionaryRef)add, nullptr);
-  if (status != errSecSuccess) {
-    if (error)
-      *error = "Kestrel could not save the credential in macOS Keychain.";
-    return false;
-  }
-  return true;
-}
-
-bool NativeCredentialStore::RemoveKeychain(const std::string& credential_id,
-                                           std::string* error) {
-  NSDictionary* query = @{
-    (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
-    (__bridge id)kSecAttrService : @(kKeychainService),
-    (__bridge id)kSecAttrAccount : @(credential_id.c_str()),
-  };
-  const OSStatus status = SecItemDelete((__bridge CFDictionaryRef)query);
-  if (status == errSecSuccess || status == errSecItemNotFound) return true;
-  if (error)
-    *error = "Kestrel could not remove the credential from macOS Keychain.";
+  if (error) *error = "Keychain credential storage is disabled.";
   return false;
 }
-
-bool NativeCredentialStore::HasKeychain(const std::string& credential_id) const {
-  NSDictionary* query = @{
-    (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
-    (__bridge id)kSecAttrService : @(kKeychainService),
-    (__bridge id)kSecAttrAccount : @(credential_id.c_str()),
-    (__bridge id)kSecReturnData : @NO,
-  };
-  const OSStatus status =
-      SecItemCopyMatching((__bridge CFDictionaryRef)query, nullptr);
-  return status == errSecSuccess;
+bool NativeCredentialStore::RemoveKeychain(const std::string&, std::string* error) {
+  if (error) *error = "Keychain credential storage is disabled; existing credentials were preserved.";
+  return false;
 }
+bool NativeCredentialStore::HasKeychain(const std::string&) const { return false; }

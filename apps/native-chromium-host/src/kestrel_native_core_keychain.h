@@ -11,8 +11,8 @@ enum class NativeCoreKeychainResult {
   Failure,
 };
 
-// Narrow injectable seam for the macOS Keychain. Tests can provide an
-// in-memory implementation without calling Security.framework.
+// Legacy-named injectable seam retained for in-memory native fixtures.
+// Production uses the device-backed local vault and never this backend.
 class NativeCoreKeychainBackend {
  public:
   virtual ~NativeCoreKeychainBackend() = default;
@@ -28,6 +28,7 @@ class NativeCoreProfileKeyStore {
   explicit NativeCoreProfileKeyStore(
       std::shared_ptr<NativeCoreKeychainBackend> backend = nullptr);
 
+  // Uses a Secure Enclave wrapped local vault by default.
   // Returns the existing profile key or creates one for a genuinely fresh
   // native profile. Legacy file-key profiles require an explicit migration;
   // this service deliberately does not import, rotate, or delete those keys.

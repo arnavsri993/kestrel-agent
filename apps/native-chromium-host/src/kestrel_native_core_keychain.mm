@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
-#import <Security/Security.h>
 
 #include "kestrel_native_core_keychain.h"
+#include "kestrel_local_vault.h"
 
 #include <CommonCrypto/CommonDigest.h>
 #include <CommonCrypto/CommonRandom.h>
@@ -25,58 +25,9 @@ void SecureClear(void* data, size_t length) {
   while (length--) *bytes++ = 0;
 }
 
-constexpr char kCoreKeyService[] = "com.kestrel.native-core.database-key.v1";
 constexpr size_t kCoreKeyBytes = 32;
 constexpr char kBase64Alphabet[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-class SecurityFrameworkKeychain final : public NativeCoreKeychainBackend {
- public:
-  NativeCoreKeychainResult Read(
-      const std::string& account,
-      std::vector<unsigned char>* value) override {
-    if (!value) return NativeCoreKeychainResult::Failure;
-    NSDictionary* query = @{
-      (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
-      (__bridge id)kSecAttrService : @(kCoreKeyService),
-      (__bridge id)kSecAttrAccount : @(account.c_str()),
-      (__bridge id)kSecReturnData : @YES,
-      (__bridge id)kSecMatchLimit : (__bridge id)kSecMatchLimitOne,
-    };
-    CFTypeRef raw = nullptr;
-    const OSStatus status =
-        SecItemCopyMatching((__bridge CFDictionaryRef)query, &raw);
-    if (status == errSecItemNotFound) return NativeCoreKeychainResult::NotFound;
-    if (status != errSecSuccess || !raw) return NativeCoreKeychainResult::Failure;
-    NSData* data = (__bridge_transfer NSData*)raw;
-    if (data.length > 0) {
-      const auto* begin = static_cast<const unsigned char*>(data.bytes);
-      value->assign(begin, begin + data.length);
-    } else {
-      value->clear();
-    }
-    return NativeCoreKeychainResult::Success;
-  }
-
-  NativeCoreKeychainResult Add(
-      const std::string& account,
-      const std::vector<unsigned char>& value) override {
-    NSData* data = [NSData dataWithBytes:value.data() length:value.size()];
-    NSDictionary* item = @{
-      (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
-      (__bridge id)kSecAttrService : @(kCoreKeyService),
-      (__bridge id)kSecAttrAccount : @(account.c_str()),
-      (__bridge id)kSecValueData : data,
-      (__bridge id)kSecAttrAccessible :
-          (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-      (__bridge id)kSecAttrSynchronizable : @NO,
-    };
-    const OSStatus status = SecItemAdd((__bridge CFDictionaryRef)item, nullptr);
-    if (status == errSecSuccess) return NativeCoreKeychainResult::Success;
-    if (status == errSecDuplicateItem) return NativeCoreKeychainResult::Duplicate;
-    return NativeCoreKeychainResult::Failure;
-  }
-};
 
 bool ValidPrivateDirectory(const std::string& path, bool must_exist,
                            bool* exists) {
@@ -286,8 +237,7 @@ bool ProfileAccount(const std::string& input, std::string* canonical,
 
 NativeCoreProfileKeyStore::NativeCoreProfileKeyStore(
     std::shared_ptr<NativeCoreKeychainBackend> backend)
-    : backend_(backend ? std::move(backend)
-                       : std::make_shared<SecurityFrameworkKeychain>()) {}
+    : backend_(std::move(backend)) {}
 
 bool NativeCoreProfileKeyStore::GetOrCreate(
     const std::string& profile_root, std::string* key_base64,
@@ -305,8 +255,8 @@ bool NativeCoreProfileKeyStore::GetProductionKey(
     const std::string& profile_root, bool allow_create,
     std::string* key_base64, std::string* error) {
   if (key_base64) { SecureClear(key_base64->data(), key_base64->size()); key_base64->clear(); }
-  if (!key_base64 || !backend_) {
-    if (error) *error = "Native Core Keychain is unavailable.";
+  if (!key_base64) {
+    if (error) *error = "Native Core profile key is unavailable.";
     return false;
   }
   std::string canonical;
@@ -367,16 +317,26 @@ bool NativeCoreProfileKeyStore::GetProductionKey(
   if (!PathExistsWithoutFollowingLinks(
           canonical + "/.kestrel-native-test-core-key-v1", &test_key_exists) ||
       test_key_exists) {
-    if (error) *error = "Native Core test-key profile cannot be opened by the production Keychain path.";
+    if (error) *error = "Native Core test-key profile cannot be opened by the production local-vault path.";
     return false;
   }
 
   std::vector<unsigned char> key;
+  if (!backend_) {
+    NativeLocalVault vault;
+    if (!vault.GetKey(canonical, "native-core-database/v1",
+                      allow_create && !core_root_exists, &key, error)) return false;
+    *key_base64 = Base64(key);
+    if (!key.empty()) SecureClear(key.data(), key.size());
+    return true;
+  }
+  // This injectable legacy interface is used only by in-memory fixtures. No
+  // production backend performs Keychain item queries or mutations.
   NativeCoreKeychainResult result = backend_->Read(account, &key);
   if (result == NativeCoreKeychainResult::Success) {
     if (key.size() != kCoreKeyBytes) {
       if (!key.empty()) SecureClear(key.data(), key.size());
-      if (error) *error = "Native Core Keychain key is malformed; profile data was preserved.";
+      if (error) *error = "Native Core profile key is malformed; profile data was preserved.";
       return false;
     }
     *key_base64 = Base64(key);
@@ -386,7 +346,7 @@ bool NativeCoreProfileKeyStore::GetProductionKey(
   if (!key.empty()) SecureClear(key.data(), key.size());
   key.clear();
   if (result != NativeCoreKeychainResult::NotFound) {
-    if (error) *error = "Native Core Keychain could not unlock the profile key.";
+    if (error) *error = "Native Core test backend could not unlock the profile key.";
     return false;
   }
 
@@ -411,13 +371,13 @@ bool NativeCoreProfileKeyStore::GetProductionKey(
   if (result != NativeCoreKeychainResult::Success || key.size() != kCoreKeyBytes) {
     if (!key.empty()) SecureClear(key.data(), key.size());
     if (!generated_key.empty()) SecureClear(generated_key.data(), generated_key.size());
-    if (error) *error = "Native Core could not save or verify its Keychain key.";
+    if (error) *error = "Native Core could not save or verify its test backend key.";
     return false;
   }
   if (add_result == NativeCoreKeychainResult::Success && key != generated_key) {
     if (!key.empty()) SecureClear(key.data(), key.size());
     if (!generated_key.empty()) SecureClear(generated_key.data(), generated_key.size());
-    if (error) *error = "Native Core Keychain key did not match the saved key.";
+    if (error) *error = "Native Core profile key did not match the saved key.";
     return false;
   }
   // For a concurrent add, the Keychain item is already the stable profile key.
