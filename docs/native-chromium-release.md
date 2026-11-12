@@ -173,7 +173,8 @@ Retirement now requires separate `native-local-vault` and
 `native-browser-local-vault` artifacts bound to the exact candidate, production
 provider, clean restart/readback and encrypted data, with no mock/test key or
 Keychain-item APIs. Browser evidence additionally requires encrypted persistent
-cookie readback. Old system-configured/Keychain receipts cannot satisfy these
+cookie/password readback, native password autofill and rejection of a cookie
+with a corrupted authentication tag. Old system-configured/Keychain receipts cannot satisfy these
 gates. Missing proof blocks both cutover planning and installation staging.
 
 The production candidate canary is now separate from the disabled Keychain
@@ -193,32 +194,54 @@ code signing and reseals the outer app; the original input framework hash is
 retained separately. A real macOS signing fixture verifies that distinction.
 
 The canary creates an empty private profile without a test key. It writes one
-HttpOnly persistent cookie through a loopback server and one generated Core
-message through the native Home bridge, stops the app cleanly, inspects the
-cookie's custom `v99` encrypted row and Core encrypted fields, and checks that
-neither payload appears in raw database/journal bytes. A second launch must
-return both original payloads with all cookie seeding disabled, preserve the
-same vault envelope, and stop cleanly. With the app stopped, it flips one byte
+HttpOnly persistent cookie through a loopback server, one generated Core
+message through the native Home bridge, and one generated device-store password
+through Chromium's built-in password-manager API. The built-in manager must
+share the native Kestrel window and have no Kestrel renderer bridge. After a
+clean stop, the canary requires custom `v99` encrypted cookie/password rows and
+Core encrypted fields, with all three payloads absent from raw database/journal
+bytes. A second launch must list the original password and fill the exact
+generated username/password in the native form. It first checks whether
+Chromium already filled both exact values on activation; otherwise it clicks
+the username field and uses ArrowDown/Enter for the native suggestion popup
+through its owned browser connection. It never assigns field values, submits
+an already filled form or exports saved plaintext.
+It refuses to attempt filling if the generated profile enables biometric
+authentication before filling, without changing that preference or dismissing
+authentication. Both original cookie/Core payloads must return with all cookie
+seeding disabled, the vault envelope must remain unchanged, and the app must
+stop cleanly. With the app stopped, the canary flips one byte
 in that generated cookie's authentication tag. A third launch must make a fresh
 loopback request without a Cookie header while still decrypting the original
 Core message. The vault envelope must remain unchanged. Chromium may discard
 the corrupt cookie; it must never convert it to plaintext or reseed it.
 The SQLite mutation refuses missing, duplicate, nonfixture or non-`v99` rows
 and changes only that exact row. Browser release evidence now also requires
-`tamperedCookieRejected: true`. It emits separate candidate-bound Core
+`tamperedCookieRejected`, `persistentPasswordReadback`, `encryptedPasswordRow`
+and `nativePasswordAutofill` to be true. It emits separate candidate-bound Core
 and browser artifacts only after these observations and profile cleanup pass.
 Failed generated profiles are retained privately for diagnosis. Protocol
 diagnostics contain only bounded method/code/reason values.
-The bounded SQLite mutation and evidence-refusal checks pass 21 focused tests;
-these tests do not execute the custom engine or prove browser tamper rejection.
+The bounded SQLite mutation and evidence-refusal checks pass locally; these
+tests do not execute the custom engine or prove browser tamper rejection.
+
+The final autofill helper passed five exploratory phases on unchanged stock
+fixture `a1487b535943868e...`: same-window isolated built-in manager, device-store
+write/list, encrypted row/plaintext absence, metadata after clean restart, and
+exact native form autofill. Receipt
+`.tmp/native-password-manager-probe-1794454537270-3c72ab0e-c533-4fbe-a972-b33b5b5385b4/receipt.json`
+records both clean exits and removal of the generated profile. That explicitly
+marked mock-storage fixture used stock `v10` ciphertext; it cannot satisfy the
+production browser-vault gate, which requires `v99` and the custom engine.
 
 This canary has not yet passed against an actual custom Chromium engine. Its
 stock-engine rejection has been verified before native launch. Reviewed source
 and build records are attestations, not independent proof of engine provenance.
 The Keychain-item claim covers the reviewed storage paths and direct native
-host/helper imports, not all macOS certificate operations. Cookie/Core proof
-does not cover website passwords, signing identity, profile migration or the
-canonical installed app, and does not automatically authorize cutover.
+host/helper imports, not all macOS certificate operations. The built-in API seed
+does not test the save-password bubble. This flow does not cover credential
+migration, signing identity, profile recovery or the canonical installed app,
+and does not automatically authorize cutover.
 
 Native build callers share an explicit runtime selection. A function's
 `vaultCefRuntime` option takes priority, then `--vault-cef-runtime`, then
@@ -295,6 +318,18 @@ Eight receipts report 93 passed phases against unchanged candidate
 the reopened Home receipt confirms both its background bridge and visible
 sidebar after selection. These remain generated stock-engine fixture workflows;
 they do not prove custom-engine storage, Store acceptance, signing or cutover.
+
+Head `63e52ffc5d9a3fa563a7ccc30c9204309af4aa2b` subsequently completed
+[CI run 43146080089](https://github.com/arnavsri993/kestrel-agent/actions/runs/43146080089)
+successfully in both jobs. Its downloaded native archive matches SHA256
+`26eebe1c4a5e142066f657defe3e108257994a502ca95327a06622453cc743d8`.
+Eight candidate-bound receipts report 93 passed phases with unchanged bundle
+`21cb822c50f203b76cebe2f336b9509d955f4089c03a31cf0de28ba93f80b0fa`;
+two additional receipts have no candidate binding and are excluded from that
+count. This remains stock-engine fixture evidence. The later password-canary
+and stricter gate changes pass 41 focused tests across six files locally,
+including target/navigation refusals, and reject the stock candidate before
+profile/evidence creation. Their actual custom-engine execution is pending.
 
 Local validation passes: the full source suite has 3,218 passing tests and three
 explicit skips (including optional network verification), type checking and the

@@ -10,11 +10,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { chromium } from "@playwright/test";
 import { candidateDigest } from "./native-retirement-evidence.mjs";
 import { assertNoExactExecutableRunning } from "./native-real-keychain-candidate.mjs";
 import { validateVaultCanaryCandidate } from "./native-vault-canary-candidate.mjs";
 import { browserStorageProtocolError, recordBrowserStorageDiagnostic, waitForBrowserStorageHome } from "./native-browser-storage-readiness.mjs";
 import { corruptGeneratedVaultCookie } from "./native-vault-cookie-fixture.mjs";
+import { autofillGeneratedVaultLogin } from "./native-vault-password-fixture.mjs";
 
 assert.equal(process.platform, "darwin");
 assert.equal(process.arch, "arm64");
@@ -40,12 +42,14 @@ const homeUrl = `chrome-extension://${homeId}/index.html`;
 const cookieName = `kestrel_canary_${randomBytes(12).toString("hex")}`;
 const cookieValue = randomBytes(32).toString("hex");
 const coreValue = `kestrel-vault-message:${randomBytes(32).toString("hex")}`;
+const loginUsername = `kestrel_login_${randomBytes(12).toString("hex")}`;
+const loginPassword = randomBytes(32).toString("base64url");
 const receipt = { version: 1, result: "failed", startedAt: new Date().toISOString(),
  candidate: `.tmp/${buildName}/Kestrel.app`, frameworkSha256, sourceFrameworkSha256: metadata.sourceFrameworkSha256,
  pins: metadata.pins, patches: metadata.patches, sourceProvenance: metadata.sourceProvenance,
  launches: [], stops: [], phases: [], protocolDiagnostics: [],
- scope: "Generated production-vault cookie, encrypted Core message restart and corrupted-cookie rejection only. Keychain-item API claim concerns the reviewed storage providers and the native host/helper imports, not unrelated macOS certificate APIs. Source provenance is a builder attestation. No password-manager, migration, signing identity, installed app or user-profile acceptance." };
-let child, browser, interrupted, stage = "preflight", stopped = true, cleanStop = false, serverListening = false;
+ scope: "Generated production-vault cookie/Core/password persistence, native generated-form autofill and corrupted-cookie rejection. Passwords are added through Chromium's actual built-in device-store API, not a save-password bubble acceptance test. Keychain-item API claim concerns the reviewed storage providers and native host/helper imports, not unrelated macOS certificate APIs. Source provenance is a builder attestation. No migration, signing identity, installed app or user-profile acceptance." };
+let child, browser, diagnosticEndpoint, interrupted, stage = "preflight", stopped = true, cleanStop = false, serverListening = false;
 let seedEnabled = true, seedResponses = 0, checks = 0, sessionId, vaultBytes, cookiePath;
 let tamperResponse;
 function interrupt(signal) {
@@ -73,6 +77,11 @@ const server = createServer((req, res) => {
  }
  if (req.url === "/check" && req.headers.cookie === `${cookieName}=${cookieValue}`) checks++;
  if (req.url === "/tamper-check") tamperResponse = { cookieAbsent: !req.headers.cookie };
+ if (req.url === "/login") {
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end('<!doctype html><title>Generated vault login</title><form method="post" action="/auth"><label>Username <input name="username" autocomplete="username"></label><label>Password <input type="password" name="password" autocomplete="current-password"></label><button>Sign in</button></form>');
+  return;
+ }
  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" }); res.end("generated local vault fixture");
 });
 async function eventually(fn, timeout = 30000) {
@@ -151,6 +160,7 @@ async function start() {
   assert(!output.includes("KESTREL_NATIVE_KEYCHAIN_POLICY selected=mock"), "Mock provider unexpectedly selected.");
   return output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+)/)?.[1];
  }, 60000);
+ diagnosticEndpoint = endpoint;
  browser = await connect(endpoint); setStage("effective-command-line");
  const { arguments: args } = await browser.send("Browser.getBrowserCommandLine");
  assert(Array.isArray(args) && args.includes("--kestrel-durable-profile"));
@@ -172,6 +182,35 @@ async function openTab(home, url) {
  const page = await eventually(async () => (await browser.send("Target.getTargets")).targetInfos.find(t => t.type === "page" && t.url === url));
  assert.deepEqual(await evaluate(page, "({bridge: typeof window.kestrel, nativeQuery: typeof window.__kestrelNativeQuery})"),
   { bridge: "undefined", nativeQuery: "undefined" });
+ return page;
+}
+async function passwordManager(home) {
+ setStage("builtin-password-manager");
+ const { targetId } = await browser.send("Target.createTarget", { url: "chrome://password-manager/passwords", newWindow: false });
+ const page = await eventually(async () => (await browser.send("Target.getTargets")).targetInfos.find(target =>
+  target.type === "page" && target.targetId === targetId && target.url.startsWith("chrome://password-manager/")));
+ const ownWindow = await browser.send("Browser.getWindowForTarget", { targetId: home.targetId });
+ assert.equal((await browser.send("Browser.getWindowForTarget", { targetId })).windowId, ownWindow.windowId, "Built-in manager opened outside the native Kestrel window.");
+ await eventually(async () => await evaluate(page, "typeof chrome.passwordsPrivate?.addPassword==='function' && typeof chrome.passwordsPrivate?.getSavedPasswordList==='function'"));
+ assert.deepEqual(await evaluate(page, "({bridge:typeof window.kestrel,nativeQuery:typeof window.__kestrelNativeQuery})"), { bridge: "undefined", nativeQuery: "undefined" });
+ return page;
+}
+async function listedGeneratedPassword(manager) {
+ await eventually(async () => await evaluate(manager, `chrome.passwordsPrivate.getSavedPasswordList().then(entries=>entries.filter(entry=>entry.username===${JSON.stringify(loginUsername)}).length===1)`));
+}
+async function verifyGeneratedPasswordAutofill(home, url) {
+ setStage("generated-password-autofill-after-restart");
+ const preferences = join(profile, "Default/Preferences"); await regularFile(preferences, 4 * 1024 * 1024);
+ const prefs = JSON.parse(await readFile(preferences, "utf8"));
+ assert(prefs?.password_manager?.biometric_authentication_filling !== true, "Fixture authentication-before-filling is enabled; no fill action attempted.");
+ await openTab(home, url);
+ // Attach after the target exists. CEF may create a target after an earlier
+ // connection's auto-attach snapshot; never reopen the product tab to fix that.
+ const inspection = await chromium.connectOverCDP(diagnosticEndpoint, { noDefaults: true });
+ try {
+  const page = await eventually(() => inspection.contexts().flatMap(context => context.pages()).find(page => page.url() === url));
+  await autofillGeneratedVaultLogin({ page, expectedUrl: url, username: loginUsername, password: loginPassword, checkInterrupt });
+ } finally { await inspection.close(); }
 }
 async function stop() {
  if (browser) { browser.close(); browser = undefined; }
@@ -240,6 +279,15 @@ async function inspectStorage({ corruptedCookie = false } = {}) {
   }
  } finally { cookies.close(); }
  await inspectRawDatabase(cookiePath, cookieValue);
+ const loginPath = join(profile, "Default/Login Data"); await regularFile(loginPath);
+ const logins = new Database(loginPath, { readonly: true, fileMustExist: true });
+ try {
+  const rows = logins.prepare("SELECT password_value FROM logins WHERE username_value = ?").all(loginUsername);
+  assert.equal(rows.length, 1);
+  const value = rows[0].password_value;
+  assert(Buffer.isBuffer(value) && value.length > 3 + 12 + 16 && value.subarray(0, 3).toString("ascii") === "v99", "Password did not use custom-provider ciphertext.");
+ } finally { logins.close(); }
+ await inspectRawDatabase(loginPath, loginPassword);
  const corePath = join(profile, "native-core/database/kestrel.sqlite"); await regularFile(corePath);
  const core = new Database(corePath, { readonly: true, fileMustExist: true });
  try {
@@ -257,7 +305,7 @@ async function writeGate(gate, checks) {
  const bytes = Buffer.from(`${JSON.stringify(proof, null, 2)}\n`), name = `${gate}.json`;
  await writeFile(join(evidence, name), bytes, { mode: 0o600, flag: "wx" });
  const wrapper = { version: 1, gate, result: "passed", candidateSha256: receipt.candidateSha256, observedAt: receipt.finishedAt,
-  summary: gate === "native-local-vault" ? "Production native Core encrypted message decrypted after clean restart." : "Production Chromium v99 persistent cookie returned after clean restart without reseeding, then was rejected after its authentication tag was corrupted.",
+  summary: gate === "native-local-vault" ? "Production native Core encrypted message decrypted after clean restart." : "Production Chromium v99 cookie/password storage survived restart, a generated password autofilled, and a corrupted cookie was rejected without reseeding.",
   artifacts: [{ kind, path: name, sha256: createHash("sha256").update(bytes).digest("hex") }] };
  await writeFile(join(evidence, `${gate}-receipt.json`), `${JSON.stringify(wrapper, null, 2)}\n`, { mode: 0o600, flag: "wx" });
 }
@@ -266,6 +314,10 @@ try {
  await new Promise((ok, fail) => { server.once("error", fail); server.listen(0, "127.0.0.1", () => { serverListening = true; ok(); }); });
  const base = `http://127.0.0.1:${server.address().port}`;
  let home = await start();
+ const manager = await passwordManager(home);
+ setStage("generated-password-device-store-write");
+ await evaluate(manager, `chrome.passwordsPrivate.addPassword(${JSON.stringify({ url: base, username: loginUsername, password: loginPassword, note: "", useAccountStore: false })}).then(()=>true)`);
+ await listedGeneratedPassword(manager); phase("builtin-device-password-created");
  setStage("core-encrypted-write");
  const created = await coreRequest(home, { type: "runtime-create-session", title: "Generated local vault test", kind: "conversation" });
  sessionId = created.session?.id; assert(typeof sessionId === "string" && sessionId);
@@ -275,8 +327,12 @@ try {
  seedEnabled = false; receipt.seedingDisabledBeforeShutdown = true;
  await openTab(home, `${base}/check`); await eventually(() => checks >= 1);
  setStage("first-clean-stop"); await stop();
- setStage("first-storage-inspection"); await inspectStorage(); phase("first-start-core-message-and-v99-cookie");
+ setStage("first-storage-inspection"); await inspectStorage(); phase("first-start-core-message-and-v99-cookie-password");
  home = await start();
+ const reopenedManager = await passwordManager(home);
+ await listedGeneratedPassword(reopenedManager);
+ await verifyGeneratedPasswordAutofill(home, `${base}/login`);
+ phase("native-generated-password-autofilled-after-restart");
  setStage("core-restart-readback");
  assert((await coreRequest(home, { type: "runtime-list-messages", sessionId })).messages?.some(message => message.content === coreValue), "Core message did not decrypt after restart.");
  phase("core-production-restart-readback");
@@ -322,7 +378,8 @@ try {
    const shared = { freshGeneratedProfile: true, productionProvider: true, cleanRestart: true, sameProfileRestartReadback: true,
     encryptedDataVerified: true, plaintextAbsent: true, noMockProvider: true, noTestKey: true, noKeychainItemAPIs: true };
    await writeGate("native-local-vault", shared);
-   await writeGate("native-browser-local-vault", { ...shared, persistentCookieReadback: true, encryptedCookieRow: true, tamperedCookieRejected: true });
+   await writeGate("native-browser-local-vault", { ...shared, persistentCookieReadback: true, encryptedCookieRow: true, tamperedCookieRejected: true,
+    persistentPasswordReadback: true, encryptedPasswordRow: true, nativePasswordAutofill: true });
    checkInterrupt();
   } catch {
    receipt.result = "failed"; receipt.failedStage = "gate-artifact-output"; process.exitCode = 1;
