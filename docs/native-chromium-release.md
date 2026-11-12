@@ -89,8 +89,19 @@ worktrees, active dependencies, photos/videos, profiles, credentials, current
 candidate and the reserved user bundle were preserved. Downloaded official
 Chromium depot_tools is pinned locally to
 `1afcf0756e47f3a6ee82d7736b9fcda2d57b268e`; a shallow checkout of Chromium
-`156.0.8078.80` has started. These are prerequisite and checkout observations,
-not a successful custom-engine build. No signing bypass or untrusted prebuilt
+`156.0.8078.80` has started. Both pinned source trees and their original patch targets subsequently verified,
+dependency sync and setup hooks completed, and the actual full-source preflight
+passed with working Xcode and over 150 GiB free. CEF's 117-patch stage completed
+without failures and GN generated the Release arm64 graph (36,614 targets).
+The first generation attempt needed explicit depot_tools bootstrap; it passed
+after bootstrap without changing the pinned tools revision. Inspection during
+compilation caught Chromium's default always-DCHECK policy, which changes CEF's
+public reference-count layout. Generation now explicitly disables that policy
+to match Kestrel's release wrapper; all three affected object rules were checked
+for `NDEBUG` and the absence of `DCHECK_ALWAYS_ON`. The engine capability export
+also rejects incompatible debug/always-DCHECK builds before vault access.
+Compilation has started with four local jobs. This is not a linked or
+runtime-verified custom engine. No signing bypass or untrusted prebuilt
 engine was used.
 
 Hardware crypto and isolation tests pass, including cross-process reopening,
@@ -135,9 +146,16 @@ gates. Missing proof blocks both cutover planning and installation staging.
 
 Published head `f740ab1955f9049395da041e27f6599b8983b779` completed
 [CI run 43084497483](https://github.com/arnavsri993/kestrel-agent/actions/runs/43084497483)
-with both Core/security/native and desktop/packaged jobs successful. No
-real-Keychain job ran. This remote result applies to that exact head; later
-hardware fixture/preflight follow-ups require their own head validation.
+with both Core/security/native and desktop/packaged jobs successful. The downloaded
+native archive matched its published SHA256; eight same-candidate receipts
+reported 93 passed generated-profile phases. No real-Keychain job ran.
+Follow-up head `ae383cad72f478ea0a83b58fa17c41a3743ac0b5` failed
+[CI run 43093539482](https://github.com/arnavsri993/kestrel-agent/actions/runs/43093539482)
+on artifact uploads: the service returned non-JSON responses after five retries.
+The Core job stopped at its benchmark artifact step, so later Core checks did
+not run; desktop verification reached its final benchmark artifact upload.
+These transport failures are not a passing latest-head CI result or evidence
+about the new engine. Source compilation continues separately.
 
 Local validation passes: the full source suite has 3,218 passing tests and three
 explicit skips (including optional network verification), type checking and the

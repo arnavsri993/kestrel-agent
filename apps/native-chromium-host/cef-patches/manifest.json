@@ -23,7 +23,7 @@
     {
       "repository": "cef",
       "file": "cef-kestrel-vault.patch",
-      "sha256": "619020691d51f83f89128158b8f0c4244f63e2f59b1dd33181f091638c9bb5a2",
+      "sha256": "2759791316808ce6d995421fe57ad31301ca2548e69de8572067fa22e37106c0",
       "targets": [
         "BUILD.gn",
         "cef_paths2.gypi",

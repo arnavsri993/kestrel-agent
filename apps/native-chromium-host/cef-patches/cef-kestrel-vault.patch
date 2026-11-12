@@ -1,9 +1,8 @@
 diff --git a/BUILD.gn b/BUILD.gn
-index dd0a558c063bb0950b762aed242a1a29ecef9749..8ceef4fa20db8648b2c197a4785ca0925ee015a3 100644
+index dd0a558c0..8ceef4fa2 100644
 --- a/BUILD.gn
 +++ b/BUILD.gn
-@@ -1121,7 +1121,10 @@ source_set("libcef_static") {
-       "//chrome/app/chrome_main_mac.mm",
+@@ -1122,5 +1122,8 @@ source_set("libcef_static") {
      ]
 
 -    deps += [ "//components/os_crypt/common:keychain_password_mac" ]
@@ -13,25 +12,22 @@ index dd0a558c063bb0950b762aed242a1a29ecef9749..8ceef4fa20db8648b2c197a4785ca092
 +    ]
    } else {
      sources += [
-       "libcef/browser/chrome/chrome_web_contents_view_delegate_cef.cc",
 diff --git a/cef_paths2.gypi b/cef_paths2.gypi
-index df2727da288e313ae2979164640f2c5d47f73094..fd6d4d1b0696985ce389dae70712a4ca68a73269 100644
+index df2727da2..fd6d4d1b0 100644
 --- a/cef_paths2.gypi
 +++ b/cef_paths2.gypi
-@@ -36,6 +36,7 @@
-       'include/base/internal/cef_thread_checker_impl.h',
+@@ -37,4 +37,5 @@
        'include/cef_api_hash.h',
        'include/cef_base.h',
 +      'include/cef_kestrel_vault.h',
        'include/internal/cef_export.h',
        'include/internal/cef_ptr.h',
-       'include/internal/cef_string_wrappers.h',
 diff --git a/include/cef_kestrel_vault.h b/include/cef_kestrel_vault.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..c8012bdb3241fdff84069ef1840171707f6e7f14
+index 000000000..5e2f7adaf
 --- /dev/null
 +++ b/include/cef_kestrel_vault.h
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,46 @@
 +// Copyright 2026 The Kestrel Authors.
 +// Use of this source code is governed by a BSD-style license.
 +
@@ -54,6 +50,8 @@ index 0000000000000000000000000000000000000000..c8012bdb3241fdff84069ef184017170
 +extern "C" {
 +#endif
 +
++// Returns zero for debug/always-DCHECK engines whose public reference-count
++// object layout is incompatible with Kestrel's release wrapper.
 +CEF_EXPORT unsigned int cef_kestrel_vault_api_version(void);
 +
 +// On the main thread BEFORE the first CefInitialize, supply exactly 32 bytes
@@ -77,19 +75,16 @@ index 0000000000000000000000000000000000000000..c8012bdb3241fdff84069ef184017170
 +#endif
 +#endif  // CEF_INCLUDE_CEF_KESTREL_VAULT_H_
 diff --git a/libcef/browser/context.cc b/libcef/browser/context.cc
-index 53abc8dba78916ee0c46f8eb1bb918ccec45641a..1b1e052774e62b5b40fa7aa018bc138df93a6d05 100644
+index 53abc8dba..51bf1c95e 100644
 --- a/libcef/browser/context.cc
 +++ b/libcef/browser/context.cc
-@@ -5,6 +5,7 @@
- #include "cef/libcef/browser/context.h"
+@@ -6,4 +6,5 @@
 
  #include <memory>
 +#include <string_view>
 
  #include "base/files/file_util.h"
- #include "base/functional/bind.h"
-@@ -22,6 +23,13 @@
- #include "components/network_session_configurator/common/network_switches.h"
+@@ -23,4 +24,11 @@
  #include "ui/base/ui_base_switches.h"
 
 +#if BUILDFLAG(IS_MAC)
@@ -101,14 +96,18 @@ index 53abc8dba78916ee0c46f8eb1bb918ccec45641a..1b1e052774e62b5b40fa7aa018bc138d
 +
  #if BUILDFLAG(IS_WIN)
  #include "base/strings/utf_string_conversions.h"
- #include "cef/include/internal/cef_win.h"
-@@ -204,6 +212,31 @@ int CefExecuteProcess(const CefMainArgs& args,
-                                            windows_sandbox_info);
+@@ -205,4 +213,35 @@ int CefExecuteProcess(const CefMainArgs& args,
  }
 
 +#if BUILDFLAG(IS_MAC)
 +extern "C" CEF_EXPORT unsigned int cef_kestrel_vault_api_version(void) {
++  // Kestrel and its CEF wrapper use the release RefCountedBase layout. Refuse
++  // incompatible engine builds before the host opens a profile or sends a key.
++#if defined(NDEBUG) && !defined(DCHECK_ALWAYS_ON)
 +  return CEF_KESTREL_VAULT_API_VERSION;
++#else
++  return 0;
++#endif
 +}
 +
 +extern "C" CEF_EXPORT int cef_kestrel_vault_configure(uint8_t* browser_key,
@@ -133,9 +132,7 @@ index 53abc8dba78916ee0c46f8eb1bb918ccec45641a..1b1e052774e62b5b40fa7aa018bc138d
 +
  bool CefInitialize(const CefMainArgs& args,
                     const CefSettings& settings,
-                    CefRefPtr<CefApp> application,
-@@ -223,5 +256,21 @@ bool CefInitialize(const CefMainArgs& args,
-     return false;
+@@ -224,4 +263,20 @@ bool CefInitialize(const CefMainArgs& args,
    }
 
 +#if BUILDFLAG(IS_MAC)

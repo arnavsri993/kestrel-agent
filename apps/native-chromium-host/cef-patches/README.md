@@ -27,6 +27,14 @@ changes to generated CEF structures, the stock API hash, or C++ wrapper layout.
 Compilation, exported-symbol inspection and an actual C/C++ consumer link remain
 required before this extension's ABI can be called build-supported.
 
+The capability function returns zero for debug or always-DCHECK framework builds
+whose public reference-count object layout differs from the release host and
+wrapper. Use explicit `dcheck_always_on=false` with `is_debug=false`; Chromium
+currently enables always-DCHECK in non-official builds unless overridden. The
+host rejects a zero capability version before vault access. This guard does not
+replace the required actual framework/consumer startup test.
+
+
 On the browser main thread, unlock the host vault and derive a distinct 32-byte
 browser key using the host's versioned HKDF context. Copy it into a separate,
 writable 32-byte buffer and call configure once before `CefInitialize`. The
