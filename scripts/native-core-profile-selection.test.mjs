@@ -20,9 +20,10 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 			... ["kestrel_local_vault.mm", "kestrel_local_vault_crypto_process.mm"].map(file => join(repository, "apps/native-chromium-host/src", file)),
 			... ["kestrel_native_core_keychain.mm", "kestrel_native_prepared_profiles.mm", "kestrel_legacy_core_key.cc", "kestrel_legacy_keychain.mm"].map(file => join(repository, "apps/native-chromium-host/src", file)),
 			join(repository, "apps/native-chromium-host/tests/profile_selection_fixture.mm"), "-framework", "Foundation", "-framework", "AppKit", "-framework", "Security", "-framework", "LocalAuthentication", "-o", executable], { timeout: 30000, stdio: "pipe" });
-	// A cold CI SDK/compiler may exceed Vitest's default ten-second hook.
-	// Keep the hook outside the bounded SDK and compiler subprocess budgets.
-	}, 40000);
+	// Allow the complete bounded cold build: Swift (60s), target info (10s),
+	// SDK lookup (5s), and C++/link (30s), plus fixture setup. Individual
+	// subprocess deadlines still fail a hung compiler before this hook expires.
+	}, 120000);
 	afterAll(() => { if (temporary) rmSync(temporary, { recursive: true, force: true }); });
 	function profile() {
 		const root = join(temporary, randomUUID()); mkdirSync(root, { mode: 0o700 });

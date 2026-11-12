@@ -100,9 +100,14 @@ public reference-count layout. Generation now explicitly disables that policy
 to match Kestrel's release wrapper; all three affected object rules were checked
 for `NDEBUG` and the absence of `DCHECK_ALWAYS_ON`. The engine capability export
 also rejects incompatible debug/always-DCHECK builds before vault access.
-Compilation has started with four local jobs. This is not a linked or
-runtime-verified custom engine. No signing bypass or untrusted prebuilt
-engine was used.
+Compilation with four local jobs completed more than 7,000 actions before a
+missing Apple Metal compiler component stopped an ANGLE shader prerequisite.
+Xcode's first-launch setup must complete before installing its official Metal
+toolchain. The preparation preflight now executes `xcrun metal --version`;
+`xcrun --find metal` alone locates a stub even when the component is missing.
+The completed objects remain available for an incremental resume. This is not
+a linked or runtime-verified custom engine. No signing bypass or untrusted
+prebuilt engine was used.
 
 Hardware crypto and isolation tests pass, including cross-process reopening,
 context mismatch, every-byte single-bit corruption and a crafted representation
@@ -144,6 +149,41 @@ Keychain-item APIs. Browser evidence additionally requires encrypted persistent
 cookie readback. Old system-configured/Keychain receipts cannot satisfy these
 gates. Missing proof blocks both cutover planning and installation staging.
 
+The production candidate canary is now separate from the disabled Keychain
+diagnostic:
+
+```bash
+KESTREL_TEST_NATIVE_LOCAL_VAULT=1 \
+KESTREL_NATIVE_TEST_APP=/absolute/canonical/path/to/.tmp/candidate/Kestrel.app \
+  node scripts/smoke-native-browser-local-vault.mjs
+```
+
+It requires a vault-enabled development bundle before creating any profile or
+launching an app. It checks the actual exports, current patch/source pins,
+signed framework hash, bundle signature and absence of password-item imports
+in the native host/helper. Packaging records the framework hash after nested
+code signing and reseals the outer app; the original input framework hash is
+retained separately. A real macOS signing fixture verifies that distinction.
+
+The canary creates an empty private profile without a test key. It writes one
+HttpOnly persistent cookie through a loopback server and one generated Core
+message through the native Home bridge, stops the app cleanly, inspects the
+cookie's custom `v99` encrypted row and Core encrypted fields, and checks that
+neither payload appears in raw database/journal bytes. A second launch must
+return both original payloads with all cookie seeding disabled, preserve the
+same vault envelope, and stop cleanly. It emits separate candidate-bound Core
+and browser artifacts only after these observations and profile cleanup pass.
+Failed generated profiles are retained privately for diagnosis. Protocol
+diagnostics contain only bounded method/code/reason values.
+
+This canary has not yet passed against an actual custom Chromium engine. Its
+stock-engine rejection has been verified before native launch. Reviewed source
+and build records are attestations, not independent proof of engine provenance.
+The Keychain-item claim covers the reviewed storage paths and direct native
+host/helper imports, not all macOS certificate operations. Cookie/Core proof
+does not cover website passwords, signing identity, profile migration or the
+canonical installed app, and does not automatically authorize cutover.
+
 Published head `f740ab1955f9049395da041e27f6599b8983b779` completed
 [CI run 43084497483](https://github.com/arnavsri993/kestrel-agent/actions/runs/43084497483)
 with both Core/security/native and desktop/packaged jobs successful. The downloaded
@@ -156,6 +196,15 @@ The Core job stopped at its benchmark artifact step, so later Core checks did
 not run; desktop verification reached its final benchmark artifact upload.
 These transport failures are not a passing latest-head CI result or evidence
 about the new engine. Source compilation continues separately.
+
+Head `f29a7d7a3e8a5027a29a89f8b72af9d94502f536` completed
+[CI run 43124538558](https://github.com/arnavsri993/kestrel-agent/actions/runs/43124538558)
+with desktop/packaged verification successful. Core unit tests hit the profile
+selection fixture's 40-second setup limit: adding Swift compilation had made
+the sum of its existing bounded subprocess budgets 105 seconds. The fixture's
+outer hook now allows 120 seconds while preserving all individual deadlines;
+all 49 profile-selection tests pass locally. The failed CI run skipped later
+Core checks and remains a failed run until a newer head passes them.
 
 Local validation passes: the full source suite has 3,218 passing tests and three
 explicit skips (including optional network verification), type checking and the

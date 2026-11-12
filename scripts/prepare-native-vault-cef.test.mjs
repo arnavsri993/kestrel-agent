@@ -12,7 +12,7 @@ import {
 const supported = {
   platform: 'darwin', architecture: 'arm64', freeBytes: 150 * 1024 ** 3,
   fullXcode: true, macosSdk: '/Applications/Xcode.app/Contents/Developer/SDKs/MacOSX.sdk',
-  tools: ['git', 'python3', 'gclient', 'gn', 'autoninja', 'clang'],
+  tools: ['git', 'python3', 'gclient', 'gn', 'autoninja', 'clang', 'metal'],
 };
 
 test('stock/incomplete/incompatible CEF cannot authorize profile access', () => {
@@ -31,6 +31,7 @@ test('preflight rejects insufficient disk and incomplete build tools', () => {
   assert.throws(() => validateBuildEnvironment({ ...supported, freeBytes: supported.freeBytes - 1 }), /150 GiB/);
   assert.throws(() => validateBuildEnvironment({ ...supported, fullXcode: false }), /Full Xcode/);
   assert.throws(() => validateBuildEnvironment({ ...supported, tools: ['git'] }), /Missing custom CEF toolchain/);
+  assert.throws(() => validateBuildEnvironment({ ...supported, tools: supported.tools.filter(tool => tool !== 'metal') }), /working Apple Metal toolchain/);
   assert.throws(() => validateBuildEnvironment({ ...supported, architecture: 'x64' }), /macOS arm64/);
 });
 

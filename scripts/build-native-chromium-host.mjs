@@ -11,6 +11,7 @@ import { buildNativeExtensionService } from "./build-native-extension-service.mj
 import { buildNativeUi } from "./build-native-ui.mjs";
 import { compileNativeLocalVaultCrypto, nativeLocalVaultLinkFlags } from "./build-native-local-vault.mjs";
 import { validateNativeVaultCefRuntime } from "./native-vault-cef-runtime.mjs";
+import { sealPackagedVaultRecord } from "./native-vault-bundle-record.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = join(root, ".tmp");
@@ -323,6 +324,12 @@ export async function buildNativeChromiumHost({ output, vaultCefRuntime } = {}) 
 			entitlements,
 			paths.app,
 		]);
+		if (vaultRuntimeEvidence) {
+			const record = JSON.parse(await readFile(join(paths.resources, "native-vault-engine.json"), "utf8"));
+			await sealPackagedVaultRecord({ app: paths.app, record, signOuter: () => run("/usr/bin/codesign", [
+				"--force", "--sign", signingIdentity, "--options", "runtime", "--entitlements", entitlements, paths.app,
+			]) });
+		}
 		run("/usr/bin/codesign", ["--verify", "--deep", "--strict", paths.app]);
 		run("/usr/bin/lipo", [paths.executable, "-verify_arch", "arm64"]);
 		run("/usr/bin/lipo", [helperExecutable, "-verify_arch", "arm64"]);

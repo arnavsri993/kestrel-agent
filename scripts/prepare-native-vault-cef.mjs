@@ -51,6 +51,7 @@ export function validateBuildEnvironment({ platform, architecture, freeBytes,
   if (!fullXcode || !macosSdk) throw new Error('Full Xcode and a macOS SDK are required; Command Line Tools alone are insufficient.');
   const missing = ['git', 'python3', 'gclient', 'gn', 'autoninja', 'clang'].filter((tool) => !tools.includes(tool));
   if (missing.length) throw new Error(`Missing custom CEF toolchain: ${missing.join(', ')}. No source files were changed.`);
+  if (!tools.includes('metal')) throw new Error('A working Apple Metal toolchain is required. Complete Xcode first-launch setup, then run xcodebuild -downloadComponent MetalToolchain with the same DEVELOPER_DIR. No source files were changed.');
 }
 
 function inspectBuildEnvironment(sourceRoot) {
@@ -76,6 +77,12 @@ function inspectBuildEnvironment(sourceRoot) {
     macosSdk = run('/usr/bin/xcrun', ['--sdk', 'macosx', '--show-sdk-path']);
     toolPaths.clang = run('/usr/bin/xcrun', ['--find', 'clang']);
   } catch { /* validation reports an actionable failure */ }
+  try {
+    // Recent Xcode releases ship a metal stub. --find succeeds even when the
+    // separately installed compiler is missing; execute it before long builds.
+    run('/usr/bin/xcrun', ['metal', '--version']);
+    toolPaths.metal = run('/usr/bin/xcrun', ['--find', 'metal']);
+  } catch { /* validation reports the missing component without installing it */ }
   const environment = { platform: process.platform, architecture: process.arch,
     freeBytes, fullXcode, macosSdk, tools: Object.keys(toolPaths) };
   validateBuildEnvironment(environment);

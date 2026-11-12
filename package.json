@@ -81,6 +81,7 @@
 		"test:native-profile-transfer-ui": "node scripts/smoke-native-profile-transfer-ui.mjs",
 		"test:native-store-update-resume": "node scripts/resume-native-store-update.mjs",
     "test:native-local-vault": "node scripts/smoke-native-local-vault.mjs",
+    "test:native-browser-local-vault": "node scripts/smoke-native-browser-local-vault.mjs",
     "test:native-local-vault:crypto": "bash scripts/test-kestrel-local-vault-crypto.sh",
     "prepare:native-vault-cef": "node scripts/prepare-native-vault-cef.mjs",
     "test:native-history-transfer": "node scripts/smoke-native-history-transfer.mjs",
