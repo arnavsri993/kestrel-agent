@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmod, link, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { chmod, link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'vitest';
@@ -15,6 +16,14 @@ afterEach(async () => { await Promise.all(fixtures.splice(0).map((root) => rm(ro
 const frameworkRelative = 'Release/Chromium Embedded Framework.framework';
 const fakeEngine = Buffer.from('not an executable: injected read-only probe fixture\n');
 const engineHash = createHash('sha256').update(fakeEngine).digest('hex');
+const dylibMetadata = `fixture:\nLoad command 0
+          cmd LC_ID_DYLIB
+      cmdsize 112
+         name @executable_path/../Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework (offset 24)
+   time stamp 0 Thu Jan  1 00:00:00 1970
+      current version 1560.0.15
+compatibility version 1560.0.15
+`;
 const versionHeader = `#define CEF_VERSION "${manifest.pins.cef.version}"
 #define CEF_COMMIT_HASH "${manifest.pins.cef.commit}"
 #define CHROME_VERSION_MAJOR 156
@@ -42,9 +51,13 @@ async function fixture({ versioned = false } = {}) {
   if (versioned) binary = path.join(runtime, frameworkRelative, 'Versions/A/Chromium Embedded Framework');
   await mkdir(path.dirname(binary), { recursive: true });
   await writeFile(binary, fakeEngine, { mode: 0o755 });
+  const resources = path.join(path.dirname(binary), 'Resources');
+  await mkdir(resources);
+  await writeFile(path.join(resources, 'Info.plist'), '<plist><dict/></plist>', { mode: 0o644 });
   if (versioned) {
     await symlink('A', path.join(runtime, frameworkRelative, 'Versions/Current'));
     await symlink('Versions/Current/Chromium Embedded Framework', path.join(runtime, VAULT_CEF_FRAMEWORK_RELATIVE_PATH));
+    await symlink('Versions/Current/Resources', path.join(runtime, frameworkRelative, 'Resources'));
   }
   const receipt = {
     schemaVersion: 1, kind: 'kestrel-vault-cef-build', apiVersion: 1,
@@ -61,6 +74,8 @@ async function fixture({ versioned = false } = {}) {
     calls.push({ command, args });
     if (command === '/usr/bin/lipo') return 'arm64\n';
     if (command === '/usr/bin/nm') return '0000000000001000 T _cef_kestrel_vault_api_version\n0000000000002000 T _cef_kestrel_vault_configure\n';
+    if (command === '/usr/libexec/PlistBuddy') return args[1] === 'Print :CFBundleShortVersionString' ? '156.0.15.0\n' : '15.0\n';
+    if (command === '/usr/bin/otool') return dylibMetadata;
     if (command === '/usr/bin/codesign') return '';
     throw new Error(`Unexpected probe ${command}`);
   };
@@ -76,8 +91,29 @@ test('validates a pinned fixture without treating builder attestation as runtime
   assert.equal(result.sourceProvenance, 'builder-attestation-not-independent-proof');
   assert.equal(result.runtimeBehaviorVerified, false);
   assert.equal(result.releaseSigningVerified, false);
-  assert.deepEqual(item.calls.map(({ command }) => command), ['/usr/bin/lipo', '/usr/bin/nm', '/usr/bin/codesign']);
-  assert.deepEqual(item.calls[2].args.slice(0, 3), ['--verify', '--deep', '--strict']);
+  assert.equal(result.frameworkVersionMetadataVerified, true);
+  assert.deepEqual(item.calls.map(({ command }) => command), ['/usr/bin/lipo', '/usr/bin/nm', '/usr/libexec/PlistBuddy', '/usr/libexec/PlistBuddy', '/usr/bin/otool', '/usr/bin/codesign']);
+  assert.deepEqual(item.calls.at(-1).args.slice(0, 3), ['--verify', '--deep', '--strict']);
+});
+
+test('rejects stale framework metadata even when the header and receipt match the pin', async () => {
+  const item = await fixture();
+  for (const key of ['CFBundleShortVersionString', 'CFBundleVersion']) {
+    await assert.rejects(item.validate({ probe: (command, args) => command.endsWith('/PlistBuddy') && args[1] === `Print :${key}`
+      ? '0.0.0\n' : item.probe(command, args) }), new RegExp(`${key} mismatch`));
+  }
+  for (const field of ['current version', 'compatibility version']) {
+    await assert.rejects(item.validate({ probe: (command, args) => command.endsWith('/otool')
+      ? dylibMetadata.replace(`${field} 1560.0.15`, `${field} 1560.0.0`) : item.probe(command, args) }), new RegExp(`Mach-O ${field} mismatch`));
+  }
+  assert(!item.calls.some(({ command }) => command.endsWith('/codesign')), 'Stale metadata reached final signature acceptance.');
+});
+
+test('refuses missing, duplicate or ambiguous Mach-O dylib identities', async () => {
+  const item = await fixture();
+  for (const output of ['', `${dylibMetadata}\n${dylibMetadata}`, dylibMetadata.replace('current version 1560.0.15', 'current version 1560.0.15\ncurrent version 1560.0.15')]) {
+    await assert.rejects(item.validate({ probe: (command, args) => command.endsWith('/otool') ? output : item.probe(command, args) }), /dylib identity|version mismatch/);
+  }
 });
 
 test('accepts normal contained relative versioned framework symlinks', async () => {
@@ -85,6 +121,42 @@ test('accepts normal contained relative versioned framework symlinks', async () 
   const result = await item.validate();
   assert.equal(result.frameworkBinary, item.binary);
 });
+
+test.skipIf(process.platform !== 'darwin')('checks actual signed Mach-O/plist metadata without loading the generated fixture', async () => {
+  const item = await fixture({ versioned: true });
+  // This deliberately inert library is not CEF and cannot initialize Kestrel.
+  // It tests the real macOS probe formats only; no runtime/release proof.
+  const source = path.join(item.runtime, 'inert-fixture.c');
+  await writeFile(source, 'unsigned int cef_kestrel_vault_api_version(void) { return 0; }\nint cef_kestrel_vault_configure(unsigned char *key, unsigned long length) { return 0; }\n');
+  const plist = path.join(path.dirname(item.binary), 'Resources/Info.plist');
+  await writeFile(plist, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.kestrel.inert-metadata-fixture</string>
+<key>CFBundleExecutable</key><string>Chromium Embedded Framework</string>
+<key>CFBundlePackageType</key><string>FMWK</string>
+<key>CFBundleShortVersionString</key><string>156.0.15.0</string>
+<key>CFBundleVersion</key><string>15.0</string>
+</dict></plist>`);
+  const run = (command, args) => {
+    const result = spawnSync(command, args, { encoding: 'utf8', timeout: 15000, maxBuffer: 1024 * 1024 });
+    assert.equal(result.status, 0, result.error?.message || result.stderr);
+  };
+  const compile = async version => {
+    run('/usr/bin/xcrun', ['clang', '-arch', 'arm64', '-dynamiclib', '-mmacosx-version-min=13.0',
+      '-current_version', version, '-compatibility_version', version,
+      '-Wl,-install_name,@rpath/Chromium Embedded Framework.framework/Chromium Embedded Framework', source, '-o', item.binary]);
+    run('/usr/bin/codesign', ['--force', '--sign', '-', '--timestamp=none', path.join(item.runtime, frameworkRelative)]);
+    item.receipt.framework.sha256 = createHash('sha256').update(await readFile(item.binary)).digest('hex');
+    await writeFile(item.receiptPath, JSON.stringify(item.receipt));
+  };
+  await compile('1560.0.15');
+  const result = await item.validate({ probe: undefined });
+  assert.equal(result.frameworkVersionMetadataVerified, true);
+  assert.equal(result.runtimeBehaviorVerified, false);
+  await compile('1560.0.0');
+  await assert.rejects(item.validate({ probe: undefined }), /Mach-O current version mismatch/);
+}, 60000);
 
 test('requires an explicit canonical absolute root', async () => {
   const item = await fixture();

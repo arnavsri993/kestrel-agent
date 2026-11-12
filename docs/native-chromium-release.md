@@ -61,8 +61,9 @@ remain unverified.
 
 The host builder accepts a future reviewed local distribution through
 `--vault-cef-runtime /absolute/canonical/path`. Its read-only validator checks
-pinned headers, actual arm64 exported symbols, strict local signature, contained
-framework links and a framework-hash-bound build receipt. A receipt is only a
+pinned headers, the framework's own plist/Mach-O version metadata, actual arm64
+exported symbols, strict local signature, contained framework links and a
+framework-hash-bound build receipt. A receipt is only a
 builder attestation; it does not independently prove source provenance or runtime
 behavior. The builder copies the validated distribution into its own temporary
 wrapper cache and validates the copy, preserving the original. Release builds
@@ -125,6 +126,26 @@ resumed with completed objects retained. Source preparation now refuses missing
 history/reference inputs and checks the actual CEF formatter result before
 patching. No generated version was manually relabeled, and the runtime validator
 still requires the exact original version/commit pins.
+
+A subsequent audit found that the cached GN linker/plist inputs still carried
+the old zero patch even after the generated header was corrected. Only the
+owned Ninja group was deliberately interrupted, then upstream GN regenerated
+the existing Release graph. Both linker versions now read `1560.0.15`, and the
+framework/helper plist actions use `156.0.15.0`. Source HEADs, `args.gn` hash,
+release-wrapper ABI settings and the corrected header were verified unchanged;
+the same eight-job incremental build resumed with completed objects retained.
+Private receipt: `.tmp/native-vault-engine/gn-metadata-version-review.json`.
+
+The local-runtime validator now rejects a framework whose bounded, contained
+Info.plist or single Mach-O dylib identity differs from CEF's pinned macOS
+versions, even if its headers and source-build attestation match. All 12 runtime
+validation tests pass; combined source/runtime/selection/candidate/staging
+coverage passes 48 checks with one optional network skip. One test compiles an inert arm64 library on this Mac,
+signs the generated framework ad hoc, checks real PlistBuddy/otool/signature
+output, then recompiles it with the old binary version and observes refusal.
+That library cannot initialize Kestrel and is removed after the test. It is
+parser/probe evidence, not a CEF build, production provider or release-signing
+proof.
 
 Hardware crypto and isolation tests pass, including cross-process reopening,
 context mismatch, every-byte single-bit corruption and a crafted representation

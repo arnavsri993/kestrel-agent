@@ -98,6 +98,34 @@ function validateVersionHeader(source) {
   return { cefVersion: version, chromiumVersion };
 }
 
+async function validateFrameworkVersionMetadata(runtime, frameworkBinary, probe) {
+  // These values come from CEF's get_plist_version_string and
+  // get_dylib_version_string, not Chromium's four-part product version.
+  const match = manifest.pins.cef.version.match(/^(\d+)\.(\d+)\.(\d+)\+/);
+  if (!match) throw new Error('Invalid pinned CEF version for macOS metadata.');
+  const [, major, minor, patchText] = match;
+  const patch = Number(patchText);
+  const expectedDylib = `${major}${minor}.${Math.floor(patch / 255)}.${patch % 255}`;
+  const expectedPlist = `${major}.${minor}.${patch}.0`;
+  const relative = `Release/${frameworkDirectoryName}/Resources/Info.plist`;
+  await boundedText(runtime, relative);
+  const plist = await checkedPath(runtime, relative, { file: true });
+  for (const [key, expected] of [['CFBundleShortVersionString', expectedPlist], ['CFBundleVersion', `${patch}.0`]]) {
+    const actual = (await probe('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, plist])).trim();
+    if (actual !== expected) throw new Error(`Custom CEF framework ${key} mismatch: require ${expected}. Regenerate GN metadata; a matching header alone is insufficient.`);
+  }
+  const output = await probe('/usr/bin/otool', ['-l', frameworkBinary]);
+  const identifiers = output.split(/^Load command \d+\s*$/m)
+    .filter((block) => /^\s*cmd LC_ID_DYLIB\s*$/m.test(block));
+  if (identifiers.length !== 1) throw new Error('Custom CEF framework requires exactly one Mach-O dylib identity.');
+  for (const field of ['current version', 'compatibility version']) {
+    const values = [...identifiers[0].matchAll(new RegExp(`^\\s*${field} (\\d+\\.\\d+\\.\\d+)\\s*$`, 'gm'))];
+    if (values.length !== 1 || values[0][1] !== expectedDylib) {
+      throw new Error(`Custom CEF framework Mach-O ${field} mismatch: require ${expectedDylib}. Regenerate GN metadata before linking.`);
+    }
+  }
+}
+
 function validateProvenance(receipt, description) {
   if (!receipt || receipt.schemaVersion !== 1 || receipt.apiVersion !== manifest.apiVersion) {
     throw new Error(`Invalid custom CEF ${description} schema/API version.`);
@@ -206,6 +234,7 @@ export async function validateNativeVaultCefRuntime({ runtime, probe = defaultPr
   const exportedFunctions = new Set([...symbols.matchAll(/^\s*[a-fA-F0-9]+\s+T\s+(\S+)\s*$/gm)].map((match) => match[1]));
   const missing = VAULT_CEF_REQUIRED_EXPORTS.filter((symbol) => !exportedFunctions.has(symbol));
   if (missing.length) throw new Error(`Unsupported stock/incompatible CEF framework: missing actual exported functions ${missing.join(', ')}. No engine was loaded or executed.`);
+  await validateFrameworkVersionMetadata(runtime, frameworkBinary, probe);
   const extensionHeader = await boundedText(runtime, 'include/cef_kestrel_vault.h');
   const apiDefines = [...extensionHeader.matchAll(/^\s*#define\s+CEF_KESTREL_VAULT_API_VERSION\s+(\S+)\s*$/gm)];
   if (apiDefines.length !== 1 || !/^1u?$/.test(apiDefines[0][1])) {
@@ -235,7 +264,7 @@ export async function validateNativeVaultCefRuntime({ runtime, probe = defaultPr
   }
   return { runtime, framework, frameworkBinary, frameworkSha256: fingerprint.sha256,
     ...version, apiVersion: manifest.apiVersion, architecture: 'arm64',
-    requiredExportsVerified: true, localCodeSignatureVerified: true,
+    requiredExportsVerified: true, frameworkVersionMetadataVerified: true, localCodeSignatureVerified: true,
     releaseSigningVerified: false, sourceProvenance: 'builder-attestation-not-independent-proof',
     runtimeBehaviorVerified: false, buildReceipt: VAULT_CEF_BUILD_RECEIPT_NAME,
     pins: manifest.pins, patches: manifest.patches.map(({ file, sha256 }) => ({ file, sha256 })) };
