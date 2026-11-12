@@ -33,8 +33,9 @@ const expectedChromium=CEF_VERSION.split('+chromium-')[1];
 const evidence=resolve(process.env.KESTREL_NATIVE_DESKTOP_EVIDENCE||(retainUpdateProfile?`.tmp/chromium-store-update-evidence-${Date.now()}`:'.tmp/chromium-desktop-evidence'));
 await mkdir(evidence,{recursive:true,mode:0o700});
 if(retainUpdateProfile)assert.equal((await readdir(evidence)).length,0,'Store-update preparation requires a new empty evidence directory; preserve the previous checkpoint and receipt.');
-const profile=await mkdtemp(join(tmpdir(),'kestrel-chromium-desktop-canary-'));
-await prepareNativeBrowserFixtureProfile({profile,storage:fixtureStorage});
+const profile=await prepareNativeBrowserFixtureProfile({
+ profile:await mkdtemp(join(tmpdir(),'kestrel-chromium-desktop-canary-')),storage:fixtureStorage,
+});
 const downloadPath=join(profile,'test-downloads');
 if(fixtureStorage.mode==='test-key'){
  await mkdir(downloadPath,{mode:0o700});await mkdir(join(profile,'Default'),{mode:0o700});
