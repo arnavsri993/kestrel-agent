@@ -199,6 +199,33 @@ host/helper imports, not all macOS certificate operations. Cookie/Core proof
 does not cover website passwords, signing identity, profile migration or the
 canonical installed app, and does not automatically authorize cutover.
 
+Native build callers share an explicit runtime selection. A function's
+`vaultCefRuntime` option takes priority, then `--vault-cef-runtime`, then
+`KESTREL_NATIVE_VAULT_CEF_RUNTIME`. The environment setting also reaches the
+development/package/install wrappers that launch their builders in a child
+process; the desktop install wrapper also forwards a CLI engine choice to its
+package subprocess. A present command-line option with an empty or missing
+value, or a duplicate option, is rejected;
+an explicitly empty environment value also fails instead of selecting stock
+CEF. The selected distribution still has to pass the same read-only runtime
+validation before building or preparing caches. For example, once a real
+reviewed distribution exists:
+
+```bash
+KESTREL_NATIVE_VAULT_CEF_RUNTIME=/absolute/canonical/cef-distribution \
+  node scripts/build-native-chromium-host.mjs --output .tmp/vault-candidate
+```
+
+The setting supplies an engine; it does not provide signing credentials,
+acceptance evidence or permission to replace the canonical app. Existing
+packaging, install and cutover gates continue to apply. Unknown desktop runtime
+names are rejected before packaging instead of falling through to Electron.
+All 44 focused selector, installer-routing, runtime-validation, candidate and
+code-signing tests pass locally. An actual host-builder invocation with a
+missing environment-selected distribution is rejected before creating its
+output directory. Positive custom-engine packaging remains dependent on the
+framework build finishing.
+
 Published head `f740ab1955f9049395da041e27f6599b8983b779` completed
 [CI run 43084497483](https://github.com/arnavsri993/kestrel-agent/actions/runs/43084497483)
 with both Core/security/native and desktop/packaged jobs successful. The downloaded
@@ -236,6 +263,17 @@ including background bridge readiness and a visible reopened Home sidebar.
 Receipt `.tmp/native-settings-hidden-home-final/receipt.json` binds the run to
 unchanged stock fixture candidate `a1487b535943868e...`. Its generated mock
 storage profile was removed; this is separate from production-vault evidence.
+
+Head `74fdd1740267baefe23574327060c195c2edd30d` completed
+[CI run 43130619117](https://github.com/arnavsri993/kestrel-agent/actions/runs/43130619117)
+successfully in both jobs, including reopened Home, native/history/large-file
+checks and all downstream Core/desktop gates. The native archive matches
+SHA256 `afd486b6102c59aeedb1ec27ef0a2f5fca2c5cd2e791343d723c452ad34af2d6`.
+Eight receipts report 93 passed phases against unchanged candidate
+`544c1e79bdc9bf684631cfd81cf95d3f95c621005da3c1ac7a29beaf7df9fbee`;
+the reopened Home receipt confirms both its background bridge and visible
+sidebar after selection. These remain generated stock-engine fixture workflows;
+they do not prove custom-engine storage, Store acceptance, signing or cutover.
 
 Local validation passes: the full source suite has 3,218 passing tests and three
 explicit skips (including optional network verification), type checking and the

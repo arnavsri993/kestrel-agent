@@ -12,6 +12,7 @@ import { buildNativeUi } from "./build-native-ui.mjs";
 import { compileNativeLocalVaultCrypto, nativeLocalVaultLinkFlags } from "./build-native-local-vault.mjs";
 import { validateNativeVaultCefRuntime } from "./native-vault-cef-runtime.mjs";
 import { sealPackagedVaultRecord } from "./native-vault-bundle-record.mjs";
+import { selectNativeVaultRuntime } from "./native-vault-runtime-selection.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = join(root, ".tmp");
@@ -104,7 +105,7 @@ export async function buildNativeChromiumHost({ output, vaultCefRuntime } = {}) 
 	// --output selects the final app only. These imported builders also have
 	// standalone CLIs; pass their own paths so they cannot consume the host's
 	// flag and overwrite one another's runtime and renderer artifacts.
-	const selectedVaultRuntime = vaultCefRuntime ?? argumentValue("--vault-cef-runtime");
+	const selectedVaultRuntime = selectNativeVaultRuntime({ explicit: vaultCefRuntime });
 	if (releaseBuild && !selectedVaultRuntime)
 		throw new Error("A release requires --vault-cef-runtime naming a reviewed local vault-enabled CEF distribution. Stock CEF is for disposable development fixtures only.");
 	let runtime;
