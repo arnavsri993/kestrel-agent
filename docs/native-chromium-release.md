@@ -186,10 +186,19 @@ message through the native Home bridge, stops the app cleanly, inspects the
 cookie's custom `v99` encrypted row and Core encrypted fields, and checks that
 neither payload appears in raw database/journal bytes. A second launch must
 return both original payloads with all cookie seeding disabled, preserve the
-same vault envelope, and stop cleanly. It emits separate candidate-bound Core
+same vault envelope, and stop cleanly. With the app stopped, it flips one byte
+in that generated cookie's authentication tag. A third launch must make a fresh
+loopback request without a Cookie header while still decrypting the original
+Core message. The vault envelope must remain unchanged. Chromium may discard
+the corrupt cookie; it must never convert it to plaintext or reseed it.
+The SQLite mutation refuses missing, duplicate, nonfixture or non-`v99` rows
+and changes only that exact row. Browser release evidence now also requires
+`tamperedCookieRejected: true`. It emits separate candidate-bound Core
 and browser artifacts only after these observations and profile cleanup pass.
 Failed generated profiles are retained privately for diagnosis. Protocol
 diagnostics contain only bounded method/code/reason values.
+The bounded SQLite mutation and evidence-refusal checks pass 21 focused tests;
+these tests do not execute the custom engine or prove browser tamper rejection.
 
 This canary has not yet passed against an actual custom Chromium engine. Its
 stock-engine rejection has been verified before native launch. Reviewed source

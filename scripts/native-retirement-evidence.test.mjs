@@ -26,7 +26,7 @@ async function fixture(t) {
     if (["native-local-vault", "native-browser-local-vault"].includes(gate)) {
       // Synthetic unit fixtures exercise the validator only; they are not release evidence.
       const kind = `${gate}-canary`;
-      const proof = Buffer.from(JSON.stringify({ version: 1, kind, gate, result: "passed", provider: gate === "native-local-vault" ? "secure-enclave-local-vault" : "chromium-local-vault", candidateSha256, candidateSha256After: candidateSha256, checks: { freshGeneratedProfile: true, productionProvider: true, cleanRestart: true, sameProfileRestartReadback: true, encryptedDataVerified: true, plaintextAbsent: true, noMockProvider: true, noTestKey: true, noKeychainItemAPIs: true, persistentCookieReadback: true, encryptedCookieRow: true } }));
+      const proof = Buffer.from(JSON.stringify({ version: 1, kind, gate, result: "passed", provider: gate === "native-local-vault" ? "secure-enclave-local-vault" : "chromium-local-vault", candidateSha256, candidateSha256After: candidateSha256, checks: { freshGeneratedProfile: true, productionProvider: true, cleanRestart: true, sameProfileRestartReadback: true, encryptedDataVerified: true, plaintextAbsent: true, noMockProvider: true, noTestKey: true, noKeychainItemAPIs: true, persistentCookieReadback: true, encryptedCookieRow: true, tamperedCookieRejected: true } }));
       await writeFile(join(root, `${kind}.json`), proof);
       artifacts.push({ kind, path: `${kind}.json`, sha256: sha(proof) });
     }
@@ -130,7 +130,7 @@ test("requires both dedicated production vault proofs and rejects incomplete or 
       proof => { proof.checks.sameProfileRestartReadback = false; },
       proof => { proof.checks.encryptedDataVerified = false; },
       proof => { proof.provider = "system-keychain"; },
-      ...(gate === "native-browser-local-vault" ? [proof => { proof.checks.encryptedCookieRow = false; }] : []),
+      ...(gate === "native-browser-local-vault" ? [proof => { proof.checks.encryptedCookieRow = false; }, proof => { delete proof.checks.tamperedCookieRejected; }, proof => { proof.checks.tamperedCookieRejected = false; }] : []),
     ]) {
       const proof = structuredClone(original); mutation(proof); await setProof(proof);
       assert((await validateRetirementEvidence(f.candidate, f.manifestPath)).problems.some(p => p.startsWith(`${gate}:`)));

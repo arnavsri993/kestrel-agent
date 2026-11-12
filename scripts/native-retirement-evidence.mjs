@@ -94,8 +94,8 @@ async function validateLocalVaultArtifact(gate, wrapper, wrapperPath, candidateS
       proof.result !== "passed" || proof.provider !== provider || proof.candidateSha256 !== candidateSha256 ||
       proof.candidateSha256After !== candidateSha256 || required.some(key => proof.checks?.[key] !== true))
     throw new Error("vault canary lacks candidate-bound production restart, encryption, or no-Keychain evidence");
-  if (gate === "native-browser-local-vault" && (proof.checks?.persistentCookieReadback !== true || proof.checks?.encryptedCookieRow !== true))
-    throw new Error("browser vault canary lacks persistent encrypted cookie evidence");
+  if (gate === "native-browser-local-vault" && (proof.checks?.persistentCookieReadback !== true || proof.checks?.encryptedCookieRow !== true || proof.checks?.tamperedCookieRejected !== true))
+    throw new Error("browser vault canary lacks persistent encrypted cookie or authentication rejection evidence");
 }
 
 // Evidence manifest v1: { version: 1, candidateSha256, gates: { gateId:

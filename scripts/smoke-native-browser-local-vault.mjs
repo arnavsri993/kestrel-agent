@@ -14,6 +14,7 @@ import { candidateDigest } from "./native-retirement-evidence.mjs";
 import { assertNoExactExecutableRunning } from "./native-real-keychain-candidate.mjs";
 import { validateVaultCanaryCandidate } from "./native-vault-canary-candidate.mjs";
 import { browserStorageProtocolError, recordBrowserStorageDiagnostic, waitForBrowserStorageHome } from "./native-browser-storage-readiness.mjs";
+import { corruptGeneratedVaultCookie } from "./native-vault-cookie-fixture.mjs";
 
 assert.equal(process.platform, "darwin");
 assert.equal(process.arch, "arm64");
@@ -43,9 +44,10 @@ const receipt = { version: 1, result: "failed", startedAt: new Date().toISOStrin
  candidate: `.tmp/${buildName}/Kestrel.app`, frameworkSha256, sourceFrameworkSha256: metadata.sourceFrameworkSha256,
  pins: metadata.pins, patches: metadata.patches, sourceProvenance: metadata.sourceProvenance,
  launches: [], stops: [], phases: [], protocolDiagnostics: [],
- scope: "Generated production-vault cookie and encrypted Core message restart only. Keychain-item API claim concerns the reviewed storage providers and the native host/helper imports, not unrelated macOS certificate APIs. Source provenance is a builder attestation. No password-manager, migration, signing identity, installed app or user-profile acceptance." };
+ scope: "Generated production-vault cookie, encrypted Core message restart and corrupted-cookie rejection only. Keychain-item API claim concerns the reviewed storage providers and the native host/helper imports, not unrelated macOS certificate APIs. Source provenance is a builder attestation. No password-manager, migration, signing identity, installed app or user-profile acceptance." };
 let child, browser, interrupted, stage = "preflight", stopped = true, cleanStop = false, serverListening = false;
-let seedEnabled = true, seedResponses = 0, checks = 0, sessionId, vaultBytes;
+let seedEnabled = true, seedResponses = 0, checks = 0, sessionId, vaultBytes, cookiePath;
+let tamperResponse;
 function interrupt(signal) {
  interrupted ??= signal;
  process.exitCode = signal === "SIGINT" ? 130 : 143;
@@ -70,6 +72,7 @@ const server = createServer((req, res) => {
   res.setHeader("Set-Cookie", `${cookieName}=${cookieValue}; HttpOnly; Path=/; Max-Age=3600; SameSite=Lax`);
  }
  if (req.url === "/check" && req.headers.cookie === `${cookieName}=${cookieValue}`) checks++;
+ if (req.url === "/tamper-check") tamperResponse = { cookieAbsent: !req.headers.cookie };
  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" }); res.end("generated local vault fixture");
 });
 async function eventually(fn, timeout = 30000) {
@@ -206,7 +209,7 @@ async function inspectRawDatabase(path, plaintext) {
   assert(!(await readFile(file)).includes(Buffer.from(plaintext)), "Generated plaintext present in raw database or journal.");
  }
 }
-async function inspectStorage() {
+async function inspectStorage({ corruptedCookie = false } = {}) {
  assert(stopped && cleanStop); noCandidateProcesses();
  const vault = join(profile, ".kestrel-local-vault-v1"), info = await regularFile(vault, 16384);
  assert.equal(info.mode & 0o777, 0o600);
@@ -222,14 +225,19 @@ async function inspectStorage() {
   if (found) existing.push(path);
  }
  assert.equal(existing.length, 1, "Expected one generated cookie database.");
- const cookiePath = existing[0]; await regularFile(cookiePath);
+ cookiePath = existing[0]; await regularFile(cookiePath);
  const cookies = new Database(cookiePath, { readonly: true, fileMustExist: true });
  try {
   const rows = cookies.prepare("SELECT value, encrypted_value, is_persistent, is_httponly FROM cookies WHERE host_key = ? AND name = ?").all("127.0.0.1", cookieName);
-  assert.equal(rows.length, 1); const row = rows[0];
-  assert.equal(row.value, ""); assert.equal(row.is_persistent, 1); assert.equal(row.is_httponly, 1);
-  assert(Buffer.isBuffer(row.encrypted_value) && row.encrypted_value.length > 3 + 12 + 16 && row.encrypted_value.subarray(0, 3).toString("ascii") === "v99",
-   "Cookie did not use the custom vault provider ciphertext format.");
+  // Chromium may discard an authenticated-decryption failure. It must never
+  // recover that generated cookie as plaintext or silently switch its provider.
+  assert(corruptedCookie ? rows.length <= 1 : rows.length === 1, "Unexpected generated cookie count.");
+  if (rows.length) {
+   const row = rows[0];
+   assert.equal(row.value, ""); assert.equal(row.is_persistent, 1); assert.equal(row.is_httponly, 1);
+   assert(Buffer.isBuffer(row.encrypted_value) && row.encrypted_value.length > 3 + 12 + 16 && row.encrypted_value.subarray(0, 3).toString("ascii") === "v99",
+    "Cookie did not use the custom vault provider ciphertext format.");
+  }
  } finally { cookies.close(); }
  await inspectRawDatabase(cookiePath, cookieValue);
  const corePath = join(profile, "native-core/database/kestrel.sqlite"); await regularFile(corePath);
@@ -249,7 +257,7 @@ async function writeGate(gate, checks) {
  const bytes = Buffer.from(`${JSON.stringify(proof, null, 2)}\n`), name = `${gate}.json`;
  await writeFile(join(evidence, name), bytes, { mode: 0o600, flag: "wx" });
  const wrapper = { version: 1, gate, result: "passed", candidateSha256: receipt.candidateSha256, observedAt: receipt.finishedAt,
-  summary: gate === "native-local-vault" ? "Production native Core encrypted message decrypted after clean restart." : "Production Chromium v99 encrypted persistent cookie returned after clean restart without reseeding.",
+  summary: gate === "native-local-vault" ? "Production native Core encrypted message decrypted after clean restart." : "Production Chromium v99 persistent cookie returned after clean restart without reseeding, then was rejected after its authentication tag was corrupted.",
   artifacts: [{ kind, path: name, sha256: createHash("sha256").update(bytes).digest("hex") }] };
  await writeFile(join(evidence, `${gate}-receipt.json`), `${JSON.stringify(wrapper, null, 2)}\n`, { mode: 0o600, flag: "wx" });
 }
@@ -276,7 +284,19 @@ try {
  phase("browser-cookie-restart-without-reseeding");
  setStage("second-clean-stop"); await stop();
  setStage("second-storage-inspection"); await inspectStorage(); phase("second-start-encrypted-storage-inspection");
- assert.equal(seedResponses, 1); assert.equal(receipt.launches.length, 2); assert.equal(receipt.stops.length, 2);
+ setStage("generated-cookie-authentication-corruption");
+ assert(stopped && cleanStop); noCandidateProcesses(); await regularFile(cookiePath);
+ const writable = new Database(cookiePath, { fileMustExist: true });
+ try { corruptGeneratedVaultCookie(writable, cookieName); } finally { writable.close(); }
+ home = await start();
+ setStage("tampered-cookie-rejection");
+ await openTab(home, `${base}/tamper-check`); await eventually(() => tamperResponse !== undefined);
+ assert.equal(tamperResponse.cookieAbsent, true, "Chromium sent a cookie after its authentication tag was corrupted.");
+ assert((await coreRequest(home, { type: "runtime-list-messages", sessionId })).messages?.some(message => message.content === coreValue), "Cookie corruption damaged the unrelated encrypted Core message.");
+ setStage("tamper-clean-stop"); await stop(); await inspectStorage({ corruptedCookie: true });
+ phase("tampered-cookie-rejected-with-vault-and-Core-preserved");
+ receipt.tamperedCookieRejected = true;
+ assert.equal(seedResponses, 1); assert.equal(receipt.launches.length, 3); assert.equal(receipt.stops.length, 3);
  receipt.candidateSha256After = await candidateDigest(candidate); assert.equal(receipt.candidateSha256After, receipt.candidateSha256);
  checkInterrupt(); receipt.result = "passed";
 } catch (error) {
@@ -302,7 +322,7 @@ try {
    const shared = { freshGeneratedProfile: true, productionProvider: true, cleanRestart: true, sameProfileRestartReadback: true,
     encryptedDataVerified: true, plaintextAbsent: true, noMockProvider: true, noTestKey: true, noKeychainItemAPIs: true };
    await writeGate("native-local-vault", shared);
-   await writeGate("native-browser-local-vault", { ...shared, persistentCookieReadback: true, encryptedCookieRow: true });
+   await writeGate("native-browser-local-vault", { ...shared, persistentCookieReadback: true, encryptedCookieRow: true, tamperedCookieRejected: true });
    checkInterrupt();
   } catch {
    receipt.result = "failed"; receipt.failedStage = "gate-artifact-output"; process.exitCode = 1;
