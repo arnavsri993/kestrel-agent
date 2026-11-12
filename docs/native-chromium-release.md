@@ -102,12 +102,17 @@ for `NDEBUG` and the absence of `DCHECK_ALWAYS_ON`. The engine capability export
 also rejects incompatible debug/always-DCHECK builds before vault access.
 Compilation with four local jobs completed more than 7,000 actions before a
 missing Apple Metal compiler component stopped an ANGLE shader prerequisite.
-Xcode's first-launch setup must complete before installing its official Metal
-toolchain. The preparation preflight now executes `xcrun metal --version`;
+Xcode's first-launch setup has since completed successfully. The default Metal
+component download failed its catalog lookup, but `xcodebuild -showComponent
+MetalToolchain` identified build `27B47`; downloading that explicit build
+succeeded. Its installed compiler executes, and the original ANGLE shader-to-AIR
+action now succeeds. The preparation preflight executes `xcrun metal --version`;
 `xcrun --find metal` alone locates a stub even when the component is missing.
-The completed objects remain available for an incremental resume. This is not
-a linked or runtime-verified custom engine. No signing bypass or untrusted
-prebuilt engine was used.
+The new browser vault provider has compiled as an actual Release arm64 object
+with the matching wrapper ABI and no direct Keychain password-item imports.
+Browser-process integration prerequisites continue building with the completed
+objects retained. This is not a linked or runtime-verified custom engine. No
+signing bypass or untrusted prebuilt engine was used.
 
 Hardware crypto and isolation tests pass, including cross-process reopening,
 context mismatch, every-byte single-bit corruption and a crafted representation
@@ -136,6 +141,16 @@ The compiled key-store fixture replaces the native main process, so this remains
 explicitly ineligible for the candidate-bound release gate. No user key, real
 profile, Keychain password item or interactive prompt is used; generated
 profiles/binaries are removed after the run.
+
+The hardware fixture now also re-signs its generated main executable and vault
+helper, verifies both binary hashes changed and the new bundle signature is
+valid, then unlocks the original key without replacing the vault envelope.
+The selected bundle's Core subsequently decrypts the original generated message
+after restart. This passed on the physical Mac; receipt
+`.tmp/native-local-vault-core-fixture-1794444296127-e5f1f42f-efec-43ea-9ae9-bfb6f141967a/receipt.json`.
+It verifies this ad-hoc signature transition only; the receipt explicitly says
+`developerIdUpdateVerified: false` and remains ineligible for candidate-bound
+production storage acceptance.
 
 A separate pinned-source audit verified all 118 CEF patch blobs (680,323 bytes)
 and the 117 configured patch entries. None targets either Chromium file changed
@@ -205,6 +220,22 @@ the sum of its existing bounded subprocess budgets 105 seconds. The fixture's
 outer hook now allows 120 seconds while preserving all individual deadlines;
 all 49 profile-selection tests pass locally. The failed CI run skipped later
 Core checks and remains a failed run until a newer head passes them.
+
+Head `bacc6918ac40d2826edc7e979d526734bb6b4af4` completed
+[CI run 43127266839](https://github.com/arnavsri993/kestrel-agent/actions/runs/43127266839)
+with desktop/packaged checks successful and Core unit tests passing. The native
+settings check later timed out waiting for the reopened background Home tab.
+Its captured failure state still obtained a successful browser-state response
+through that same Home bridge. Readiness checks now use a bounded timed poll
+instead of depending on animation frames in a hidden tab; the test additionally
+selects Home and requires its sidebar to be visible while preserving the same
+Core process and session. This change still requires a new CI result; the
+failed run skipped its later native/history and downstream Core checks.
+All 16 settings phases pass locally with the final interval-polling change,
+including background bridge readiness and a visible reopened Home sidebar.
+Receipt `.tmp/native-settings-hidden-home-final/receipt.json` binds the run to
+unchanged stock fixture candidate `a1487b535943868e...`. Its generated mock
+storage profile was removed; this is separate from production-vault evidence.
 
 Local validation passes: the full source suite has 3,218 passing tests and three
 explicit skips (including optional network verification), type checking and the

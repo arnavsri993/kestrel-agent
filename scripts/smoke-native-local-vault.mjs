@@ -2,7 +2,7 @@
 // Hardware Core-key fixture only. This is not candidate-bound release evidence.
 import assert from "node:assert/strict";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -172,6 +172,21 @@ try {
  await mkdir(join(profile, "native-core"), { mode: 0o700 });
  stage = "production-restart-existing"; console.log(`STAGE ${stage}`); const second = run("existing", profile); assert.equal(first, second);
  receipt.coreKeyRestartVerified = true; receipt.keySha256 = first; receipt.envelopeMode0600 = true;
+ // A new ad-hoc code signature changes the main/helper identity hashes. The
+ // device-backed envelope must still unlock without a new key or any prompt.
+ // This is deliberately weaker than a Developer ID/notarized update test.
+ stage = "ad-hoc-code-resign-restart"; console.log(`STAGE ${stage}`);
+ const binaryHash = async path => createHash("sha256").update(await readFile(path)).digest("hex");
+ const beforeSigning = await Promise.all([binaryHash(executable), binaryHash(helper)]);
+ execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--options", "runtime", app], { stdio: "pipe", timeout: 30000 });
+ execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app], { stdio: "pipe", timeout: 30000 });
+ const afterSigning = await Promise.all([binaryHash(executable), binaryHash(helper)]);
+ assert.notEqual(beforeSigning[0], afterSigning[0], "Main fixture signature did not change.");
+ assert.notEqual(beforeSigning[1], afterSigning[1], "Vault helper signature did not change.");
+ assert.equal(run("existing", profile), first, "Re-signed helper could not unlock the original vault.");
+ assert.deepEqual(await readFile(vault), envelope, "Code signing replaced the original vault.");
+ receipt.adHocCodeResignRestartVerified = true;
+ receipt.developerIdUpdateVerified = false;
  if (coreApp) {
   receipt.bundledCore = await verifyBundledCore(profile);
   receipt.encryptedCorePayloadVerified = true;

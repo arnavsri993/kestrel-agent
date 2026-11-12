@@ -95,10 +95,10 @@ async function start(coldUrl) {
  }, 'Owned UI document and authenticated bridge were not ready');
  browser = await chromium.connectOverCDP(endpoint, { noDefaults: true });
  home = await pageFor(url => /^chrome-extension:\/\/[^/]+\/index\.html$/.test(url));
- await home.waitForFunction(() => typeof window.kestrel?.request === 'function');
+ await home.waitForFunction(() => typeof window.kestrel?.request === 'function', undefined, { polling: 100 });
  await home.evaluate(() => { localStorage.setItem('kestrel:onboarded', 'yes'); localStorage.setItem('kestrel:default-browser-prompted', 'yes'); });
  await installIdentityFault(home);
- await home.reload(); await home.waitForFunction(() => typeof window.kestrel?.request === 'function');
+ await home.reload(); await home.waitForFunction(() => typeof window.kestrel?.request === 'function', undefined, { polling: 100 });
  await home.locator('.kestrel-sidebar').waitFor();
  assert((await home.evaluate(() => window.__nativeIdentityAttempts)) >= 2, 'Transient missing native identity must recover through a fresh API read');
  return home;
@@ -298,7 +298,7 @@ try {
  const secondSettingsId = ids.find(id => id !== firstSettingsId); assert(Number.isInteger(secondSettingsId));
  await reconnect();
  home = await pageByNativeTabId(homeId);
- await home.waitForFunction(() => typeof window.kestrel?.request === 'function');
+ await home.waitForFunction(() => typeof window.kestrel?.request === 'function', undefined, { polling: 100 });
  settings = await pageByNativeTabId(firstSettingsId);
  const duplicateSettings = await pageByNativeTabId(secondSettingsId);
  const warmNativeId = await home.evaluate(async target => (await chrome.tabs.query({})).find(tab => tab.url === target)?.id, warm);
@@ -409,18 +409,22 @@ try {
  assert.equal((await cdpTargets()).filter(target => target.type === 'page' && target.url === reopenedUrl).length, 1, 'Reopen URL did not open exactly once');
  await reconnect();
  home = await pageFor(url => /^chrome-extension:\/\/[^/]+\/index\.html$/.test(url));
- await home.waitForFunction(() => typeof window.kestrel?.request === 'function');
+ // The externally opened URL is active, leaving Home hidden. Its bridge can
+ // initialize without a paint; default animation-frame polling may stay paused.
+ await home.waitForFunction(() => typeof window.kestrel?.request === 'function', undefined, { polling: 100 });
  const reopenedHomeTarget = await targetFor(home.url());
  assert.equal(await windowId(reopenedHomeTarget.targetId), reopenedWindow, 'Reopened Home and URL must share Chromium window');
  assert.equal((await cdpTargets()).filter(target => target.type === 'page' && /^chrome-extension:\/\/[^/]+\/index\.html$/.test(target.url)).length, 1, 'Expected exactly one reopened Home');
+ await activateUi(home);
+ await home.locator('.kestrel-sidebar').waitFor({ state: 'visible' });
  const reopenedSessions = await home.evaluate(() => window.kestrel.request({ type: 'runtime-list-sessions' }));
  assert(reopenedSessions.ok && reopenedSessions.sessions?.some(item => item.id === sessionId), 'Core session was lost after all windows closed');
  assert.equal(ownedCorePid(), corePid, 'Closing and reopening windows must reuse the same Core process');
- phase('external-url-reopens-last-window-and-preserves-Core-session', { windowId: reopenedWindow, sessionId, corePid });
+ phase('external-url-reopens-last-window-and-preserves-Core-session', { windowId: reopenedWindow, sessionId, corePid, backgroundHomeBridgeVerified: true, visibleHomeSidebarVerified: true });
  await stop(); receipt.result = 'passed';
 } catch (error) {
  receipt.result = 'failed'; receipt.error = String(error?.stack || error);
- try { if (home && !home.isClosed()) receipt.documentAtFailure = await home.evaluate(() => ({ identityAttempts: window.__nativeIdentityAttempts, injectedFailure: sessionStorage.getItem('kestrel-test-document-id'), visibility: document.visibilityState, text: document.body.innerText.slice(0, 2000) })); } catch {}
+ try { if (home && !home.isClosed()) receipt.documentAtFailure = await home.evaluate(() => ({ bridgeReady: typeof window.kestrel?.request === 'function', identityAttempts: window.__nativeIdentityAttempts, injectedFailure: sessionStorage.getItem('kestrel-test-document-id'), visibility: document.visibilityState, text: document.body.innerText.slice(0, 2000) })); } catch {}
  try { if (settings && !settings.isClosed()) await settings.screenshot({ path: join(evidence, 'failure.png') }); else if (home && !home.isClosed()) await home.screenshot({ path: join(evidence, 'failure.png') }); } catch {}
  try { if (browser) receipt.targetsAtFailure = (await cdpTargets()).map(({ targetId, type, url }) => ({ targetId, type, url })); } catch {}
  try { if (home && !home.isClosed()) { const s = await state(); receipt.browserStateAtFailure = { activeTabId: s.activeTabId, tabs: s.tabs, settings: { newTabBackground: s.settings.newTabBackground, customImageBytes: s.settings.newTabBackgroundCustomDataUrl?.length || 0 } }; } } catch {}
