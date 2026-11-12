@@ -53,9 +53,11 @@ startup if they are absent. The exact pinned CEF/Chromium source patches in
 `apps/native-chromium-host/cef-patches` add that API and replace the macOS
 Keychain provider with a browser-only AES-256-GCM provider using a distinct
 `v99` prefix. Missing keys stop initialization before profile access; provider
-errors are temporary, never permission to discard ciphertext. These patches
-are **uncompiled**: actual framework exports, cookies/passwords, restart,
-code-signing and browser encryption remain unverified.
+errors are temporary, never permission to discard ciphertext. The provider and
+Chromium integration objects now compile, and an isolated CEF entry-point
+object exposes both symbols. The full framework remains unfinished: actual
+framework exports, cookies/passwords, restart, code-signing and browser encryption
+remain unverified.
 
 The host builder accepts a future reviewed local distribution through
 `--vault-cef-runtime /absolute/canonical/path`. Its read-only validator checks
@@ -113,6 +115,16 @@ with the matching wrapper ABI and no direct Keychain password-item imports.
 Browser-process integration prerequisites continue building with the completed
 objects retained. This is not a linked or runtime-verified custom engine. No
 signing bypass or untrusted prebuilt engine was used.
+
+A later build-header audit caught a missing version input in the full-history,
+single-branch CEF checkout: without `origin/master`, CEF's own formatter emitted
+`156.0.0` instead of the pinned `156.0.15`. Fetching the upstream master reference
+without changing CEF HEAD restored the correct computed version. The header was
+regenerated through the exact upstream command from Ninja, then the same build
+resumed with completed objects retained. Source preparation now refuses missing
+history/reference inputs and checks the actual CEF formatter result before
+patching. No generated version was manually relabeled, and the runtime validator
+still requires the exact original version/commit pins.
 
 Hardware crypto and isolation tests pass, including cross-process reopening,
 context mismatch, every-byte single-bit corruption and a crafted representation

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  manifest, requireVaultCefCapability, validateBuildEnvironment,
+  manifest, requireVaultCefCapability, validateBuildEnvironment, validateCefBuildMetadata,
   verifyPatchDigests, verifySourceTrees, verifyUpstreamPatchFixture,
 } from './prepare-native-vault-cef.mjs';
 
@@ -40,6 +40,16 @@ test('patch digests and exact Chromium/CEF commits are pinned', () => {
   assert.equal(manifest.pins.cef.commit, 'cf671c072925b27823a61181152f4f288e8e4306');
   assert.equal(manifest.pins.chromium.commit, 'fb096c0011f9d50f0a264a9376420cdea9c421e3');
   assert.equal(manifest.compiledOrRuntimeVerified, false);
+});
+
+test('source metadata requires the real branch history and matching upstream version, not a pinned HEAD alone', () => {
+  const valid = { shallow: false, hasMasterReference: true, version: manifest.pins.cef.version };
+  assert.equal(validateCefBuildMetadata(valid), true);
+  for (const value of [undefined, {}, { ...valid, shallow: true }, { ...valid, hasMasterReference: false }]) {
+    assert.throws(() => validateCefBuildMetadata(value), /full history and the upstream origin\/master reference/);
+  }
+  assert.throws(() => validateCefBuildMetadata({ ...valid, version: '156.0.0+gcf671c0+chromium-156.0.8078.80' }), /Do not relabel/);
+  assert.throws(() => validateCefBuildMetadata({ ...valid, version: undefined }), /version formatter/);
 });
 
 test('fixture checks cannot silently skip patches in a parent Git repository', async () => {

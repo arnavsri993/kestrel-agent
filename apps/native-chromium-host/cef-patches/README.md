@@ -1,6 +1,7 @@
 # Pinned Kestrel local-vault CEF source extension
 
-This is a concrete, **uncompiled** source patch set, not a usable CEF binary or a
+This is a source patch set with focused object compilation verified locally;
+the full framework build remains unfinished. It is not a usable CEF binary or a
 verified replacement for the installed app. `manifest.json` pins CEF
 `cf671c072925b27823a61181152f4f288e8e4306` and Chromium
 `fb096c0011f9d50f0a264a9376420cdea9c421e3` (tag `156.0.8078.80`), records patch
@@ -24,7 +25,7 @@ require API version 1 before opening the browser profile or calling
 Keychain, a mock Keychain, a basic password store, or a static key is authorized.
 These are direct C exports, not generated `cef_app_capi.h` methods: there are no
 changes to generated CEF structures, the stock API hash, or C++ wrapper layout.
-Compilation, exported-symbol inspection and an actual C/C++ consumer link remain
+Full framework compilation, exported-symbol inspection and an actual C/C++ consumer link remain
 required before this extension's ABI can be called build-supported.
 
 The capability function returns zero for debug or always-DCHECK framework builds
@@ -81,7 +82,13 @@ node scripts/prepare-native-vault-cef.mjs --chromium-source /absolute/path/to/sr
 Source preflight requires exact Git HEAD pins, distinct Git roots, unchanged
 upstream patch targets, no pre-existing new target files, `git apply --check`,
 **at least 150 GiB free**, macOS arm64, full Xcode with a macOS SDK, and
-`git`, `python3`, `gclient`, `gn`, `autoninja`, and `clang`. It refuses mismatched
+`git`, `python3`, `gclient`, `gn`, `autoninja`, `clang`, and an executable Metal
+compiler (`xcrun metal --version`, not just a `--find` stub). CEF must have full
+history, its upstream `origin/master` reference, and an actual upstream version
+formatter result matching the pinned version. A full-history single-branch clone
+without `origin/master` can silently report patch version zero; fetching that
+reference preserves HEAD and lets CEF compute its real release version. Do not
+manually relabel headers or relax the runtime version check. It refuses mismatched
 or already CEF-modified target files; it does not reset/overwrite them. If normal
 CEF patching changes these same targets, preparation must stop for an explicit
 source integration review. Successful apply writes a source-only receipt with
@@ -94,5 +101,5 @@ Remaining evidence requires a sufficiently provisioned build machine: compile
 the trusted pinned engine through CEF's normal build/distribution process,
 verify both actual framework exports, test the startup guard and key lifecycle,
 then test restart/cookies/credentials/GCM tamper behavior on a generated fresh
-profile. No such compile, runtime, codesign, Keychain, or real-profile test is
-claimed here.
+profile. Focused source-object compilation does not establish a finished
+framework build, runtime behavior, signing identity or real-profile acceptance.

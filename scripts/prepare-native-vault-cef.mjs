@@ -54,6 +54,35 @@ export function validateBuildEnvironment({ platform, architecture, freeBytes,
   if (!tools.includes('metal')) throw new Error('A working Apple Metal toolchain is required. Complete Xcode first-launch setup, then run xcodebuild -downloadComponent MetalToolchain with the same DEVELOPER_DIR. No source files were changed.');
 }
 
+function requireCefVersionInputs({ shallow, hasMasterReference } = {}) {
+  if (shallow !== false || hasMasterReference !== true) {
+    throw new Error('CEF version generation requires full history and the upstream origin/master reference. A single-branch clone can silently report patch version zero. Fetch the missing reference without changing the pinned CEF HEAD.');
+  }
+}
+
+export function validateCefBuildMetadata({ shallow, hasMasterReference, version } = {}) {
+  requireCefVersionInputs({ shallow, hasMasterReference });
+  if (version !== manifest.pins.cef.version) {
+    throw new Error(`CEF upstream version formatter must report ${manifest.pins.cef.version}; found ${String(version)}. Do not relabel a generated header or relax the runtime version guard.`);
+  }
+  return true;
+}
+
+export function verifyCefBuildMetadata(sourceRoot) {
+  const cefRoot = path.join(sourceRoot, 'cef');
+  const shallow = run('git', ['rev-parse', '--is-shallow-repository'], cefRoot) !== 'false';
+  let masterReferenceCommit;
+  try { masterReferenceCommit = run('git', ['rev-parse', '--verify', 'refs/remotes/origin/master^{commit}'], cefRoot); }
+  catch { /* Report the missing version input before executing the formatter. */ }
+  const hasMasterReference = /^[a-f0-9]{40}$/.test(masterReferenceCommit ?? '');
+  requireCefVersionInputs({ shallow, hasMasterReference });
+  const version = run('python3', ['-B', '-c',
+    'import os,sys; sys.path.insert(0,os.path.join(sys.argv[1],"cef","tools")); from cef_version import VersionFormatter; print(VersionFormatter(sys.argv[1]).get_version_string())',
+    sourceRoot], cefRoot);
+  validateCefBuildMetadata({ shallow, hasMasterReference, version });
+  return { fullHistory: true, upstreamMasterReferencePresent: true, masterReferenceCommit, version };
+}
+
 function inspectBuildEnvironment(sourceRoot) {
   const disk = statfsSync(sourceRoot, { bigint: true });
   // Check free space before expensive toolchain probes or source changes.
@@ -115,6 +144,7 @@ export function verifySourceTrees(sourceRoot, { requireGitPins = true } = {}) {
     }
     run('git', ['apply', '--check', path.join(patchDirectory, entry.file)], root);
   }
+  if (requireGitPins) verifyCefBuildMetadata(sourceRoot);
   return roots;
 }
 
