@@ -352,7 +352,42 @@ and stricter gate changes pass 41 focused tests across six files locally,
 including target/navigation refusals, and reject the stock candidate before
 profile/evidence creation. Their actual custom-engine execution is pending.
 
-Local validation passes: the full source suite has 3,218 passing tests and three
+Head `9754fa85cd54e1e3bc3f149c5c0ae47ae98dc056` also completed
+[CI run 43149794541](https://github.com/arnavsri993/kestrel-agent/actions/runs/43149794541)
+successfully in both jobs. The downloaded archive matches SHA256
+`85a736462aa581f237c8f0175f0101c2a8bce0084fc4d76b014dbbcfa56a3ed5`;
+eight candidate-bound receipts report 93 passed phases against unchanged stock
+fixture `1cff99b235155466a6a8628337df3052dd50ad47929dab817525258332d0938a`.
+Two unbound receipts are excluded, and the production vault canary did not run.
+
+The later metadata-guard head `edd20098f5d4c916f854f6e61a6d6ed41bf58dcf`
+failed both jobs in
+[CI run 43152830632](https://github.com/arnavsri993/kestrel-agent/actions/runs/43152830632)
+at the source unit suite. All 12 new runtime-metadata tests passed in both jobs.
+The failures were existing file-transfer/project-review cases taking
+5.061–6.602 seconds against Vitest's five-second default; later native and
+downstream checks were skipped. The unchanged cases also took 3–4 seconds in
+a focused local baseline while engine compilation was active.
+
+The fixture repair splits the invalid migration table/view and unsupported
+identity/501-reference cases so each gets independent setup and cleanup. Only
+the two multi-database round trips and the 501-reference inventory use explicit
+15-second test budgets. A broader local run found a separate combined
+depth/provenance fixture exceeding five seconds; a standalone repeat reproduced
+it at 5.908 seconds. Those two boundaries are now separate tests, and only the
+1,100-authenticated-write provenance case gets a 15-second test budget. All
+original row counts, rejection, encryption, source/destination-byte preservation
+and authority assertions remain. No production deadline, authority limit,
+global test timeout or retirement gate changed. All 57 focused checks,
+database type checking, the production-secret scan and whitespace checks pass.
+The complete local source suite then passed **3,310 tests across 354 files**,
+with three explicit skips, using one test worker while the same engine build
+continued. Receipt log: `.tmp/native-transfer-ci-full-final-tests.log`.
+The reserved bundle's digest remains `c7015edb...`, and the main checkout's
+unrelated changes remain untouched. These fixture changes do not refresh the
+canonical app or prove production-vault, Store or release acceptance.
+
+Earlier local validation: the full source suite has 3,218 passing tests and three
 explicit skips (including optional network verification), type checking and the
 production-secret scan. The first parallel full-suite attempt hit five timeout
 failures under build contention; all 99 affected-file tests passed on retry and

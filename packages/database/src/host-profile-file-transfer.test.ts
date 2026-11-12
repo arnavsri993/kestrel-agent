@@ -11,6 +11,9 @@ import { LATEST_SCHEMA_VERSION } from "./migrations";
 import { applyHostProfileFileTransfer, HostProfileFileTransferError, planHostProfileFileTransfer, verifyHostProfileFileTransferRecovery } from "./host-profile-file-transfer";
 
 const timestamp = "2026-11-02T15:30:00.000Z", privateText = "GENERATED_CORE_FILE_TRANSFER_PRIVATE_TEXT";
+// These integration journeys initialize, copy, authenticate and reopen several
+// real SQLite files. Their test budget includes disk contention on CI runners.
+const roundTripTimeoutMs = 15_000;
 const roots: string[] = [], keys: Buffer[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); for (const key of keys.splice(0)) key.fill(0); });
 function key(): Buffer { const value = createEncryptionKey(); keys.push(value); return value; }
@@ -62,7 +65,7 @@ it("previews without writes and atomically publishes independently encrypted Cor
 	expect(readFileSync(value.sourceDatabasePath)).toEqual(before);
 	expect(value.sourceKey).toEqual(sourceKeyBefore); expect(value.destinationKey).toEqual(destinationKeyBefore);
 	sourceKeyBefore.fill(0); destinationKeyBefore.fill(0);
-});
+}, roundTripTimeoutMs);
 
 it("requires the exact accepted plan and an independent destination key", () => {
 	const value = fixture(), plan = value.plan();
@@ -83,16 +86,17 @@ it("identifies a declared newer schema without decrypting, changing the source o
 	expect(readdirSync(dirname(value.destinationDatabasePath))).toEqual([]);
 });
 
-it("does not disclose arbitrary migration values or treat a migration view as version evidence", () => {
-	for (const schema of ["CREATE TABLE schema_migrations (version TEXT)", "CREATE VIEW schema_migrations AS SELECT 'GENERATED_CORE_FILE_TRANSFER_PRIVATE_TEXT' AS version"]) {
-		const value = fixture(), db = new Database(value.sourceDatabasePath);
-		db.exec("DROP TABLE schema_migrations"); db.exec(schema);
-		if (schema.startsWith("CREATE TABLE")) db.prepare("INSERT INTO schema_migrations VALUES (?)").run(privateText);
-		db.close(); const before = readFileSync(value.sourceDatabasePath);
-		expect(code(value.plan)).toBe("SOURCE_UNREADABLE");
-		expect(readFileSync(value.sourceDatabasePath)).toEqual(before);
-		expect(readdirSync(dirname(value.destinationDatabasePath))).toEqual([]);
-	}
+it.each(["table", "view"])("does not disclose arbitrary migration values or accept invalid migration %s evidence", kind => {
+	const value = fixture(), db = new Database(value.sourceDatabasePath);
+	db.exec("DROP TABLE schema_migrations");
+	if (kind === "table") {
+		db.exec("CREATE TABLE schema_migrations (version TEXT)");
+		db.prepare("INSERT INTO schema_migrations VALUES (?)").run(privateText);
+	} else db.exec("CREATE VIEW schema_migrations AS SELECT 'GENERATED_CORE_FILE_TRANSFER_PRIVATE_TEXT' AS version");
+	db.close(); const before = readFileSync(value.sourceDatabasePath);
+	expect(code(value.plan)).toBe("SOURCE_UNREADABLE");
+	expect(readFileSync(value.sourceDatabasePath)).toEqual(before);
+	expect(readdirSync(dirname(value.destinationDatabasePath))).toEqual([]);
 });
 
 it("refuses changed source data and source replacement after review", () => {
@@ -140,7 +144,7 @@ it("preserves later native work when recovery no longer matches the original tra
 	expect(code(() => verifyHostProfileFileTransferRecovery(receipt, value))).toBe("RECOVERY_CHANGED");
 	expect(readFileSync(value.sourceDatabasePath)).toEqual(sourceBefore);
 	expect(readFileSync(value.destinationDatabasePath)).toEqual(targetBefore);
-});
+}, roundTripTimeoutMs);
 
 it("reads committed WAL data from a private copy without touching any source bytes or sidecars", () => {
  const value = fixture();

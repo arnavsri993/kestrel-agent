@@ -54,8 +54,10 @@ it("rejects changed or unauthenticated sources and tampered plans without disclo
 	expect(readFileSync(f.sourceDatabasePath)).toEqual(before); expect(readdirSync(f.destinationRoot)).toEqual([]);
 });
 
-it("refuses unsupported identities or excess unique references instead of dropping them", () => {
-	for (const excess of [false, true]) {
+for (const excess of [false, true]) {
+	// The full boundary inventory includes 501 persisted sessions and two source
+	// reviews. Give this integration case a CI disk/CPU budget of its own.
+	it(excess ? "refuses 501 unique project references instead of dropping them" : "refuses unsupported project identities instead of dropping them", () => {
 		const f = fixture();
 		// All 501 distinct projects must survive source review. Keep one
 		// authenticated message and 500 empty draft sessions to exercise the
@@ -70,5 +72,5 @@ it("refuses unsupported identities or excess unique references instead of droppi
 		f.db.close(); const plan = planHostProfileFileTransfer(f), before = readFileSync(f.sourceDatabasePath);
 		expect(() => reviewHostProfileProjectReferences({ plan, sourceKey: f.sourceKey })).toThrow(excess ? "pending-project limit" : "unsupported project identities");
 		expect(readFileSync(f.sourceDatabasePath)).toEqual(before); expect(readdirSync(f.destinationRoot)).toEqual([]);
-	}
-});
+	}, excess ? 15_000 : undefined);
+}

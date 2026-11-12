@@ -271,16 +271,22 @@ describe("transitive embedding authority", () => {
 		expect(db.getMemoryEmbeddingInput("task", "missing-task")).toBeUndefined();
 	});
 
-	it("fails closed on depth and provenance-node budgets", () => {
+	it("fails closed on the transitive depth budget", () => {
 		const db = database();
 		for (let index = 70; index >= 0; index--) task(db, `depth-${index}`, { dependencyTaskIds: index === 70 ? [] : [`depth-${index + 1}`] });
 		expect(db.getMemoryEmbeddingInput("task", "depth-0")).toBeUndefined();
 		expect(db.hasMemoryOwnerSourceAuthority("task", "depth-0")).toBe(false);
+	});
+
+	// This integration case authenticates 1,100 real provenance writes before
+	// checking rejection. Keep the data/authority limits unchanged under CI load.
+	it("fails closed on the provenance-node budget", () => {
+		const db = database();
 		memory(db, "wide", ["opaque-fixture"]);
 		for (let index = 0; index < 1_100; index++) provenance(db, `wide-${index}`, "wide", "opaque-fixture");
 		expect(db.getMemoryEmbeddingInput("memory", "wide")).toBeUndefined();
 		expect(db.hasMemoryOwnerSourceAuthority("memory", "wide")).toBe(false);
-	});
+	}, 15_000);
 
 	it("bounds transitive plaintext bytes while leaving retained memory content intact", () => {
 		const db = database(); const content = "Generated fixture ".repeat(60_000);
