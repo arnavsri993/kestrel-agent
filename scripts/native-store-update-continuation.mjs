@@ -76,7 +76,7 @@ function rejectContinuation(value) {
 // Read only the prior failed receipt. Candidate and fixture identity are supplied
 // by the caller's independently verified current candidate/checkpoint. This does
 // not open a profile or prove that Chrome installed the pending update.
-export async function loadStoreUpdateContinuation(receiptPath, { candidate, candidateSha256, checkpoint, fixtureReceiptSha256, actionExtensionId }) {
+export async function loadStoreUpdateContinuation(receiptPath, { candidate, candidateSha256, checkpoint, fixtureReceiptSha256, actionExtensionId, fixtureStorageMode = "test-key", fixtureStorage }) {
   assert.equal(typeof receiptPath, "string");
   assert.equal(typeof candidate, "string"); assert.equal(candidate, resolve(candidate));
   assert.equal(typeof checkpoint, "string"); assert.equal(checkpoint, resolve(checkpoint));
@@ -89,6 +89,19 @@ export async function loadStoreUpdateContinuation(receiptPath, { candidate, cand
   object(receipt, "Continuation receipt"); rejectContinuation(receipt);
   assert.equal(receipt.kind, "native-store-update-resume"); assert.equal(receipt.version, 1);
   assert.equal(receipt.mode, "update-acceptance");
+  assert(["test-key", "production-vault"].includes(fixtureStorageMode), "Unknown fixture storage mode.");
+  assert.equal(receipt.fixtureStorageMode ?? "test-key", fixtureStorageMode, "Continuation fixture storage mode changed.");
+  assert.equal(receipt.fixtureStorageChanged, undefined, "Continuation reported changed fixture storage.");
+  assert.equal(receipt.shutdownFailed, undefined, "Continuation did not stop cleanly.");
+  if (fixtureStorageMode === "production-vault") {
+    assert.equal(fixtureStorage?.mode, "production-vault");
+    assert.deepEqual(receipt.fixtureStorage, fixtureStorage, "Continuation vault evidence changed.");
+    assert(Array.isArray(receipt.stops) && receipt.stops.length > 0, "Production continuation requires clean stops.");
+    for (const stop of receipt.stops) {
+      assert.equal(stop.exitCode, 0); assert.equal(stop.signal, null);
+      assert.equal(stop.forced, false); assert.equal(stop.candidateProcessesStopped, true);
+    }
+  }
   assert.equal(receipt.candidate, candidate);
   assert.equal(receipt.candidateSha256, candidateSha256);
   assert.equal(receipt.candidateSha256After, candidateSha256);

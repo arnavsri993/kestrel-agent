@@ -3,22 +3,32 @@ import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { candidateDigest } from "./native-retirement-evidence.mjs";
 import { loadRetainedStoreUpdateFixture } from "./native-store-update-profile.mjs";
 import { loadStoreUpdateContinuation } from "./native-store-update-continuation.mjs";
 import { CEF_VERSION } from "./prepare-native-chromium-runtime.mjs";
+import { selectNativeBrowserFixtureStorage, nativeBrowserFixtureStorageArgs,
+  nativeBrowserFixtureStorageEnv, assertNativeBrowserFixtureStopped, validateRetainedNativeBrowserFixtureStorage } from "./native-browser-fixture-storage.mjs";
 
 assert(process.env.KESTREL_NATIVE_TEST_APP, "Select the exact native candidate.");
 assert(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT, "Select an existing generated Store checkpoint.");
 const compatibilityOnly = process.env.KESTREL_NATIVE_STORE_COMPATIBILITY_ONLY === "1";
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const app = await realpath(resolve(process.env.KESTREL_NATIVE_TEST_APP));
 assert.notEqual(app, await realpath("/Applications/Kestrel.app").catch(() => "/Applications/Kestrel.app"));
+const storage = await selectNativeBrowserFixtureStorage({ candidate: app, root });
+const fixture = await loadRetainedStoreUpdateFixture(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT, { root });
+assert.equal(storage.mode, fixture.fixtureStorage?.mode ?? "test-key", "Select the retained fixture's explicit storage mode before launch.");
+if (storage.mode === "production-vault") {
+  assert.equal(app, fixture.candidate, "A production Store fixture remains bound to its original candidate.");
+  assert.equal(storage.candidateSha256, fixture.candidateSha256, "A production Store fixture cannot switch candidates.");
+}
 const evidence = resolve(process.env.KESTREL_NATIVE_STORE_RESUME_EVIDENCE || `.tmp/native-store-resume-${Date.now()}`);
 await mkdir(evidence, { recursive: true, mode: 0o700 });
 assert.equal((await readdir(evidence)).length, 0, "Use a new evidence directory; preserve the original checkpoint.");
-const fixture = await loadRetainedStoreUpdateFixture(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT);
 const profile = fixture.profileRoot;
 const processRows = execFileSync("/bin/ps", ["-axo", "pid=,command="], { encoding: "utf8" }).split("\n");
 assert(!processRows.some(row => row.includes(`--kestrel-cache-path ${profile}`)), "The retained profile is already in use.");
@@ -29,13 +39,14 @@ const extensionId = [...createHash("sha256").update(join(profile, "kestrel-ui-bu
 const homeUrl = `chrome-extension://${extensionId}/index.html`;
 const receipt = { kind: "native-store-update-resume", version: 1, startedAt: new Date().toISOString(), candidate: app,
   mode: compatibilityOnly ? "compatibility-only" : "update-acceptance", updateQueryRequested: false,
-  candidateSha256: await candidateDigest(app), fixture: { checkpoint: resolve(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT), receiptSha256: fixture.receiptSha256, originalCandidateSha256: fixture.candidateSha256 },
-  scope: "Retained generated normal Store installations and test keys only. No new installation, forced version edits, real profile, Keychain, credentials or desktop capture/input.", phases: [] };
+  candidateSha256: storage.candidateSha256, fixture: { checkpoint: resolve(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT), receiptSha256: fixture.receiptSha256, originalCandidateSha256: fixture.candidateSha256 },
+  fixtureStorageMode: storage.mode,
+  scope: `Retained generated normal Store installations using ${storage.mode}. No new installation, forced version edits, real profile, Keychain password items or desktop capture/input.`, phases: [] };
 const continuation = process.env.KESTREL_NATIVE_STORE_PRIOR_ATTEMPT
   ? await loadStoreUpdateContinuation(process.env.KESTREL_NATIVE_STORE_PRIOR_ATTEMPT, {
     candidate: app, candidateSha256: receipt.candidateSha256,
     checkpoint: receipt.fixture.checkpoint, fixtureReceiptSha256: fixture.receiptSha256,
-    actionExtensionId: action,
+    actionExtensionId: action, fixtureStorageMode: storage.mode, fixtureStorage: fixture.fixtureStorage,
   }) : undefined;
 assert(!continuation || !compatibilityOnly, "A prior update query cannot turn a compatibility run into update acceptance.");
 if (continuation) receipt.continuation = { path: continuation.path, sha256: continuation.sha256,
@@ -115,7 +126,8 @@ async function pageFor(url) {
 async function start() {
   stage = "start-retained-profile:endpoint";
   const state = { output: "" };
-  state.child = spawn(join(app, "Contents/MacOS/Kestrel"), ["--kestrel-chromium-desktop", "--kestrel-cache-path", profile, "--kestrel-durable-profile", "--kestrel-test-profile-key", "--remote-debugging-port=0"], { stdio: ["ignore", "pipe", "pipe"] });
+  state.child = spawn(join(app, "Contents/MacOS/Kestrel"), ["--kestrel-chromium-desktop", "--kestrel-cache-path", profile, "--kestrel-durable-profile", ...nativeBrowserFixtureStorageArgs(storage), "--remote-debugging-port=0"],
+    { env: nativeBrowserFixtureStorageEnv(storage), stdio: ["ignore", "pipe", "pipe"] });
   running = state;
   state.exited = new Promise(resolveExit => state.child.once("exit", (code, signal) => resolveExit({ code, signal })));
   for (const stream of [state.child.stdout, state.child.stderr]) stream.on("data", chunk => { if (state.output.length < 512 * 1024) state.output += chunk; });
@@ -138,9 +150,22 @@ async function start() {
 async function stop() {
   if (!running) return;
   await closeActionDocument();
-  const state = running; running = undefined;
+  const state = running;
   if (state.child.exitCode === null && state.child.signalCode === null) state.child.kill("SIGTERM");
-  assert.deepEqual(await Promise.race([state.exited, delay(15000, undefined, { ref: false }).then(() => { state.child.kill("SIGKILL"); throw Error("Owned native shutdown timed out."); })]), { code: 0, signal: null });
+  let forced = false;
+  async function waitForExit(milliseconds) {
+    let timer;
+    try { return await Promise.race([state.exited, new Promise(resolveTimeout => { timer = setTimeout(() => resolveTimeout(null), milliseconds); })]); }
+    finally { clearTimeout(timer); }
+  }
+  let outcome = await waitForExit(15000);
+  if (!outcome) { forced = true; state.child.kill("SIGKILL"); outcome = await waitForExit(5000); }
+  assert(outcome, "Owned native shutdown timed out.");
+  running = undefined;
+  assert.deepEqual(outcome, { code: 0, signal: null });
+  assert.equal(forced, false, "Owned native shutdown required force.");
+  await eventually(() => { assertNativeBrowserFixtureStopped(storage); return true; }, "A candidate helper did not stop.", 10000);
+  (receipt.stops ??= []).push({ pid: state.child.pid, exitCode: outcome.code, signal: outcome.signal, forced, candidateProcessesStopped: true });
   browser?.close(); browser = undefined; home = undefined;
 }
 async function closeActionDocument() {
@@ -264,8 +289,15 @@ try {
     protocol: new URL(item.url || "about:blank").protocol }))).catch(() => []);
 }
 finally {
-  await stop().catch(() => { receipt.result = "failed"; process.exitCode = 1; });
+  await stop().catch(() => { receipt.result = "failed"; receipt.shutdownFailed = true; process.exitCode = 1; });
   server.close();
+  if (fixture.fixtureStorage) {
+    try {
+      await validateRetainedNativeBrowserFixtureStorage({ profile, candidate: fixture.candidate,
+        candidateSha256: fixture.candidateSha256, evidence: fixture.fixtureStorage, root });
+      receipt.fixtureStorage = fixture.fixtureStorage;
+    } catch { receipt.result = "failed"; receipt.fixtureStorageChanged = true; process.exitCode = 1; }
+  }
   receipt.candidateSha256After = await candidateDigest(app);
   if (receipt.candidateSha256After !== receipt.candidateSha256) { receipt.result = "failed"; receipt.candidateChanged = true; process.exitCode = 1; }
   receipt.profileRetained = true; receipt.finishedAt = new Date().toISOString();

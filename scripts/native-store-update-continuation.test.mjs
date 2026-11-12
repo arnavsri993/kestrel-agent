@@ -41,9 +41,26 @@ describe("Store continuation accepts only private evidence for the exact pending
     assert.deepEqual(result, { path, sha256: createHash("sha256").update(bytes).digest("hex"),
       baselineVersions: valid().diskVersionsBefore, updateCheck: valid().updateCheck, initialSessionCount: 3 });
   });
+  it("binds a production continuation to its explicit storage mode", async () => {
+    const fixtureStorage = { mode: "production-vault", vaultSha256: "e".repeat(64) };
+    const value = { ...valid(), fixtureStorageMode: "production-vault", fixtureStorage,
+      stops: [{ exitCode: 0, signal: null, forced: false, candidateProcessesStopped: true }] };
+    const { path } = await save(value);
+    await assert.rejects(loadStoreUpdateContinuation(path, options));
+    await loadStoreUpdateContinuation(path, { ...options, fixtureStorageMode: "production-vault", fixtureStorage });
+    for (const mutate of [v => { v.fixtureStorage.vaultSha256 = "f".repeat(64); }, v => { v.stops = []; },
+      v => { v.stops[0].forced = true; }, v => { v.stops[0].candidateProcessesStopped = false; }]) {
+      const changed = JSON.parse(JSON.stringify(value)); mutate(changed);
+      await assert.rejects(loadStoreUpdateContinuation((await save(changed)).path, { ...options, fixtureStorageMode: "production-vault", fixtureStorage }));
+    }
+    await assert.rejects(loadStoreUpdateContinuation((await save()).path, { ...options, fixtureStorageMode: "production-vault" }));
+  });
   const mutations = {
     "wrong kind": value => { value.kind = "native-store-update-fixture"; },
     "wrong version": value => { value.version = "1"; },
+    "unknown storage mode": value => { value.fixtureStorageMode = "unknown"; },
+    "changed fixture storage": value => { value.fixtureStorageChanged = true; },
+    "failed shutdown": value => { value.shutdownFailed = true; },
     "compatibility-only": value => { value.mode = "compatibility-only"; },
     "different candidate path": value => { value.candidate += "-different"; },
     "different candidate hash": value => { value.candidateSha256 = "d".repeat(64); },

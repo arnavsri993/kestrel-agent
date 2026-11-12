@@ -195,6 +195,10 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
   // Keychain policy selection to the browser process follows CEF's safety
   // guidance for child process command lines.
   if (process_type.empty()) {
+    // Nonofficial Chromium builds include developer testing trials. Use the
+    // shipped feature defaults, as Chromium recommends for other browsers;
+    // testing trials can request helper bundle types Kestrel does not ship.
+    command_line->AppendSwitch("disable-field-trial-config");
     if (!desktop_ui_path_.empty()) {
       command_line->RemoveSwitch("disable-extensions");
       command_line->AppendSwitchWithValue("load-extension", desktop_ui_path_);

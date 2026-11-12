@@ -7,7 +7,114 @@ from a private first-party MV3 extension. The agent companion uses Chromium's
 side panel. There is no AppKit window reparenting, clipped duplicate shell, or
 Electron process in this path.
 
-## Current checkpoint — remove Keychain dependency, 2026-11-11
+## Current checkpoint — custom Chromium and production vault, 2026-11-12
+
+The user retired the Keychain route because its repeated permission prompt was
+unreliable. The production design now uses a device-bound Secure Enclave vault;
+there is no Keychain-item, plaintext, fixed-password or software-key fallback.
+The vault envelope contains an opaque enclave key representation and
+authenticated ciphertext. This does not provide portable backup or recovery
+after losing/replacing this Mac. Existing profiles without the vault require an
+explicit supported migration; no profile key is recreated or rotated here.
+
+### Custom engine build and launch
+
+The pinned CEF/Chromium Release arm64 engine build **finished successfully**:
+Ninja completed **19,846/19,846 actions** with exit code 0 in
+`.tmp/native-vault-engine/cefclient-framework-versioned-metadata-1794455683-102e2e55.json`.
+The distribution validator read the actual framework Info.plist and Mach-O
+versions, verified both required arm64 exports and the local code signature,
+and checked the receipt's pinned CEF/Chromium source and patch fields. The signed input framework
+hash is `b5c798b34080b77f5cd13e5b0d4b823a78c2a7ac742658738ff329b97857f10b`;
+the framework copied and signed into the candidate has hash
+`27dad894ecc7d272425a2464927320aea5cec303541b1a2edd623e5224bd2b1a`. These
+are distinct expected hashes for the signed input and packaged framework; no
+source-only metadata relabeling was used. The validation records are
+`.tmp/native-vault-engine/validated-custom-runtime.json` and
+`.tmp/native-vault-engine/native-vault-default-features-host-i1qjpesu.json`.
+Their source-provenance field remains a builder attestation, not an independent
+reproducibility proof.
+
+The first native browser startup stopped in the GPU child: upstream nonofficial
+Chromium testing field trials requested an `AperitifHelpers` bundle Kestrel does
+not ship. Adding Chromium's standard `disable-field-trial-config` switch in
+browser-process startup selected the shipped feature defaults and fixed launch.
+No sandbox bypass was used. The resulting private candidate is
+`.tmp/native-vault-default-features-host-i1qjpesu/Kestrel.app`, bundle SHA256
+`1f320168edf909bede0f2306af001615043e7446ba694d2e26171210a2f286ff`.
+
+### Candidate-bound production-vault evidence
+
+That exact candidate passed the production-vault canary across **three starts**
+and **three clean exit-0 stops**, with **seven phases passed**: generated device
+password creation; first-start Core message and encrypted `v99` cookie/password;
+native password autofill after restart; Core readback after restart; cookie
+readback without reseeding; second-start encrypted-storage inspection; and
+rejection of the tampered cookie while preserving the vault and Core. The
+candidate hash matched before and after, the generated profile was removed, and
+the canary recorded no mock provider, test key, or Keychain-item API imports.
+Receipt: `.tmp/native-browser-local-vault-1794499137650-5cafc0bf-e6db-48a7-bbd6-895f49f27a22/receipt.json`.
+
+Both candidate-bound gate artifacts validate: `native-local-vault.json` and
+`native-browser-local-vault.json` in that same directory. Their manifest is
+`production-vault-evidence-manifest.json`; validator output is
+`production-vault-validation.json`, which reports `vaultArtifactsValid: true`
+and `otherReleaseGatesIncomplete: true`. **Twenty-five other release gates are
+still missing**, including native host/Core/UI parity, Store acceptance,
+provider and workspace flows, restart/recovery, Developer ID signing and
+notarization, profile transfer/rollback, and canonical Dock app proof.
+
+### CI and Chrome Web Store status
+
+The CI result for head
+`c6ea726c8169839376a65748e6b1a39f869d925e` is successful in both jobs under
+[run 43241198616](https://github.com/arnavsri993/kestrel-agent/actions/runs/43241198616).
+Artifact `native-extension-compatibility-1` matched SHA256
+`f60f566f5ddf2814f0841e44512a46302cbbd48332108e31a512a64a338beadb`. Its
+verified summary is `.tmp/ci-c6ea726c-evidence/verified-summary.json`: eight
+candidate-bound receipts contributed 93 passing phases; two unbound receipts
+were excluded. This workflow uses stock/mock generated fixtures and does **not**
+verify the custom engine or production vault.
+
+The new Store fixture storage/checkpoint/continuation support and existing
+candidate metadata/profile checks pass **92 tests across five files** locally.
+Production mode requires `KESTREL_TEST_NATIVE_LOCAL_VAULT=1`; the default stays
+the marked test-key fixture. A production checkpoint binds its exact candidate,
+profile identity and opaque vault digest, rejects test keys and changed vaults,
+and verifies that the app and helpers have stopped. Legacy marker-only resume
+behavior is preserved. Retention is fixture provenance, not Store upgrade or
+release acceptance. The complete source suite at the prior CI head passed
+3,310 tests with three explicit skips; that is separate from these new checks.
+
+The live Store install/upgrade attempt against the custom candidate remains
+incomplete; no Store acceptance or published-version upgrade is claimed. The
+latest receipt, `.tmp/native-production-store-1794502330/receipt.json`, records
+eight passed Core/browser/security phases, including download handling, trusted
+input, and Core crash recovery. It then timed out clicking Settings before the
+Store flow began: the Mac was locked, the Home target remained hidden, its
+window was not focused, and it produced no animation frames. The user-unlock
+step is pending. Keep this gate open until the actual native Kestrel UI installs
+and exercises both official Store extensions using a fresh production-vault
+profile, then a real published update is observed.
+
+A later read-only check found the private candidate executable's link count had
+changed from one to two while its bytes still matched. The second path has not
+been identified. The existing single-link preflight remains enforced; an
+unchanged digest does not waive this filesystem check for another launch.
+
+The canonical `/Applications/Kestrel.app`, user profiles and credentials remain
+untouched. No profile migration, Developer ID identity, notarization, installed
+native cutover or complete release is claimed. An Apple Developer account is
+not available for signing. The Keychain-item statement covers the reviewed
+storage paths and native host/helper imports, not unrelated macOS certificate
+APIs. The generated password check uses Chromium's device-store API; it does
+not test the save-password bubble.
+
+## Previous checkpoint — vault implementation and engine preparation, 2026-11-11
+
+This dated preparation record describes the work before the November 12
+completed-engine and production-vault results above. Its pending-build and
+acceptance statements are historical.
 
 The user has retired the Keychain route because its repeated permission prompt
 is unreliable. This supersedes the older Keychain acceptance requirements and

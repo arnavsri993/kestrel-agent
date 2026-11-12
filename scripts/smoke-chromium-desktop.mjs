@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {spawn,execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {mkdtemp,mkdir,readFile,readdir,rm,writeFile} from 'node:fs/promises';
+import {lstat,mkdtemp,mkdir,readFile,readdir,rm,writeFile} from 'node:fs/promises';
 import {createServer} from 'node:http';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
@@ -12,9 +12,10 @@ import {nativeProviderCanary,nativeCodexCanary} from './native-provider-canary.m
 import {nativeBrowserActionsCanary} from './native-browser-actions-canary.mjs';
 import {createIsolationFixtures,nativeIsolatedBrowserCanary,prepareIsolatedCoreResetCanary,finishIsolatedCoreResetCanary} from './native-isolated-browser-canary.mjs';
 import {nativeWorkspaceCanary,finishNativeWorkspaceCanary,prepareNativeWorkspaceFixture} from './native-workspace-canary.mjs';
+import {assertNativeBrowserFixtureStopped,captureNativeBrowserFixtureStorage,nativeBrowserFixtureStorageArgs,nativeBrowserFixtureStorageEnv,prepareNativeBrowserFixtureProfile,selectNativeBrowserFixtureStorage} from './native-browser-fixture-storage.mjs';
 import {candidateDigest} from './native-retirement-evidence.mjs';
 import {createIsolatedDownloadFixtures,nativeIsolatedDownloadsCanary} from './native-isolated-downloads-canary.mjs';
-import {markDisposableNativeTestProfile,validateDisposableNativeTestProfile} from './native-test-profile.mjs';
+import {validateDisposableNativeTestProfile} from './native-test-profile.mjs';
 import {retainStoreUpdateFixture} from './native-store-update-profile.mjs';
 import {CEF_VERSION} from './prepare-native-chromium-runtime.mjs';
 
@@ -23,22 +24,26 @@ const requireExtensionParity=process.env.KESTREL_TEST_REQUIRE_CHROMIUM_EXTENSION
 const retainUpdateProfile=process.env.KESTREL_TEST_KEEP_STORE_UPDATE_PROFILE==='1';
 assert(!requireExtensionParity||store,'Strict Chromium extension parity requires the real Store flow.');
 assert(!retainUpdateProfile||(store&&!requireExtensionParity),'Store-update fixture retention requires a real Store preparation run, separate from strict extension acceptance.');
-const app=resolve(process.env.KESTREL_NATIVE_TEST_APP||'.tmp/native-chromium-host/Kestrel.app');
+const fixtureStorage=await selectNativeBrowserFixtureStorage({candidate:resolve(process.env.KESTREL_NATIVE_TEST_APP||'.tmp/native-chromium-host/Kestrel.app'),root:process.cwd()});
+const app=fixtureStorage.candidate;
 const executable=join(app,'Contents/MacOS/Kestrel');
+const workspaceFixture=process.env.KESTREL_TEST_NATIVE_WORKSPACE_FIXTURE==='1';
+assert(!(fixtureStorage.mode==='production-vault'&&workspaceFixture),'Production-vault browser fixtures cannot seed a workspace before native vault initialization.');
 const expectedChromium=CEF_VERSION.split('+chromium-')[1];
 const evidence=resolve(process.env.KESTREL_NATIVE_DESKTOP_EVIDENCE||(retainUpdateProfile?`.tmp/chromium-store-update-evidence-${Date.now()}`:'.tmp/chromium-desktop-evidence'));
 await mkdir(evidence,{recursive:true,mode:0o700});
 if(retainUpdateProfile)assert.equal((await readdir(evidence)).length,0,'Store-update preparation requires a new empty evidence directory; preserve the previous checkpoint and receipt.');
 const profile=await mkdtemp(join(tmpdir(),'kestrel-chromium-desktop-canary-'));
-await markDisposableNativeTestProfile(profile);
+await prepareNativeBrowserFixtureProfile({profile,storage:fixtureStorage});
 const downloadPath=join(profile,'test-downloads');
-await mkdir(downloadPath,{mode:0o700});await mkdir(join(profile,'Default'),{mode:0o700});
-const workspaceFixture=process.env.KESTREL_TEST_NATIVE_WORKSPACE_FIXTURE==='1';
-if(workspaceFixture)await prepareNativeWorkspaceFixture(profile);
-// CEF's Chrome profile is not an off-the-record context registered with the
-// Browser CDP handler. Configure its real preference before first startup so
-// the download canary writes only into this disposable profile.
-await writeFile(join(profile,'Default/Preferences'),JSON.stringify({download:{default_directory:downloadPath,prompt_for_download:false,directory_upgrade:true}}),{mode:0o600});
+if(fixtureStorage.mode==='test-key'){
+ await mkdir(downloadPath,{mode:0o700});await mkdir(join(profile,'Default'),{mode:0o700});
+ if(workspaceFixture)await prepareNativeWorkspaceFixture(profile);
+ // CEF's Chrome profile is not an off-the-record context registered with the
+ // Browser CDP handler. Configure its real preference before first startup so
+ // the download canary writes only into this disposable profile.
+ await writeFile(join(profile,'Default/Preferences'),JSON.stringify({download:{default_directory:downloadPath,prompt_for_download:false,directory_upgrade:true}}),{mode:0o600});
+}
 const {UserBrowserStateSchema}=await tsImport('../packages/shared-types/src/contracts.ts',import.meta.url);
 const {isChromeWebStoreUrl}=await tsImport('../packages/shared-types/src/chrome-web-store.ts',import.meta.url);
 const lifecycle=process.env.KESTREL_TEST_NATIVE_WINDOW_LIFECYCLE==='1';
@@ -47,7 +52,7 @@ const formatter='bcjindcccaagfpapjjmafapmmgkkhgoa';
 // JSON Formatter is a content-only MV3 extension. Use the official uBO Lite
 // Store package for the separate background-worker and action-popup probes.
 const actionExtension='ddkjiahejlhfcafbddmgiahcphecmpfh';
-const receipt={kind:'native-chromium-desktop-receipt',at:new Date().toISOString(),candidate:app,candidateSha256:await candidateDigest(app),executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),storeRequested:store,extensionParityRequired:requireExtensionParity,lifecycleRequested:lifecycle,phases:[]};
+const receipt={kind:'native-chromium-desktop-receipt',at:new Date().toISOString(),candidate:app,candidateSha256:fixtureStorage.candidateSha256,executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),fixtureStorageMode:fixtureStorage.mode,storeRequested:store,extensionParityRequired:requireExtensionParity,lifecycleRequested:lifecycle,phases:[]};
 const jsonFixture={source:'kestrel-native-canary',nested:{installedExtensionRuns:true},values:[1,2,3]};
 const isolationFixtures=createIsolationFixtures();
 const isolatedDownloadFixtures=createIsolatedDownloadFixtures();
@@ -83,7 +88,7 @@ function ownedNodeProcesses(){
 }
 async function start(){
  output='';
- child=spawn(executable,['--kestrel-chromium-desktop','--kestrel-cache-path',profile,'--kestrel-durable-profile','--kestrel-test-profile-key','--remote-debugging-port=0'],{stdio:['ignore','pipe','pipe']});
+ child=spawn(executable,['--kestrel-chromium-desktop','--kestrel-cache-path',profile,'--kestrel-durable-profile',...nativeBrowserFixtureStorageArgs(fixtureStorage),'--remote-debugging-port=0'],{stdio:['ignore','pipe','pipe'],env:nativeBrowserFixtureStorageEnv(fixtureStorage)});
  child.stdout.on('data',b=>output+=b);child.stderr.on('data',b=>output+=b);
  let endpoint;
  for(let i=0;i<200;i++){
@@ -122,8 +127,18 @@ async function close(){
  assert(child.kill('SIGTERM'),'Native process could not receive its stop signal.');
  const result=await Promise.race([exited,delay(12_000,undefined,{ref:false}).then(()=>{throw Error('Native shutdown timed out: '+output);})]);
  assert.deepEqual(result,{code:0,signal:null},output);
+ await waitForCandidateStop();
+ (receipt.stops??=[]).push({pid:child.pid,exitCode:result.code,signal:result.signal,forced:false,candidateProcessesStopped:true});
  await browser.close().catch(()=>{});browser=undefined;
  await writeFile(join(evidence,'runtime.log'),output);
+}
+async function waitForCandidateStop(){
+ const deadline=Date.now()+10_000;
+ for(;;){
+  try{assertNativeBrowserFixtureStopped(fixtureStorage);return;}
+  catch(error){if(Date.now()>=deadline)throw error;}
+  await delay(100);
+ }
 }
 async function ownedUiDiagnostics(page) {
  return Promise.race([page.evaluate(async () => {
@@ -184,6 +199,21 @@ async function inspectActionPopup(endpoint, expectedUrl){
 }
 try{
  let {context,home,endpoint}=await start();
+ if(fixtureStorage.mode==='production-vault'){
+  // The native host must create the production vault in an otherwise empty
+  // profile. Add the canary's browser download preference only after that first
+  // clean stop, then restart before any acceptance checks begin.
+  await close();
+  await captureNativeBrowserFixtureStorage({profile,storage:fixtureStorage});
+  await mkdir(downloadPath,{mode:0o700});
+  const preferencesPath=join(profile,'Default/Preferences'),preferencesInfo=await lstat(preferencesPath);
+  assert(preferencesInfo.isFile()&&!preferencesInfo.isSymbolicLink()&&preferencesInfo.uid===process.getuid()&&preferencesInfo.nlink===1&&preferencesInfo.size<=8*1024*1024);
+  const preferencesBytes=await readFile(preferencesPath);assert(preferencesBytes.length<=8*1024*1024);
+  const preferences=JSON.parse(preferencesBytes.toString('utf8'));
+  preferences.download={...preferences.download,default_directory:downloadPath,prompt_for_download:false,directory_upgrade:true};
+  await writeFile(preferencesPath,JSON.stringify(preferences),{mode:0o600});
+  ({context,home,endpoint}=await start());
+ }
  async function createdPage(predicate){
   let page=browser.contexts().flatMap(context=>context.pages()).find(page=>predicate(page.url()));
   if(page)return page;
@@ -602,14 +632,18 @@ try{
   }
  }
  await close();receipt.phases.push({phase:'durable-core-and-clean-restart',passed:true});
+ const storageEvidence=await captureNativeBrowserFixtureStorage({profile,storage:fixtureStorage});
+ receipt.fixtureStorage=storageEvidence;
  receipt.candidateSha256After=await candidateDigest(app);
  assert.equal(receipt.candidateSha256After,receipt.candidateSha256,'The candidate bundle changed during native desktop verification.');
  assert(!requireExtensionParity||receipt.extensionParity?.passed,'Required Chromium extension parity is incomplete; inspect the candidate-bound receipt for missing capabilities.');
- if(retainUpdateProfile)receipt.storeUpdateFixture={profileRoot:await validateDisposableNativeTestProfile(profile),checkpointPath:join(evidence,'store-update-checkpoint.json')};
+ if(retainUpdateProfile)receipt.storeUpdateFixture={profileRoot:fixtureStorage.mode==='test-key'?await validateDisposableNativeTestProfile(profile):profile,checkpointPath:join(evidence,'store-update-checkpoint.json')};
  await writeFile(join(evidence,'receipt.json'),JSON.stringify(receipt,null,2),{mode:0o600});
- if(retainUpdateProfile){await retainStoreUpdateFixture({profile,receiptPath:join(evidence,'receipt.json'),checkpointPath:receipt.storeUpdateFixture.checkpointPath});profileRetained=true;console.log('STORE_UPDATE_FIXTURE_RETAINED: '+receipt.storeUpdateFixture.checkpointPath+'; a real published-version upgrade remains a separate acceptance check.');}
+ if(retainUpdateProfile){await retainStoreUpdateFixture({profile,receiptPath:join(evidence,'receipt.json'),checkpointPath:receipt.storeUpdateFixture.checkpointPath,storageEvidence,root:process.cwd()});profileRetained=true;console.log('STORE_UPDATE_FIXTURE_RETAINED: '+receipt.storeUpdateFixture.checkpointPath+'; a real published-version upgrade remains a separate acceptance check.');}
  console.log('Native Chromium desktop passed: real Kestrel Home/Settings, Core tab tools and approval enforcement, native tabs, web bridge isolation, durable restart, and clean shutdown'+(store?', plus native Store install and functional extension restart.':'.'));
 }catch(error){
+ const info=await lstat(executable).catch(()=>undefined);
+ if(info)receipt.failedCandidateFileState={uid:info.uid,expectedUid:process.getuid(),mode:info.mode,nlink:info.nlink,nlinkType:typeof info.nlink,isFile:info.isFile(),isSymbolicLink:info.isSymbolicLink()};
  if(uiActionPage){receipt.failedUiState=await ownedUiDiagnostics(uiActionPage);await uiActionPage.screenshot({path:join(evidence,'failed-ui.png'),timeout:5000}).catch(()=>{});}
  await writeFile(join(evidence,'failure.log'),output+'\n'+String(error));await writeFile(join(evidence,'receipt.json'),JSON.stringify({...receipt,failed:String(error)},null,2));throw error;
 }
@@ -617,5 +651,8 @@ finally{
  await browser?.close().catch(()=>{});
  if(child&&child.exitCode===null&&child.signalCode===null){child.kill('SIGKILL');await new Promise(resolve=>child.once('exit',resolve));}
  await new Promise(resolve=>server.close(resolve));
- if(!profileRetained)await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:100});
+ if(!profileRetained){
+  try{await waitForCandidateStop();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
+  catch(error){console.error('Generated fixture retained because candidate shutdown or cleanup could not be verified: '+profile);throw error;}
+ }
 }
