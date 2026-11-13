@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 #include "kestrel_profile_reservation.h"
+#include "kestrel_native_run_loop_dispatch.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
@@ -132,6 +133,7 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
     MaybeQuit();
   }
   void Close() {
+    if (closing_) return;
     closing_ = true;
     if (automation_) {
       CefRefPtr<DesktopClient> self = this;
@@ -484,6 +486,10 @@ static void InstallDesktopMenu() {
 bool CloseKestrelChromiumDesktop() {
   native_core_key_dispatcher.InvalidateOwner(native_core_key_owner);
   if (!desktop_client) return false;
+  [desktop_profile_transfer shutdown];
+  // A synchronous native alert may be running inside an earlier main-queue
+  // callback. Unwind it before asking Chromium to close its owned browsers.
+  if (NSApp.modalWindow) [NSApp abortModal];
   external_urls.SetReady(false);
   CancelNativeWindowRequests();
   if (desktop_workspace_panel) [desktop_workspace_panel cancel:nil];
@@ -1160,13 +1166,23 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
   InstallDesktopMenu();
   // The documented dev launcher stops its owned process with SIGTERM. Route
   // that through the same clean Quit path as the menu, on AppKit's thread.
+  // A main-queue signal handler cannot run while an earlier queued callback
+  // owns a synchronous modal loop. Bridge from a separate queue to that loop.
   const auto previous_sigterm = signal(SIGTERM, SIG_IGN);
-  dispatch_source_t termination = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, dispatch_get_main_queue());
-  dispatch_source_set_event_handler(termination, ^{ [NSApp terminate:nil]; });
+  const auto termination_active = std::make_shared<std::atomic_bool>(true);
+  const auto termination_requested = std::make_shared<std::atomic_bool>(false);
+  dispatch_queue_t termination_queue = dispatch_queue_create("com.kestrel.desktop-termination",DISPATCH_QUEUE_SERIAL);
+  dispatch_source_t termination = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, termination_queue);
+  dispatch_source_set_event_handler(termination, ^{
+    if (!termination_active->load(std::memory_order_acquire) || termination_requested->exchange(true,std::memory_order_acq_rel)) return;
+    KestrelDispatchToMainRunLoop(^{ if (termination_active->load(std::memory_order_acquire)) [NSApp terminate:nil]; });
+  });
   dispatch_resume(termination);
   CefRunMessageLoop();
+  termination_active->store(false,std::memory_order_release);
   native_core_key_dispatcher.InvalidateOwner(key_owner);
-  [desktop_profile_transfer shutdown];
+  const bool transfer_stopped = !desktop_profile_transfer || [desktop_profile_transfer waitForShutdown:15.0];
+  if (!transfer_stopped) std::cerr << "Native transfer worker shutdown could not be confirmed; all profiles were preserved." << std::endl;
   dispatch_source_cancel(termination);
   signal(SIGTERM, previous_sigterm);
   // Native messaging keeps the extension worker alive. End the owned broker
@@ -1183,5 +1199,5 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
   CefShutdown();
   desktop_menu_target = nil;
   desktop_profile_transfer = nil;
-  return 0;
+  return transfer_stopped ? 0 : 1;
 }

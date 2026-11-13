@@ -451,11 +451,16 @@ NSString* KestrelCanonicalNativeCoreTransferSource(NSString* selected_path) {
 @property(nonatomic,copy) NSDictionary* descriptor;
 @property(nonatomic,copy) NSDictionary* lockWitness;
 + (instancetype)acquire:(NSDictionary*)descriptor;
+- (void)invalidate;
 - (BOOL)isCurrent;
 @end
 @implementation KestrelNativeTransferSourceLease
 - (instancetype)init { if ((self = [super init])) lockFd = -1; return self; }
-- (void)dealloc { if (lockFd >= 0) close(lockFd); }
+- (void)invalidate {
+  if (lockFd >= 0) { flock(lockFd,LOCK_UN); close(lockFd); lockFd = -1; }
+  activeReservation.reset(); reservation.reset();
+}
+- (void)dealloc { [self invalidate]; }
 + (instancetype)acquire:(NSDictionary*)descriptor {
   if (!NativeSourceCurrent(descriptor)) return nil;
   KestrelNativeTransferSourceLease* lease = [[self alloc] init]; lease.descriptor = descriptor;
@@ -543,14 +548,18 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 @property(nonatomic) uint64_t launchedMicroseconds;
 @property(nonatomic) BOOL hasProcessIdentity;
 @property(nonatomic) BOOL projectMode;
+@property(nonatomic,copy) BOOL (^shouldCancel)(void);
 - (BOOL)start;
 - (void)recordTaskIdentity;
 - (BOOL)taskMatchesLaunch;
+- (BOOL)cancellationRequested;
 - (NSDictionary*)request:(NSDictionary*)request;
 - (BOOL)stop;
 @end
 @implementation KestrelCoreTransferPipe
+- (BOOL)cancellationRequested { return self.shouldCancel && self.shouldCancel(); }
 - (BOOL)start {
+  if ([self cancellationRequested]) return NO;
   NSString* root = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"agent-core"];
   self.task = [[NSTask alloc] init]; self.task.executableURL = [NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"node/bin/node"]];
   self.task.arguments = @[@"--max-old-space-size=1536", [root stringByAppendingPathComponent:self.projectMode ? @"service/host-profile-project-transfer.js" : @"service/host-profile-file-transfer.js"], @"--protected-host-pipe"];
@@ -560,7 +569,12 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   NSPipe* input = NSPipe.pipe; NSPipe* output = NSPipe.pipe;
   self.task.standardInput = input; self.task.standardOutput = output; self.task.standardError = NSFileHandle.fileHandleWithNullDevice;
   self.input = input.fileHandleForWriting; self.output = output.fileHandleForReading; self.buffered = NSMutableData.data;
-  fcntl(self.input.fileDescriptor, F_SETNOSIGPIPE, 1);
+  for (NSFileHandle* handle in @[self.input,self.output]) {
+    const int descriptor = handle.fileDescriptor;
+    const int flags = fcntl(descriptor,F_GETFL);
+    if (flags < 0 || fcntl(descriptor,F_SETFL,flags|O_NONBLOCK) < 0) return NO;
+  }
+  if (fcntl(self.input.fileDescriptor,F_SETNOSIGPIPE,1) < 0 || [self cancellationRequested]) return NO;
   if (![self.task launchAndReturnError:nil]) return NO;
   [self recordTaskIdentity]; return YES;
 }
@@ -576,21 +590,29 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
       info.pbi_ppid == static_cast<uint32_t>(getpid()) && info.pbi_start_tvsec == self.launchedSeconds && info.pbi_start_tvusec == self.launchedMicroseconds;
 }
 - (NSDictionary*)request:(NSDictionary*)request {
-  if (!self.task.running || !self.input || !self.output) return nil;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+  if ([self cancellationRequested] || !self.task.running || !self.input || !self.output) return nil;
   NSString* request_id = NSUUID.UUID.UUIDString.lowercaseString;
   NSMutableDictionary* body = [request mutableCopy]; body[@"requestId"] = request_id;
   NSMutableData* bytes = [[NSJSONSerialization dataWithJSONObject:body options:0 error:nil] mutableCopy];
-  if (!bytes || bytes.length > kFrameLimit) return nil; [bytes appendBytes:"\n" length:1];
+  if (!bytes || bytes.length > kFrameLimit) { if (bytes.length) Clear(bytes.mutableBytes,bytes.length); return nil; }
+  [bytes appendBytes:"\n" length:1];
   size_t offset = 0; bool sent = true;
   while (offset < bytes.length) {
+    if ([self cancellationRequested] || std::chrono::steady_clock::now() >= deadline) { sent = false; break; }
     const ssize_t count = write(self.input.fileDescriptor, static_cast<const uint8_t*>(bytes.bytes) + offset, bytes.length - offset);
-    if (count < 0 && errno == EINTR) continue;
+    if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
+      pollfd writable{self.input.fileDescriptor,POLLOUT,0}; const int ready = poll(&writable,1,50);
+      if (ready < 0 && errno != EINTR) { sent = false; break; }
+      if (ready > 0 && (writable.revents & (POLLERR|POLLHUP|POLLNVAL))) { sent = false; break; }
+      continue;
+    }
     if (count <= 0) { sent = false; break; } offset += static_cast<size_t>(count);
   }
   Clear(bytes.mutableBytes, bytes.length); if (!sent) return nil;
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
   const uint8_t newline = '\n';
   while (std::chrono::steady_clock::now() < deadline) {
+    if ([self cancellationRequested]) return nil;
     NSRange line = [self.buffered rangeOfData:[NSData dataWithBytes:&newline length:1] options:0 range:NSMakeRange(0,self.buffered.length)];
     if (line.location != NSNotFound) {
       if (line.location > kFrameLimit) return nil;
@@ -602,10 +624,11 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
       if (![response[@"ok"] boolValue] && ![response[@"error"] isKindOfClass:NSDictionary.class]) return nil;
       return response;
     }
-    pollfd ready{self.output.fileDescriptor,POLLIN,0}; const int status = poll(&ready,1,250);
+    pollfd ready{self.output.fileDescriptor,POLLIN,0}; const int status = poll(&ready,1,50);
     if (status < 0 && errno == EINTR) continue; if (status < 0) return nil;
     if (!status) continue;
     uint8_t chunk[4096]; const ssize_t count = read(self.output.fileDescriptor,chunk,sizeof(chunk));
+    if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
     if (count <= 0) return nil;
     if (self.buffered.length + static_cast<size_t>(count) > kFrameLimit+1) return nil;
     [self.buffered appendBytes:chunk length:static_cast<NSUInteger>(count)];
@@ -650,6 +673,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 @property(nonatomic) BOOL testKeys;
 @property(nonatomic) BOOL busy;
 @property(atomic) BOOL stopped;
+@property(nonatomic) BOOL pipeStopAttempted;
 @property(nonatomic,strong) dispatch_queue_t queue;
 - (void)showPlan:(NSDictionary*)planned;
 - (void)showTransferFailure:(NSString*)detail;
@@ -659,15 +683,50 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 - (void)showInterruptedReview:(NSDictionary*)reviewed row:(NSDictionary*)row selection:(NSDictionary*)selection;
 - (void)showProjectRecoveryReview:(NSDictionary*)planned row:(NSDictionary*)row selection:(NSDictionary*)selection witness:(NSDictionary*)witness source:(NSString*)source;
 - (void)showRecoveredSelection:(NSDictionary*)row selection:(NSDictionary*)selection witness:(NSDictionary*)witness source:(NSString*)source;
+- (BOOL)stopPipeOnQueueAllowRetry:(BOOL)allowRetry releaseSource:(BOOL)releaseSource;
+- (void)stopPipeWithCompletion:(void (^)(BOOL confirmed))completion;
 @end
 
 @implementation KestrelNativeProfileTransferController
+@synthesize sourceLease = _sourceLease;
+- (void)setSourceLease:(KestrelNativeTransferSourceLease*)sourceLease {
+  if (_sourceLease == sourceLease) return;
+  [_sourceLease invalidate];
+  _sourceLease = sourceLease;
+}
 - (instancetype)initWithBrowserProfile:(NSString*)browserProfile currentCoreProfile:(NSString*)currentCoreProfile testKeys:(BOOL)testKeys {
   if ((self = [super init])) { _browserProfile = [browserProfile copy]; _currentCoreProfile = [currentCoreProfile copy]; _testKeys = testKeys; _queue = dispatch_queue_create("com.kestrel.profile-transfer",DISPATCH_QUEUE_SERIAL); }
   return self;
 }
 - (BOOL)canBegin { return !self.busy && !self.stopped; }
-- (void)shutdown { self.stopped = YES; [self.picker cancel:nil]; if (self.reviewAlert) [NSApp abortModal]; dispatch_async(self.queue, ^{ if ([self.pipe stop] || !self.pipe) { self.pipe = nil; self.sourceLease = nil; } }); }
+- (BOOL)stopPipeOnQueueAllowRetry:(BOOL)allowRetry releaseSource:(BOOL)releaseSource {
+  if (!self.pipe) { if (releaseSource) self.sourceLease = nil; self.pipeStopAttempted = NO; return YES; }
+  if (self.pipeStopAttempted && !allowRetry) return NO;
+  self.pipeStopAttempted = YES;
+  const BOOL confirmed = [self.pipe stop];
+  if (confirmed) { self.pipe = nil; if (releaseSource) self.sourceLease = nil; self.pipeStopAttempted = NO; }
+  return confirmed;
+}
+- (void)stopPipeWithCompletion:(void (^)(BOOL))completion {
+  dispatch_async(self.queue, ^{
+    const BOOL confirmed = [self stopPipeOnQueueAllowRetry:NO releaseSource:YES];
+    dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(confirmed); });
+  });
+}
+- (void)shutdown { if (self.stopped) return; self.stopped = YES; [self.picker cancel:nil]; if (self.reviewAlert) [NSApp abortModal]; dispatch_async(self.queue, ^{ [self stopPipeOnQueueAllowRetry:NO releaseSource:YES]; }); }
+- (BOOL)waitForShutdown:(NSTimeInterval)timeout {
+  if (![NSThread isMainThread] || !std::isfinite(timeout) || timeout <= 0 || timeout > 15.0) return NO;
+  [self shutdown];
+  dispatch_semaphore_t complete = dispatch_semaphore_create(0);
+  __block BOOL stopped = NO;
+  dispatch_async(self.queue, ^{
+    stopped = self.pipe == nil && self.sourceLease == nil;
+    dispatch_semaphore_signal(complete);
+  });
+  const int64_t nanos = static_cast<int64_t>(timeout * static_cast<NSTimeInterval>(NSEC_PER_SEC));
+  if (dispatch_semaphore_wait(complete,dispatch_time(DISPATCH_TIME_NOW,nanos)) != 0) return NO;
+  return stopped;
+}
 - (NSString*)destinationKey {
   if (self.stopped) return nil;
   NativeCoreProfileKeyStore store; std::string key, error;
@@ -709,8 +768,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   if (self.pipe) {
     self.busy = YES;
     dispatch_async(self.queue, ^{
-      const BOOL confirmed = [self.pipe stop];
-      if (confirmed) { self.pipe = nil; self.sourceLease = nil; }
+      const BOOL confirmed = [self stopPipeOnQueueAllowRetry:YES releaseSource:YES];
       dispatch_async(dispatch_get_main_queue(), ^{
         if (self.stopped) return;
         self.busy = NO;
@@ -763,7 +821,9 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
         ? @"This development profile stores its encryption key without protection. Continue with a read-only data review? A separate destination profile will be prepared. Nothing will be imported until you review and apply the plan."
         : @"Kestrel will unlock this profile for a read-only data review. macOS may ask you to allow access to Kestrel Safe Storage. A separate protected destination profile will be prepared. Nothing will be imported until you review and apply the plan.";
     [consent addButtonWithTitle:@"Review Data"]; [consent addButtonWithTitle:@"Cancel"];
-    if ([consent runModal] != NSAlertFirstButtonReturn || owner.stopped) { owner.sourceLease = nil; owner.busy = NO; return; }
+    const NSModalResponse consentDecision = [consent runModal];
+    if (owner.stopped) return;
+    if (consentDecision != NSAlertFirstButtonReturn) { owner.sourceLease = nil; owner.busy = NO; return; }
     owner.selectedSource = native ? selected : source;
     dispatch_async(owner.queue, ^{ @autoreleasepool {
       std::array<uint8_t,32> key{}; std::string failure;
@@ -780,6 +840,8 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
         NSString* destination_key = [owner destinationKey];
         if (destination_key && !owner.stopped && (!native || ([owner.sourceLease isCurrent] && SaveSourceBinding(owner.preparedProfile,owner.preparedHandoffId,native,destination_key)))) {
           owner.pipe = [[KestrelCoreTransferPipe alloc] init]; owner.pipe.projectMode = YES;
+          __weak KestrelNativeProfileTransferController* weakOwner = owner;
+          owner.pipe.shouldCancel = ^BOOL { KestrelNativeProfileTransferController* current = weakOwner; return !current || current.stopped; };
           if ([owner.pipe start]) {
             NSString* encoded = [[NSData dataWithBytes:key.data() length:key.size()] base64EncodedStringWithOptions:0];
             planned = [owner.pipe request:@{@"method":@"plan-profile", @"sourceProfileRoot":source,
@@ -796,10 +858,13 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   if (![planned[@"ok"] boolValue] || ![planned[@"planId"] isKindOfClass:NSString.class] || ![planned[@"preview"] isKindOfClass:NSDictionary.class] ||
       ![planned[@"preview"][@"counts"] isKindOfClass:NSDictionary.class] || ![planned[@"preview"][@"excluded"] isKindOfClass:NSDictionary.class] ||
       ![planned[@"preview"][@"planSha256"] isKindOfClass:NSString.class] || !SafeLegacyCounts(planned[@"preview"][@"legacy"]) || !SafeProjectHandoffPreview(planned[@"preview"][@"projectHandoff"],self.preparedHandoffId)) {
-    if ([self.pipe stop] || !self.pipe) { self.pipe = nil; self.sourceLease = nil; }
-    self.busy = NO;
     NSString* detail = [planned[@"error"][@"message"] isKindOfClass:NSString.class] ? planned[@"error"][@"message"] : @"The selected profile could not be unlocked or reviewed. Existing data was preserved.";
-    if (self.preparedProfile) [self showTransferFailure:detail]; else Alert(@"Profile review unavailable",detail);
+    [self stopPipeWithCompletion:^(BOOL confirmed) {
+      if (self.stopped) return;
+      self.busy = NO;
+      if (!confirmed) { Alert(@"Transfer worker still stopping",@"The private transfer worker could not be confirmed stopped. Existing and prepared files were kept."); return; }
+      if (self.preparedProfile) [self showTransferFailure:detail]; else Alert(@"Profile review unavailable",detail);
+    }];
     return;
   }
   NSAlert* review = [[NSAlert alloc] init]; review.messageText = @"Transfer conversations, memory and projects?";
@@ -809,13 +874,20 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   closed.frame = NSMakeRect(0,0,390,32); review.accessoryView = closed; review.buttons.firstObject.enabled = NO; self.reviewAlert = review;
   std::cout << "KESTREL_NATIVE_CORE_TRANSFER_REVIEW_READY" << std::endl;
   const NSModalResponse decision = [review runModal]; self.reviewAlert = nil;
-  if (decision != NSAlertFirstButtonReturn || closed.state != NSControlStateValueOn) { if ([self.pipe stop] || !self.pipe) { self.pipe = nil; self.sourceLease = nil; } self.busy = NO; return; }
+  if (self.stopped) return;
+  if (decision != NSAlertFirstButtonReturn || closed.state != NSControlStateValueOn) {
+    [self stopPipeWithCompletion:^(BOOL confirmed) {
+      if (self.stopped) return;
+      self.busy = NO;
+      if (!confirmed) Alert(@"Transfer worker still stopping",@"The private transfer worker could not be confirmed stopped. Existing and prepared files were kept.");
+    }];
+    return;
+  }
   dispatch_async(self.queue, ^{ @autoreleasepool {
     NSString* destination_key = (!self.sourceLease || [self.sourceLease isCurrent]) ? [self destinationKey] : nil;
     NSDictionary* applied = destination_key && !self.stopped ? [self.pipe request:@{@"method":@"apply-profile",@"planId":planned[@"planId"],@"acceptedPlanSha256":planned[@"preview"][@"planSha256"],@"approved":@YES,@"destinationKeyBase64":destination_key}] : nil;
     NSDictionary* verified = [applied[@"ok"] boolValue] && [applied[@"handoffId"] isEqual:self.preparedHandoffId] ? [self.pipe request:@{@"method":@"verify-profile",@"recoveryId":applied[@"recoveryId"]}] : nil;
-    const BOOL worker_stopped = !self.pipe || [self.pipe stop];
-    if (worker_stopped) self.pipe = nil;
+    const BOOL worker_stopped = [self stopPipeOnQueueAllowRetry:NO releaseSource:NO];
     dispatch_async(dispatch_get_main_queue(), ^{
       if (self.stopped) return;
       if ([verified[@"ok"] boolValue] && [verified[@"handoffId"] isEqual:self.preparedHandoffId] && worker_stopped && (!self.sourceLease || [self.sourceLease isCurrent])) {
@@ -834,7 +906,6 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
           std::cout << "KESTREL_NATIVE_CORE_TRANSFER_SELECTED" << std::endl; return;
         }
       }
-      if (worker_stopped) self.sourceLease = nil;
       self.busy = NO;
       [self showTransferFailure:@"The transfer could not be activated safely. Your current data profile and the original source remain available."];
     });
@@ -843,17 +914,17 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 - (void)showTransferFailure:(NSString*)detail {
   if (self.stopped) return;
   NSString* prepared = self.preparedProfile;
-  if (!prepared) { self.busy = NO; Alert(@"Transfer needs review",detail); return; }
+  if (!prepared) { self.sourceLease = nil; self.busy = NO; Alert(@"Transfer needs review",detail); return; }
   self.busy = YES;
   NSAlert* choice = [[NSAlert alloc] init]; choice.messageText = @"Keep the prepared files and start again?";
   choice.informativeText = [NSString stringWithFormat:@"%@\n\nPrepared files stay in:\n%@\n\nKestrel will stop its private transfer worker, keep these files for review and let you choose the source again. The next transfer uses a separate destination. No prepared or existing data will be deleted.",detail,prepared];
   [choice addButtonWithTitle:@"Keep Files & Start Again"]; [choice addButtonWithTitle:@"Show Prepared Folder"]; [choice addButtonWithTitle:@"Cancel"];
   const NSModalResponse decision = [choice runModal];
-  if (decision == NSAlertSecondButtonReturn) { self.busy = NO; [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:prepared isDirectory:YES]]]; return; }
-  if (decision != NSAlertFirstButtonReturn) { self.busy = NO; return; }
+  if (self.stopped) return;
+  if (decision == NSAlertSecondButtonReturn) { self.sourceLease = nil; self.busy = NO; [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:prepared isDirectory:YES]]]; return; }
+  if (decision != NSAlertFirstButtonReturn) { self.sourceLease = nil; self.busy = NO; return; }
   dispatch_async(self.queue, ^{ @autoreleasepool {
-    const BOOL confirmed = !self.pipe || [self.pipe stop];
-    if (confirmed) { self.pipe = nil; self.sourceLease = nil; }
+    const BOOL confirmed = [self stopPipeOnQueueAllowRetry:YES releaseSource:YES];
     dispatch_async(dispatch_get_main_queue(), ^{
       if (self.stopped) return;
       if (!confirmed) { self.busy = NO; Alert(@"Transfer worker still stopping",@"Kestrel could not confirm that its private transfer worker stopped. All files were kept. Leave this preparation available for review before retrying."); return; }
@@ -879,8 +950,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 }
 - (void)finishInterruptedWithTitle:(NSString*)title message:(NSString*)message {
   dispatch_async(self.queue, ^{ @autoreleasepool {
-    const BOOL confirmed = !self.pipe || [self.pipe stop];
-    if (confirmed) { self.pipe = nil; self.sourceLease = nil; }
+    const BOOL confirmed = [self stopPipeOnQueueAllowRetry:NO releaseSource:YES];
     dispatch_async(dispatch_get_main_queue(), ^{
       if (self.stopped) return;
       self.busy = NO;
@@ -894,7 +964,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   if (self.pipe) {
     self.busy = YES;
     dispatch_async(self.queue, ^{
-      const BOOL confirmed = [self.pipe stop]; if (confirmed) { self.pipe = nil; self.sourceLease = nil; }
+      const BOOL confirmed = [self stopPipeOnQueueAllowRetry:YES releaseSource:YES];
       dispatch_async(dispatch_get_main_queue(), ^{
         if (self.stopped) return;
         self.busy = NO;
@@ -945,6 +1015,8 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
     NSDictionary* reviewed = nil;
     if ([self interruptedRowIsCurrent:row selection:selection]) {
       self.pipe = [[KestrelCoreTransferPipe alloc] init]; self.pipe.projectMode = YES;
+      __weak KestrelNativeProfileTransferController* weakOwner = self;
+      self.pipe.shouldCancel = ^BOOL { KestrelNativeProfileTransferController* current = weakOwner; return !current || current.stopped; };
       if ([self.pipe start]) reviewed = [self.pipe request:@{@"method":@"inspect-profile",@"destinationCoreRoot":[row[@"path"] stringByAppendingPathComponent:@"native-core"],@"handoffId":selection[@"handoffs"][row[@"relative"]]}];
     }
     dispatch_async(dispatch_get_main_queue(), ^{ if (!self.stopped) [self showInterruptedReview:reviewed row:row selection:selection]; });
@@ -1062,7 +1134,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
     NSDictionary* recovered = !self.stopped ? [self.pipe request:@{@"method":@"recover-profile",@"planId":planned[@"planId"],@"acceptedPlanSha256":planned[@"preview"][@"planSha256"],@"approved":@YES}] : nil;
     NSDictionary* witness = [recovered[@"ok"] boolValue] && [recovered[@"handoffId"] isEqual:identifier] && [RecoveryInputWitness(source,destination) isEqualToDictionary:inputWitness] ? RecoveryWitness(source,destination) : nil;
     NSDictionary* verified = witness && !self.stopped ? [self.pipe request:@{@"method":@"verify-profile",@"recoveryId":recovered[@"recoveryId"]}] : nil;
-    const BOOL confirmed = !self.pipe || [self.pipe stop]; if (confirmed) self.pipe = nil;
+    const BOOL confirmed = [self stopPipeOnQueueAllowRetry:NO releaseSource:NO];
     const BOOL unchanged = witness && [RecoveryWitness(source,destination) isEqualToDictionary:witness];
     dispatch_async(dispatch_get_main_queue(), ^{
       if (self.stopped) return;
@@ -1104,7 +1176,8 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   NSAlert* choice = [[NSAlert alloc] init]; choice.messageText = @"Use the previous data profile?";
   choice.informativeText = @"This changes the conversations, memory and task history used after restart. Both profiles and any newer work remain on this Mac. Browser data is unchanged.";
   [choice addButtonWithTitle:@"Use Previous Data Profile"]; [choice addButtonWithTitle:@"Cancel"];
-  if ([choice runModal] != NSAlertFirstButtonReturn) return;
+  const NSModalResponse decision = [choice runModal];
+  if (self.stopped || decision != NSAlertFirstButtonReturn) return;
   const auto saved = KestrelSaveReviewedNativeCoreProfileSelection(self.browserProfile,selected[@"previous"],selected[@"active"],selected);
   if (saved == KestrelNativeProfileSelectionResult::Unchanged) { Alert(@"Profile selection unavailable",@"The profile selection changed or could not be saved. Existing data was preserved."); return; }
   Alert(saved == KestrelNativeProfileSelectionResult::Selected ? @"Data profile selected" : @"Data profile selected; storage needs attention",

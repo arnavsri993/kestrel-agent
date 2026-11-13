@@ -5,7 +5,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <atomic>
 #include <membership.h>
+#include <poll.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/proc.h>
 #include <unistd.h>
@@ -25,10 +28,22 @@ static int FixtureFsync(int fd) {
   if (fault && !fstat(fd,&info) && ((!strcmp(fault,"directory") && S_ISDIR(info.st_mode)) || (!strcmp(fault,"file") && S_ISREG(info.st_mode)))) { errno = EIO; return -1; }
   return fsync(fd);
 }
+static std::atomic<int> FixturePollTarget{-1};
+static std::atomic<short> FixturePollEvents{0};
+static dispatch_semaphore_t FixturePollEntered;
+static int FixturePoll(pollfd* descriptors, nfds_t count, int timeout) {
+  for (nfds_t index = 0; index < count; ++index) {
+    int expected = descriptors[index].fd;
+    if (expected >= 0 && (descriptors[index].events & FixturePollEvents.load()) && FixturePollTarget.compare_exchange_strong(expected,-1)) dispatch_semaphore_signal(FixturePollEntered);
+  }
+  return poll(descriptors,count,timeout);
+}
 #define fsync FixtureFsync
+#define poll FixturePoll
 #define CreateNativeLegacyKestrelKeychainReader FixtureLegacyReader
 #include "../src/kestrel_native_profile_transfer.mm"
 #undef CreateNativeLegacyKestrelKeychainReader
+#undef poll
 #undef fsync
 
 class ReadOnlySourceFixtureBackend final : public NativeCoreKeychainBackend {
@@ -61,9 +76,13 @@ class ReadOnlySourceFixtureBackend final : public NativeCoreKeychainBackend {
 @property(nonatomic,weak) FixtureRetryController* owner;
 @property(nonatomic) BOOL confirmed;
 @property(atomic) BOOL stopCalled;
+@property(atomic) NSUInteger stopCount;
+@property(nonatomic) useconds_t stopDelay;
 @end
 @implementation FixtureRetryPipe
 - (BOOL)stop {
+  ++self.stopCount;
+  if (self.stopDelay) usleep(self.stopDelay);
   // On an uncertain stop, model owner shutdown before the main-queue alert.
   // This leaves the actual guarded cleanup path intact without native UI.
   if (!self.confirmed) self.owner.stopped = YES;
@@ -71,9 +90,71 @@ class ReadOnlySourceFixtureBackend final : public NativeCoreKeychainBackend {
   return self.confirmed;
 }
 @end
+static BOOL FixtureLockProbe(NSString* owner) {
+  NSTask* task = [[NSTask alloc] init]; task.executableURL = [NSURL fileURLWithPath:NSProcessInfo.processInfo.arguments.firstObject];
+  task.arguments = @[@"--lock-probe",owner]; NSPipe* output = NSPipe.pipe; task.standardOutput = output;
+  if (![task launchAndReturnError:nil]) return NO;
+  NSData* data = [output.fileHandleForReading readDataToEndOfFile]; [task waitUntilExit];
+  return task.terminationStatus == 0 && [data isEqualToData:[@"available\n" dataUsingEncoding:NSUTF8StringEncoding]];
+}
 
 int main(int argc, char** argv) {
   @autoreleasepool {
+    if (argc == 3 && !strcmp(argv[1],"--lock-probe")) {
+      NSString* owner = [NSString stringWithUTF8String:argv[2]];
+      NSDictionary* descriptor = NativeSourceDescriptor(owner);
+      kestrel::ProfileReservationError reservationError;
+      auto reservation = descriptor ? kestrel::ProfileReservation::Acquire(std::string(owner.fileSystemRepresentation),&reservationError) : nullptr;
+      auto activeReservation = descriptor && ![descriptor[@"profileRoot"] isEqual:owner]
+          ? kestrel::ProfileReservation::Acquire(std::string([descriptor[@"profileRoot"] fileSystemRepresentation]),&reservationError) : nullptr;
+      const BOOL reservationsAvailable = reservation && ([descriptor[@"profileRoot"] isEqual:owner] || activeReservation);
+      NSString* path = [owner stringByAppendingPathComponent:@".kestrel-desktop.lock"];
+      const int fd = open(path.fileSystemRepresentation,O_RDWR|O_NOFOLLOW|O_CLOEXEC);
+      const BOOL available = reservationsAvailable && fd >= 0 && flock(fd,LOCK_EX|LOCK_NB) == 0;
+      if (available) flock(fd,LOCK_UN); if (fd >= 0) close(fd);
+      fputs(available ? "available\n" : "blocked\n",stdout); return 0;
+    }
+    if (argc == 2 && (!strcmp(argv[1],"--pipe-cancel-read") || !strcmp(argv[1],"--pipe-cancel-write"))) {
+      const bool blocked_write = !strcmp(argv[1],"--pipe-cancel-write");
+      KestrelNativeProfileTransferController* controller = [[KestrelNativeProfileTransferController alloc]
+          initWithBrowserProfile:@"/tmp" currentCoreProfile:@"/tmp" testKeys:NO];
+      KestrelCoreTransferPipe* pipe = [[KestrelCoreTransferPipe alloc] init]; pipe.projectMode = YES;
+      controller.pipe = pipe;
+      __weak KestrelNativeProfileTransferController* weakOwner = controller;
+      pipe.shouldCancel = ^BOOL { KestrelNativeProfileTransferController* current = weakOwner; return !current || current.stopped; };
+      dispatch_semaphore_t started = dispatch_semaphore_create(0);
+      __block NSDictionary* response = @{@"ok":@YES};
+      __block pid_t child = -1;
+      FixturePollEntered = dispatch_semaphore_create(0);
+      dispatch_async(controller.queue, ^{
+        const BOOL launched = [pipe start];
+        if (launched) child = pipe.task.processIdentifier;
+        if (launched && blocked_write) {
+          std::array<uint8_t,8192> fill{};
+          bool full = false;
+          while (!full) {
+            const ssize_t count = write(pipe.input.fileDescriptor,fill.data(),fill.size());
+            if (count > 0) continue;
+            if (count < 0 && errno == EINTR) continue;
+            full = count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK);
+            if (!full) { dispatch_semaphore_signal(started); return; }
+          }
+        }
+        FixturePollEvents = blocked_write ? POLLOUT : POLLIN;
+        FixturePollTarget = blocked_write ? pipe.input.fileDescriptor : pipe.output.fileDescriptor;
+        dispatch_semaphore_signal(started);
+        if (launched) response = [pipe request:@{@"method":@"generated-wait-fixture"}];
+      });
+      if (dispatch_semaphore_wait(started,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC)) != 0) return 2;
+      if (dispatch_semaphore_wait(FixturePollEntered,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC)) != 0) return 2;
+      const auto begin = std::chrono::steady_clock::now();
+      const BOOL stopped = [controller waitForShutdown:3.0];
+      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-begin).count();
+      const bool child_absent = child > 0 && kill(child,0) < 0 && errno == ESRCH;
+      NSData* result = [NSJSONSerialization dataWithJSONObject:@{@"stopped":@(stopped),@"requestCancelled":@(response == nil),
+          @"blockedWrite":@(blocked_write),@"childAbsent":@(child_absent),@"elapsedMs":@(elapsed),@"pipeRetained":@(controller.pipe != nil)} options:0 error:nil];
+      return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
+    }
     if ((argc == 4 || argc == 5) && !strcmp(argv[2],"--native-source")) {
       NSString* owner = [NSString stringWithUTF8String:argv[1]], *action = [NSString stringWithUTF8String:argv[3]];
       NSDictionary* descriptor = NativeSourceDescriptor(owner);
@@ -97,6 +178,64 @@ int main(int argc, char** argv) {
         if (!busyReservation) return 2;
       }
       if (descriptor) lease = [KestrelNativeTransferSourceLease acquire:descriptor];
+      if ([action isEqual:@"lease-stop-retain"]) {
+        if (!lease || !originalVault) return 2;
+        KestrelNativeProfileTransferController* controller = [[KestrelNativeProfileTransferController alloc] initWithBrowserProfile:owner currentCoreProfile:owner testKeys:NO];
+        FixtureRetryPipe* pipe = [[FixtureRetryPipe alloc] init]; pipe.confirmed = YES;
+        KestrelNativeTransferSourceLease* retainedLease = lease;
+        controller.pipe = pipe; controller.sourceLease = retainedLease;
+        lease = nil;
+        dispatch_semaphore_t finished = dispatch_semaphore_create(0);
+        dispatch_async(controller.queue, ^{
+          const BOOL stopped = [controller stopPipeOnQueueAllowRetry:NO releaseSource:NO];
+          dispatch_semaphore_signal(finished);
+          if (!stopped) return;
+        });
+        if (dispatch_semaphore_wait(finished,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC)) != 0) return 2;
+        BOOL retained = NO;
+        @autoreleasepool { retained = controller.pipe == nil && controller.sourceLease != nil && [controller.sourceLease isCurrent]; }
+        const BOOL blocking = !FixtureLockProbe(owner);
+        NSMutableData* changed = [originalVault mutableCopy]; const uint8_t byte = 0x7f; [changed appendBytes:&byte length:1];
+        NSString* vaultBackup = [vault stringByAppendingString:@".fixture-backup"];
+        const BOOL movedOriginal = rename(vault.fileSystemRepresentation,vaultBackup.fileSystemRepresentation) == 0;
+        const BOOL wroteMutation = movedOriginal && WritePrivateFile(vault,changed,false);
+        BOOL mutationDetected = NO;
+        @autoreleasepool { mutationDetected = wroteMutation && ![controller.sourceLease isCurrent]; }
+        if (wroteMutation) unlink(vault.fileSystemRepresentation);
+        const BOOL restored = movedOriginal && rename(vaultBackup.fileSystemRepresentation,vault.fileSystemRepresentation) == 0;
+        BOOL shutdown = NO, ownerReleased = NO;
+        @autoreleasepool { shutdown = [controller waitForShutdown:1.0]; ownerReleased = controller.sourceLease == nil; }
+        [retainedLease invalidate]; [retainedLease invalidate];
+        const BOOL invalidated = ![retainedLease isCurrent];
+        const BOOL released = restored && FixtureLockProbe(owner);
+        NSData* result = [NSJSONSerialization dataWithJSONObject:@{@"stoppedWorker":@(retained),@"leaseBlocksSecondOwner":@(blocking),
+          @"mutationDetected":@(mutationDetected),@"sourceRestored":@(restored),@"shutdownConfirmed":@(shutdown),
+          @"leaseReleasedAtShutdown":@(ownerReleased && released),@"invalidateIdempotent":@(invalidated)} options:0 error:nil];
+        return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
+      }
+      if ([action hasPrefix:@"shutdown-"] && ![action isEqual:@"shutdown-timeout"]) {
+        if (!lease) return 2;
+        FixtureRetryController* controller = [[FixtureRetryController alloc] initWithBrowserProfile:owner currentCoreProfile:owner testKeys:NO];
+        FixtureRetryPipe* pipe = [[FixtureRetryPipe alloc] init];
+        pipe.confirmed = [action hasSuffix:@"confirmed"]; pipe.owner = controller;
+        controller.pipe = pipe; controller.sourceLease = lease; lease = nil;
+        const BOOL stopped = [controller waitForShutdown:1.0]; [controller shutdown];
+        NSData* result = [NSJSONSerialization dataWithJSONObject:@{@"stopped":@(controller.stopped),@"waitPassed":@(stopped),@"stopCount":@(pipe.stopCount),
+            @"pipeRetained":@(controller.pipe != nil),@"leaseRetained":@(controller.sourceLease != nil),@"lockAvailable":@(FixtureLockProbe(owner))} options:0 error:nil];
+        return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
+      }
+      if ([action isEqual:@"shutdown-timeout"]) {
+        if (!lease) return 2;
+        FixtureRetryController* controller = [[FixtureRetryController alloc] initWithBrowserProfile:owner currentCoreProfile:owner testKeys:NO];
+        FixtureRetryPipe* pipe = [[FixtureRetryPipe alloc] init]; pipe.confirmed = YES; pipe.stopDelay = 150000; pipe.owner = controller;
+        controller.pipe = pipe; controller.sourceLease = lease; lease = nil;
+        const BOOL first = [controller waitForShutdown:0.01];
+        const BOOL second = [controller waitForShutdown:1.0];
+        NSData* result = [NSJSONSerialization dataWithJSONObject:@{@"firstWaitPassed":@(first),@"secondWaitPassed":@(second),
+            @"stopCount":@(pipe.stopCount),@"pipeRetained":@(controller.pipe != nil),@"leaseRetained":@(controller.sourceLease != nil),
+            @"lockAvailable":@(FixtureLockProbe(owner))} options:0 error:nil];
+        return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
+      }
       if ([action hasPrefix:@"retry-"]) {
         if (!lease) return 2;
         FixtureRetryController* controller = [[FixtureRetryController alloc] initWithBrowserProfile:owner currentCoreProfile:owner testKeys:NO];

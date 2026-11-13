@@ -11,7 +11,14 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 	let temporary, executable;
 	beforeAll(() => {
 		const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-		temporary = realpathSync(mkdtempSync(join(tmpdir(), "kestrel-profile-selection-"))); executable = join(temporary, "selection-fixture");
+		temporary = realpathSync(mkdtempSync(join(tmpdir(), "kestrel-profile-selection-")));
+		const bundle = join(temporary, "Fixture.app", "Contents");
+		const resources = join(bundle, "Resources"), nodeDirectory = join(resources, "agent-core/node/bin");
+		mkdirSync(join(bundle, "MacOS"), { recursive: true }); mkdirSync(nodeDirectory, { recursive: true });
+		executable = join(bundle, "MacOS/selection-fixture");
+		writeFileSync(join(bundle, "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>selection-fixture</string><key>CFBundleIdentifier</key><string>com.kestrel.native-profile-selection-fixture</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`);
+		const fakeNode = join(nodeDirectory, "node");
+		writeFileSync(fakeNode, "#!/bin/sh\nparent=$PPID\nsleeper=\ntrap 'if [ -n \"$sleeper\" ]; then kill \"$sleeper\" 2>/dev/null; wait \"$sleeper\" 2>/dev/null; fi; exit 0' TERM INT HUP\ni=0\nwhile [ \"$i\" -lt 80 ] && kill -0 \"$parent\" 2>/dev/null; do\n  /bin/sleep 0.1 & sleeper=$!\n  wait \"$sleeper\"\n  sleeper=\n  i=$((i+1))\ndone\nexit 0\n", { mode: 0o700 }); chmodSync(fakeNode, 0o700);
 		const crypto = compileNativeLocalVaultCrypto(join(temporary, "vault.o"));
 		const sdk = execFileSync("/usr/bin/xcrun", ["--show-sdk-path"], { encoding: "utf8", timeout: 5000 }).trim();
 		execFileSync("/usr/bin/xcrun", ["clang++", "-std=c++20", "-fobjc-arc", "-Wall", "-Wextra", "-Werror", "-mmacosx-version-min=13.0", "-isysroot", sdk,
@@ -142,6 +149,31 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 		const value = nativeSource(true);
 		expect(fixture(value.root, "--native-source", `retry-${operation}-uncertain`)).toEqual({
 			stopCalled: true, reentered: false, pipeRetained: true, leaseRetained: true,
+		});
+	});
+	it.each([true, false])("waits for transfer shutdown once and preserves an uncertain source reservation (confirmed %s)", confirmed => {
+		const value = nativeSource(true);
+		expect(fixture(value.root, "--native-source", `shutdown-${confirmed ? "confirmed" : "uncertain"}`)).toEqual({
+			stopped: true, waitPassed: confirmed, stopCount: 1, pipeRetained: !confirmed, leaseRetained: !confirmed, lockAvailable: confirmed,
+		});
+	});
+	it("bounds shutdown waiting and permits a later completion check", () => {
+		const value = nativeSource(true);
+		expect(fixture(value.root, "--native-source", "shutdown-timeout")).toEqual({
+			firstWaitPassed: false, secondWaitPassed: true, stopCount: 1, pipeRetained: false, leaseRetained: false, lockAvailable: true,
+		});
+	});
+	it.each(["read", "write"])("cancels a blocked production-pipe %s and reaps only its owned child", mode => {
+		const result = spawnSync(executable, [`--pipe-cancel-${mode}`], { encoding: "utf8", timeout: 10_000 });
+		expect(result.error).toBeUndefined(); expect(result.status).toBe(0); expect(result.stderr).toBe("");
+		expect(JSON.parse(result.stdout)).toMatchObject({ stopped: true, requestCancelled: true, blockedWrite: mode === "write", childAbsent: true, pipeRetained: false });
+		expect(JSON.parse(result.stdout).elapsedMs).toBeLessThan(2_000);
+	});
+	it("keeps a verified source lease until final choice or shutdown", () => {
+		const value = nativeSource(true);
+		expect(fixture(value.root, "--native-source", "lease-stop-retain")).toEqual({
+			stoppedWorker: true, leaseBlocksSecondOwner: true, mutationDetected: true, sourceRestored: true, shutdownConfirmed: true,
+			leaseReleasedAtShutdown: true, invalidateIdempotent: true,
 		});
 	});
 	it.each(["busy-source", "busy-reservation", "busy-active-reservation"])("refuses native source in use through %s before key access", action => {

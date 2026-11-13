@@ -210,10 +210,35 @@ creates encrypted source data through the real app and drives actual native
 review/apply and rollback, including an owner whose active data is an imported
 child. It exports no source keys and preserves failed fixtures. Source A's
 restart check and destination B's session setup pass on rebuilt candidate
-`7be6f04e...`; native UI steps
-are waiting for the Mac to be unlocked. The full transfer/rollback flow is not
-yet accepted. An independent shutdown issue also remains: a synchronous error
-modal can block the main-queue SIGTERM handler until the dialog is dismissed.
+`7be6f04e...`. That run ended with an operator timeout while the Mac stayed
+locked; its four stops were clean, its complete bundle hash matched, and the
+generated profiles are retained. It did not reach native transfer review.
+The full transfer/rollback flow is not yet accepted.
+
+The failed UI run also exposed a synchronous error modal blocking the
+main-queue SIGTERM handler. The revised Quit path bridges from a separate signal
+queue into the standard main run-loop modes, stops the controller and aborts its
+modal before closing Chromium. Pending worker pipe reads/writes now cancel;
+teardown waits up to 15 seconds for the owned worker and source reservation to
+clear. An unconfirmed stop retains its reservation and produces a failing exit,
+while explicit user retries still recheck the worker's process identity.
+Verified source leases stay held through the final activation/recovery choice;
+explicit invalidation releases their fences regardless of ARC temporary refs.
+
+Four native suites pass **123 tests**, with two root-only ownership skips.
+Generated cases exercise nested default/modal/event-tracking dispatch, blocked
+reads and backpressured writes, worker reaping, bounded waits, retained source
+guards after worker stop, immediate cross-process fence release after confirmed
+shutdown, and retention after uncertain shutdown. These are component fixtures,
+not a live Cocoa modal acceptance claim. Private candidate
+`91eab4bb80a7d9b9a774e1ee28027f882f988e946656048bc1b5db97160ea41a`
+built successfully and passed source A's real encrypted-message restart and
+destination B's session setup with normal clean SIGTERM stops. Its actual
+native error-modal Quit and transfer/rollback stages still await unlock under
+`.tmp/native-vault-clean-quit-ui/`. Use
+`KESTREL_TEST_NATIVE_TRANSFER_MODAL_QUIT=1` to include that native-modal test;
+modal presence is explicitly an operator observation, followed by independent
+process-exit and Core restart assertions.
 
 An earlier run of this same flow completed the functionality checks but failed
 checkpoint retention after the computer tool reopened the test binary while

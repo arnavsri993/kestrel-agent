@@ -31,8 +31,9 @@ assert(evidenceInfo.isDirectory() && !evidenceInfo.isSymbolicLink() && evidenceI
 assert.equal((await readdir(evidence)).length, 0, "Evidence directory must be fresh and empty.");
 const run = randomUUID().slice(0, 8), temp = await realpath(await mkdtemp(join(tmpdir(), "kestrel-vault-transfer-")));
 const profiles = {}, descriptors = {}, fixtureEvidence = {};
+const modalQuitRequested = process.env.KESTREL_TEST_NATIVE_TRANSFER_MODAL_QUIT === "1";
 const receipt = { kind: "native-vault-profile-transfer-canary", version: 1, result: "failed", startedAt: new Date().toISOString(), candidate,
- candidateSha256: await candidateDigest(candidate), phases: [], stages: [],
+ candidateSha256: await candidateDigest(candidate), modalQuitRequested, phases: [], stages: [],
  scope: "Generated private temporary profiles, production local vaults, loopback CDP and operator-driven native menus/dialogs. No real profile, test key, provider credential, mock key, external fixture/provider request, Store, release gate or crash-recovery claim. Browser background network traffic is not measured." };
 let running, browser, currentStage = "preflight", interrupted = false;
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -232,7 +233,18 @@ try {
  const bSession = (await request(b.home, { type: "runtime-create-session", title: bTitle, kind: "conversation" })).session; assert(bSession?.id);
  await stop(); const bOwnSnapshot = await snapshotSource(B); phase("B-production-vault-own-session-stopped-and-snapshotted");
  const oldBSelection = await selection(B), beforeA = await snapshotSource(A);
- currentStage = "B-import-A-review"; const bLive = await start("B");
+ currentStage = "B-import-A-review"; let bLive = await start("B");
+ if (modalQuitRequested) {
+  currentStage = "B-native-error-modal-quit";
+  const invalidSource = join(temp,"invalid-source"); await mkdir(invalidSource,{mode:0o700});
+  await operator("B-empty-source-error", "Choose Transfer Conversations & Memory in the native menu, select the exact empty generated folder, and leave the Profile unavailable alert open. The script will send SIGTERM while that alert is still open.",
+   { invalidSource, ownerProfile: B, modalPresenceEvidence: "operator-observed-native-alert" });
+  await stop();
+  bLive = await start("B");
+  assert((await request(bLive.home,{type:"runtime-list-sessions"})).sessions.some(item => item.id === bSession.id), "B's original Core session must survive clean Quit from the native error modal.");
+  phase("operator-observed-native-error-modal-clean-SIGTERM-and-Core-restart");
+ }
+ currentStage = "B-import-A-review";
  await beginNativeTransfer(bLive, A, "B-import-A");
  const importedA = await applyNativeTransfer(bLive, "B-import-A", oldBSelection, beforeA, A, bSession.id, aSession.id);
  assert.equal((await selection(B)).active, importedA.relative); phase("native-UI-apply-selected-A-for-next-launch-with-B-still-live");

@@ -31,4 +31,7 @@ KestrelNativeProfileSelectionResult KestrelSaveReviewedNativeCoreProfileSelectio
 - (void)restorePrevious;
 - (BOOL)canBegin;
 - (void)shutdown;
+// Main-thread only. Starts shutdown if needed, then waits at most 15 seconds
+// for earlier queue work and the owned transfer worker to stop cleanly.
+- (BOOL)waitForShutdown:(NSTimeInterval)timeout;
 @end
