@@ -77,12 +77,12 @@ export async function retainStoreUpdateFixture({ profile, receiptPath, checkpoin
 
 // Revalidate actual filesystem state; a saved path alone is not a live wait or
 // proof the temporary profile still exists. No browser or Keychain is opened.
-export async function loadRetainedStoreUpdateFixture(checkpointPath, { root = repositoryRoot } = {}) {
+export async function loadRetainedStoreUpdateFixture(checkpointPath, { root = repositoryRoot, candidateCopy } = {}) {
 	const checkpoint = resolve(checkpointPath), { value } = await boundedJson(checkpoint);
 	assert.equal(value.kind, "native-store-update-fixture"); assert.equal(value.version, 1);
 	assert.equal(value.profileRoot, value.fixtureStorage
 		? await validateRetainedNativeBrowserFixtureStorage({ profile: value.profileRoot, candidate: value.candidate,
-			candidateSha256: value.candidateSha256, evidence: value.fixtureStorage, root })
+			candidateCopy, candidateSha256: value.candidateSha256, evidence: value.fixtureStorage, root })
 		: await validateDisposableNativeTestProfile(value.profileRoot));
 	assert(basename(value.profileRoot).startsWith("kestrel-chromium-desktop-canary-"));
 	assert.equal(value.receiptPath, join(await realpath(dirname(checkpoint)), "receipt.json"));

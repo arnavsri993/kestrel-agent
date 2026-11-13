@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { chmod, link, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -89,6 +89,24 @@ describe("generated native browser fixture storage", () => {
   expect(await validateRetainedNativeBrowserFixtureStorage(f)).toBe(profile);
   expect(vi.mocked(validateVaultCanaryCandidate)).toHaveBeenCalled();
  });
+ it("revalidates an explicitly selected byte-identical copy without weakening the original candidate guard", async () => {
+  const f = await fixture(), copy = await realpath(await mkdtemp(join(tmpdir(), "fixture-candidate-copy-")));
+  cleanup.push(copy); await cp(candidate, copy, {recursive:true});
+  const alias = join(profile, "original-executable-alias"); await link(join(candidate,"binary"),alias);
+  vi.mocked(validateVaultCanaryCandidate).mockImplementation(async selected => {
+   if ((await lstat(join(selected,"binary"))).nlink !== 1) throw Error("single-link candidate required");
+   return {candidate:selected};
+  });
+  try {
+   await expect(validateRetainedNativeBrowserFixtureStorage(f)).rejects.toThrow(/single-link/);
+   const before = JSON.stringify(f.evidence), vault = await readFile(join(profile,".kestrel-local-vault-v1"));
+   expect(await validateRetainedNativeBrowserFixtureStorage({...f,candidateCopy:copy})).toBe(profile);
+   expect(JSON.stringify(f.evidence)).toBe(before); expect(await readFile(join(profile,".kestrel-local-vault-v1"))).toEqual(vault);
+   expect((await lstat(join(candidate,"binary"))).nlink).toBe(2);
+   await writeFile(join(copy,"binary"),"different version");
+   await expect(validateRetainedNativeBrowserFixtureStorage({...f,candidateCopy:copy})).rejects.toThrow(/candidate changed/);
+  } finally { vi.mocked(validateVaultCanaryCandidate).mockImplementation(async selected=>({candidate:selected})); }
+ });
  it("rejects a replacement directory at the same profile path", async () => {
   const f = await fixture(), moved = `${profile}-original`;
   cleanup.push(moved);
@@ -96,6 +114,16 @@ describe("generated native browser fixture storage", () => {
   await mkdir(profile, { mode: 0o700 });
   await writeFile(join(profile, ".kestrel-local-vault-v1"), magic, { mode: 0o600 });
   await expect(validateRetainedNativeBrowserFixtureStorage(f)).rejects.toThrow();
+ });
+ it("rejects a running original or copy when resuming with an identical copy", async () => {
+  const f = await fixture(), copy = await realpath(await mkdtemp(join(tmpdir(), "fixture-candidate-copy-")));
+  cleanup.push(copy); await cp(candidate, copy, {recursive:true});
+  for (const selected of [candidate, copy]) {
+   for (const suffix of ["Contents/MacOS/Kestrel", "Contents/Frameworks/Kestrel Helper.app/Contents/MacOS/Kestrel Helper"]) {
+    vi.mocked(execFileSync).mockReturnValue(` 123 ${selected}/${suffix}\n`);
+    await expect(validateRetainedNativeBrowserFixtureStorage({...f,candidateCopy:copy})).rejects.toThrow("process is still running");
+   }
+  }
  });
  it("preflights before touching the profile", async () => {
   vi.mocked(validateVaultCanaryCandidate).mockRejectedValueOnce(Error("bad candidate"));

@@ -138,13 +138,22 @@ export async function captureNativeBrowserFixtureStorage({ profile, storage }) {
  else await validateDisposableNativeTestProfile(info.canonical);
  return evidence;
 }
-export async function validateRetainedNativeBrowserFixtureStorage({ profile, candidate, candidateSha256, evidence, root }) {
+export async function validateRetainedNativeBrowserFixtureStorage({ profile, candidate, candidateCopy, candidateSha256, evidence, root }) {
  assert(evidence && evidence.kind === "native-browser-fixture-storage" && evidence.version === 1);
  assert(["test-key", "production-vault"].includes(evidence.mode));
  assert.match(candidateSha256 ?? "", shaPattern);
  assert.equal(evidence.candidate, candidate); assert.equal(evidence.candidateSha256, candidateSha256);
- const state = { mode: evidence.mode, candidate, candidateSha256, root };
+ if (candidateCopy !== undefined) {
+  assert.equal(evidence.mode, "production-vault", "A candidate copy is only supported for production-vault fixtures.");
+  assert.equal(candidateCopy, resolve(candidateCopy), "Select an absolute canonical candidate copy.");
+ }
+ // The frozen receipt keeps the original path. A separately selected copy
+ // must pass full production preflight and the exact complete-bundle digest;
+ // neither the original receipt nor its profile/vault identity is rewritten.
+ const selected = candidateCopy ?? candidate;
+ const state = { mode: evidence.mode, candidate: selected, candidateSha256, root };
  assertCandidateStopped(candidate);
+ if (selected !== candidate) assertCandidateStopped(selected);
  await verifyCandidate(state);
  const info = await profileInfo(profile);
  assert.equal(evidence.profile, info.canonical); assert.equal(evidence.profileDev, info.dev); assert.equal(evidence.profileIno, info.ino);

@@ -20,10 +20,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const app = await realpath(resolve(process.env.KESTREL_NATIVE_TEST_APP));
 assert.notEqual(app, await realpath("/Applications/Kestrel.app").catch(() => "/Applications/Kestrel.app"));
 const storage = await selectNativeBrowserFixtureStorage({ candidate: app, root });
-const fixture = await loadRetainedStoreUpdateFixture(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT, { root });
+const fixture = await loadRetainedStoreUpdateFixture(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT, { root,
+  ...(storage.mode === "production-vault" ? { candidateCopy: app } : {}) });
 assert.equal(storage.mode, fixture.fixtureStorage?.mode ?? "test-key", "Select the retained fixture's explicit storage mode before launch.");
 if (storage.mode === "production-vault") {
-  assert.equal(app, fixture.candidate, "A production Store fixture remains bound to its original candidate.");
   assert.equal(storage.candidateSha256, fixture.candidateSha256, "A production Store fixture cannot switch candidates.");
 }
 const evidence = resolve(process.env.KESTREL_NATIVE_STORE_RESUME_EVIDENCE || `.tmp/native-store-resume-${Date.now()}`);
@@ -39,7 +39,9 @@ const extensionId = [...createHash("sha256").update(join(profile, "kestrel-ui-bu
 const homeUrl = `chrome-extension://${extensionId}/index.html`;
 const receipt = { kind: "native-store-update-resume", version: 1, startedAt: new Date().toISOString(), candidate: app,
   mode: compatibilityOnly ? "compatibility-only" : "update-acceptance", updateQueryRequested: false,
-  candidateSha256: storage.candidateSha256, fixture: { checkpoint: resolve(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT), receiptSha256: fixture.receiptSha256, originalCandidateSha256: fixture.candidateSha256 },
+  candidateSha256: storage.candidateSha256, fixture: { checkpoint: resolve(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT), receiptSha256: fixture.receiptSha256,
+    originalCandidate: fixture.candidate, originalCandidateSha256: fixture.candidateSha256,
+    selectedCandidateIsIdenticalCopy: storage.mode === "production-vault" && app !== fixture.candidate },
   fixtureStorageMode: storage.mode,
   scope: `Retained generated normal Store installations using ${storage.mode}. No new installation, forced version edits, real profile, Keychain password items or desktop capture/input.`, phases: [] };
 const continuation = process.env.KESTREL_NATIVE_STORE_PRIOR_ATTEMPT
@@ -294,6 +296,7 @@ finally {
   if (fixture.fixtureStorage) {
     try {
       await validateRetainedNativeBrowserFixtureStorage({ profile, candidate: fixture.candidate,
+        ...(storage.mode === "production-vault" ? { candidateCopy: app } : {}),
         candidateSha256: fixture.candidateSha256, evidence: fixture.fixtureStorage, root });
       receipt.fixtureStorage = fixture.fixtureStorage;
     } catch { receipt.result = "failed"; receipt.fixtureStorageChanged = true; process.exitCode = 1; }

@@ -86,6 +86,14 @@ generated CI candidate `178186079a1ef5fa6844b48a69f6e4aab8934344971c1d703aa5dc8a
 two unbound receipts are excluded. These generated stock/mock workflows remain
 separate from the actual local production-vault and Store observations below.
 
+Head `bcc94e4737e8a82787fbdffe32c71811aabd469f` also passed both jobs in
+[CI 43355359507](https://github.com/arnavsri993/kestrel-agent/actions/runs/43355359507).
+The native artifact matches SHA256
+`cd5bb5b6b0c50c48520cefcd75b0db651732d2c66f1d097d0af24549628bd192`;
+its eight candidate-bound receipts pass all 93 phases, with unchanged bundle
+hashes. Two unbound receipts are excluded. This remains stock/generated CI
+evidence rather than proof of the custom production engine.
+
 The production-vault candidate `75612344...` completed the real native Store
 flow with **17 passed phases**, three clean starts/stops, and matching before/
 after bundle hashes. Official JSON Formatter `0.10.2` and uBlock Origin Lite
@@ -104,6 +112,15 @@ The actual update query returned `no_update`; resume exited **2 / incomplete**
 because a newer published version was not observed. Installation/functionality/
 persistence are verified for this candidate; the strict Store version-upgrade
 gate remains open. No version was edited or relabeled to manufacture an update.
+
+A separately owned private copy of the exact same complete bundle subsequently
+passed the unchanged signature, single-link, engine and hash preflight, then
+reopened that retained fixture. All five resume phases and two clean stops
+passed; the source checkpoint, receipt, profile identity and vault stayed bound
+to the original evidence. Receipt: `.tmp/native-store-copy-resume/receipt.json`.
+The actual query again returned `no_update`, so this run also exited **2 /
+incomplete**. Copying the same app is neither a browser update nor a Store
+version upgrade. The original bundle and all frozen evidence were preserved.
 
 The real native backup UI also passed **five phases** in a fresh production-vault
 profile on this same unchanged candidate. Actual Cocoa picker cancellation made
@@ -132,7 +149,15 @@ again and Settings could not receive the click. Its eight browser/Core phases
 passed, but **no real Codex entitlement, model response or restart acceptance
 is claimed**. Failed receipt: `.tmp/native-production-codex-final/receipt.json`.
 A fresh byte-identical private copy passed the unchanged single-link/signature/
-vault-engine preflight for a later unlocked run; it has not been launched.
+vault-engine preflight. Its subsequent unlocked run passed all **12 phases**,
+including actual existing-login discovery, the Home-generated Codex reply on
+`gpt-6-luna` with its advertised `low` effort, and persisted reply readback after
+native restart. There were zero Core-recorded tool executions, three clean
+stops, and matching complete-bundle hashes. Receipt:
+`.tmp/native-production-codex-unlocked/receipt.json`; the visible generated
+conversation is captured in `native-Codex-conversation.png` in that directory.
+The vendor's own credential custody and Keychain behavior remain outside this
+acceptance. This private candidate has now run; it is not the canonical app.
 
 An earlier run of this same flow completed the functionality checks but failed
 checkpoint retention after the computer tool reopened the test binary while
@@ -2995,6 +3020,15 @@ profile. Before launch it reads only the generated Chrome preference metadata to
 establish the active installed versions. It then runs the exact selected native
 candidate with the existing test key, without reinstalling extensions, changing
 versions, toggling enablement or replacing the original checkpoint.
+
+For a retained production-vault fixture, set
+`KESTREL_TEST_NATIVE_LOCAL_VAULT=1`. The explicitly selected app can be a separate
+private copy only if its entire bundle digest equals the original candidate and
+it passes the full production-vault candidate preflight. Both the original and
+selected copy must be stopped. Profile/vault identity, original receipt and
+checkpoint stay unchanged; the resume receipt records both candidate paths.
+This permits reusing identical app bytes, never switching to a different build.
+Legacy test-key checkpoints keep their existing behavior.
 
 The canary binds directly to browser-reported CDP targets, avoiding CEF's race
 between loaded documents and Playwright automatic attachment. It exercises the

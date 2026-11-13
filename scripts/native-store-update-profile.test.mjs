@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { appendFile, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, cp, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
@@ -100,6 +100,16 @@ it("retains production fixture storage without raw keys and refuses later vault 
 	expect(await readdir(paths.profile)).toEqual([".kestrel-local-vault-v1"]);
 	await appendFile(join(paths.profile, ".kestrel-local-vault-v1"), "changed");
 	await expect(loadRetainedStoreUpdateFixture(paths.checkpointPath)).rejects.toThrow(/vault changed/);
+});
+it("keeps checkpoint provenance frozen while validating an explicitly selected identical app copy", async () => {
+	const paths = await fixture(() => {}, true), checkpoint = await retainStoreUpdateFixture(paths);
+	const copy = await realpath(await mkdtemp(join(tmpdir(), "kestrel-store-fixture-copy-"))); roots.push(copy);
+	await cp(paths.storageEvidence.candidate, copy, { recursive: true });
+	const before = await readFile(paths.checkpointPath);
+	expect(await loadRetainedStoreUpdateFixture(paths.checkpointPath, { candidateCopy: copy })).toEqual(checkpoint);
+	expect(await readFile(paths.checkpointPath)).toEqual(before);
+	await writeFile(join(copy, "inert-unit-test-binary"), "changed");
+	await expect(loadRetainedStoreUpdateFixture(paths.checkpointPath, { candidateCopy: copy })).rejects.toThrow(/candidate changed/);
 });
 
 it("preserves marker-only legacy resume even when the original test candidate is removed", async () => {
