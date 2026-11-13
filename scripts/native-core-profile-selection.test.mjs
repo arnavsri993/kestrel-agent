@@ -159,6 +159,27 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 		expect(fixture(value.root, "--native-source", "changed-during-lookup")).toMatchObject({ valid: true, opened: false, current: false,
 			reads: 1, creates: 0, legacyReaders: 0, failureCleared: true });
 	});
+	it.each([false, true])("accepts ctime-only owner metadata activity while retaining source identities and bytes (active child %s)", active => {
+		const value = nativeSource(active);
+		expect(fixture(value.root, "--native-source", "root-metadata-only")).toMatchObject({ valid: true, lease: true,
+			current: true, opened: true, reads: 1, creates: 0, legacyReaders: 0, sourceUnchanged: true });
+	});
+	it.each(["active-profile-metadata-only", "core-metadata-only", "database-metadata-only"])("keeps the nested directory ctime guard after %s", action => {
+		const value = nativeSource(true);
+		expect(fixture(value.root, "--native-source", action)).toMatchObject({ valid: true, lease: true,
+			current: false, opened: false, reads: 0, creates: 0, legacyReaders: 0, sourceUnchanged: true });
+	});
+	it("rejects an owner ACL change even when directory identity and POSIX permissions stay private", () => {
+		const value = nativeSource(true);
+		expect(fixture(value.root, "--native-source", "root-acl-change")).toMatchObject({ valid: true, lease: true,
+			current: false, opened: false, reads: 0, creates: 0, legacyReaders: 0, sourceUnchanged: true });
+	});
+	it("rejects an owner group change even when permissions, ACL and data stay unchanged", context => {
+		const value = nativeSource(true);
+		if (!process.getgroups().some(group => group !== lstatSync(value.root).gid)) { context.skip(); return; }
+		expect(fixture(value.root, "--native-source", "root-group-change")).toMatchObject({ valid: true, lease: true,
+			current: false, opened: false, reads: 0, creates: 0, legacyReaders: 0, sourceUnchanged: true });
+	});
 	it.each(["missing-vault", "corrupt-vault", "linked-vault", "unsafe-vault", "missing-active", "missing-database", "unsettled-journal", "malformed-selection", "ambiguous-layout", "test-key", "owner-test-marker", "owner-test-key", "owner-file-key", "missing-lock"])("refuses %s without fallback or source key creation", action => {
 		const value = nativeSource(true), vault = join(value.selected, ".kestrel-local-vault-v1");
 		if (action === "missing-vault") rmSync(vault);

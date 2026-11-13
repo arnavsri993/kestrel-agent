@@ -14,6 +14,7 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/file.h>
+#include <sys/acl.h>
 #include <unistd.h>
 #include <vector>
 #include "kestrel_native_profile_transfer.h"
@@ -203,11 +204,47 @@ NSDictionary* RecoveryFileWitness(NSString* path, bool required) {
       @"modifiedSeconds":@(info.st_mtimespec.tv_sec),@"modifiedNanos":@(info.st_mtimespec.tv_nsec),@"changedSeconds":@(info.st_ctimespec.tv_sec),@"changedNanos":@(info.st_ctimespec.tv_nsec)};
 }
 NSString* const kSourceBindingName = @"native-transfer-source-v1.json";
-NSDictionary* DirectoryWitness(NSString* path) {
+NSString* HashBytes(NSData* bytes);
+NSString* OwnerAclWitness(NSString* path, const struct stat& expected) {
+  const int fd = open(path.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+  if (fd < 0) return nil;
+  struct stat opened{}, after{}, named{};
+  auto same = [](const struct stat& a, const struct stat& b) {
+    return a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_mode == b.st_mode && a.st_uid == b.st_uid && a.st_gid == b.st_gid && a.st_flags == b.st_flags &&
+        a.st_mtimespec.tv_sec == b.st_mtimespec.tv_sec && a.st_mtimespec.tv_nsec == b.st_mtimespec.tv_nsec &&
+        a.st_ctimespec.tv_sec == b.st_ctimespec.tv_sec && a.st_ctimespec.tv_nsec == b.st_ctimespec.tv_nsec;
+  };
+  if (fstat(fd,&opened) || !same(expected,opened)) { close(fd); return nil; }
+  errno = 0;
+  acl_t acl = acl_get_fd_np(fd,ACL_TYPE_EXTENDED);
+  const int aclError = errno;
+  ssize_t length = 0;
+  char* text = acl ? acl_to_text(acl,&length) : nullptr;
+  NSString* digest = text && length >= 0 && length <= 65536 ? HashBytes([NSData dataWithBytes:text length:static_cast<NSUInteger>(length)]) : nil;
+  // APFS reports ENOENT when an existing directory has no extended ACL.
+  // The held fd and the full before/after identity checks distinguish absence
+  // of an ACL from an unavailable or replaced directory. Other errors refuse.
+  if (!acl && aclError == ENOENT) digest = HashBytes([@"no-extended-acl" dataUsingEncoding:NSUTF8StringEncoding]);
+  const bool current = !fstat(fd,&after) && !lstat(path.fileSystemRepresentation,&named) && same(opened,after) && same(opened,named);
+  if (text) acl_free(text);
+  if (acl) acl_free(acl);
+  close(fd);
+  return current ? digest : nil;
+}
+NSDictionary* DirectoryWitness(NSString* path, bool ownerMetadataOnly = false) {
   struct stat info{};
   if (!PrivateDirectory(path) || lstat(path.fileSystemRepresentation,&info)) return nil;
-  return @{@"device":@((unsigned long long)info.st_dev),@"inode":@((unsigned long long)info.st_ino),@"mode":@(info.st_mode),@"uid":@(info.st_uid),
-      @"modifiedSeconds":@(info.st_mtimespec.tv_sec),@"modifiedNanos":@(info.st_mtimespec.tv_nsec),@"changedSeconds":@(info.st_ctimespec.tv_sec),@"changedNanos":@(info.st_ctimespec.tv_nsec)};
+  // Metadata activity on the explicitly chosen owner can change only ctime.
+  // Keep its identity, permissions and entry-mtime bound. Nested directories
+  // and every data file retain their ctime guard as well.
+  NSMutableDictionary* row = [@{@"device":@((unsigned long long)info.st_dev),@"inode":@((unsigned long long)info.st_ino),@"mode":@(info.st_mode),@"uid":@(info.st_uid),
+      @"modifiedSeconds":@(info.st_mtimespec.tv_sec),@"modifiedNanos":@(info.st_mtimespec.tv_nsec)} mutableCopy];
+  if (!ownerMetadataOnly) { row[@"changedSeconds"] = @(info.st_ctimespec.tv_sec); row[@"changedNanos"] = @(info.st_ctimespec.tv_nsec); }
+  else {
+    NSString* acl = OwnerAclWitness(path,info); if (!acl) return nil;
+    row[@"aclSha256"] = acl; row[@"flags"] = @(info.st_flags); row[@"gid"] = @(info.st_gid);
+  }
+  return row;
 }
 NSString* HashBytes(NSData* bytes) {
   unsigned char hash[CC_SHA256_DIGEST_LENGTH]{};
@@ -250,7 +287,7 @@ NSDictionary* NativeSourceDescriptor(NSString* owner) {
   if (envelope.length <= sizeof(magic) || memcmp(envelope.bytes,magic,sizeof(magic))) return nil;
   NSMutableDictionary* witness = [NSMutableDictionary dictionary];
   for (NSString* path in @[owner,profile,core,database]) {
-    NSDictionary* row = DirectoryWitness(path); if (!row) return nil; witness[path] = row;
+    NSDictionary* row = DirectoryWitness(path,[path isEqual:owner]); if (!row) return nil; witness[path] = row;
   }
   if ([selection[@"active"] length]) {
     NSString* parent = [owner stringByAppendingPathComponent:@"native-core-profiles"];
@@ -271,7 +308,7 @@ NSDictionary* NativeSourceDescriptor(NSString* owner) {
     witness[path] = row;
   }
   if (![Selection(owner) isEqualToDictionary:selection]) return nil;
-  for (NSString* path in @[owner,profile,core,database]) if (![DirectoryWitness(path) isEqual:witness[path]]) return nil;
+  for (NSString* path in @[owner,profile,core,database]) if (![DirectoryWitness(path,[path isEqual:owner]) isEqual:witness[path]]) return nil;
   if (![BoundPrivateFile(vault,16384,true) isEqual:witness[vault]]) return nil;
   return @{@"kind":@"native-local-vault",@"ownerRoot":owner,@"profileRoot":profile,@"coreRoot":core,@"selection":selection,@"witness":witness};
 }
@@ -279,15 +316,23 @@ bool NativeSourceCurrent(NSDictionary* descriptor) {
   return [descriptor isKindOfClass:NSDictionary.class] && [descriptor[@"kind"] isEqual:@"native-local-vault"] && [NativeSourceDescriptor(descriptor[@"ownerRoot"]) isEqualToDictionary:descriptor];
 }
 bool ExistingNativeSourceKey(NSDictionary* descriptor, std::array<uint8_t,32>* key,
-    NativeCoreProfileKeyStore* injected = nullptr) {
+    NativeCoreProfileKeyStore* injected = nullptr, std::string* failure = nullptr) {
+  if (failure) failure->clear();
   Clear(key->data(),key->size());
-  if (!NativeSourceCurrent(descriptor)) return false;
+  if (!NativeSourceCurrent(descriptor)) {
+    if (failure) *failure = "The selected native source changed before its existing key could be opened. Choose the source again.";
+    return false;
+  }
   NativeCoreProfileKeyStore production;
   NativeCoreProfileKeyStore& store = injected ? *injected : production;
   std::string encoded, error;
   const bool opened = store.GetExisting(std::string([descriptor[@"profileRoot"] fileSystemRepresentation]),&encoded,&error);
   NSMutableData* decoded = opened ? [[NSMutableData alloc] initWithBase64EncodedString:[NSString stringWithUTF8String:encoded.c_str()] options:0] : nil;
-  const bool valid = decoded.length == key->size() && NativeSourceCurrent(descriptor);
+  const bool current = NativeSourceCurrent(descriptor);
+  const bool valid = decoded.length == key->size() && current;
+  if (!valid && failure) *failure = !current
+      ? "The selected native source changed while its existing key was being opened. Choose the source again."
+      : !opened && !error.empty() ? error : "The native source's existing key could not be authenticated. Its data was preserved.";
   if (valid) memcpy(key->data(),decoded.bytes,key->size());
   if (decoded) Clear(decoded.mutableBytes,decoded.length);
   Clear(encoded.data(),encoded.size());
@@ -723,10 +768,14 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
     dispatch_async(owner.queue, ^{ @autoreleasepool {
       std::array<uint8_t,32> key{}; std::string failure;
       bool unlocked = false;
-      if (native) unlocked = [owner.sourceLease isCurrent] && ExistingNativeSourceKey(native,&key);
+      if (native) {
+        if ([owner.sourceLease isCurrent]) unlocked = ExistingNativeSourceKey(native,&key,nullptr,&failure);
+        else failure = "The selected native source changed after review. Choose the source again.";
+      }
       else { auto reader = CreateNativeLegacyKestrelKeychainReader();
         unlocked = UnlockLegacyKestrelCoreKey(std::span<const uint8_t>(static_cast<const uint8_t*>(envelope.bytes),static_cast<size_t>(envelope.length)),*reader,NativeLegacyKeychainPromptPolicy::DoNotPrompt,format == NativeLegacyCoreKeyFormat::DevelopmentPlaintext,&key,&failure); }
       NSDictionary* planned = nil;
+      if (!unlocked && !failure.empty()) planned = @{@"ok":@NO,@"error":@{@"message":[NSString stringWithUTF8String:failure.c_str()]}};
       if (unlocked && !owner.stopped) {
         NSString* destination_key = [owner destinationKey];
         if (destination_key && !owner.stopped && (!native || ([owner.sourceLease isCurrent] && SaveSourceBinding(owner.preparedProfile,owner.preparedHandoffId,native,destination_key)))) {

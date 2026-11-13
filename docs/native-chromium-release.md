@@ -113,6 +113,11 @@ because a newer published version was not observed. Installation/functionality/
 persistence are verified for this candidate; the strict Store version-upgrade
 gate remains open. No version was edited or relabeled to manufacture an update.
 
+A read-only check of the official [JSON Formatter listing](https://chromewebstore.google.com/detail/json-formatter/bcjindcccaagfpapjjmafapmmgkkhgoa)
+and [uBlock Origin Lite listing](https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh)
+on November 12 still displayed `0.10.2` and `2026.1110.1816`. This is consistent
+with the observed `no_update`; listing metadata is not upgrade acceptance.
+
 A separately owned private copy of the exact same complete bundle subsequently
 passed the unchanged signature, single-link, engine and hash preflight, then
 reopened that retained fixture. All five resume phases and two clean stops
@@ -187,6 +192,28 @@ This is fresh encrypted Core/browser restart, native generated-form autofill and
 cookie-authentication rejection evidence for this app. Earlier Store, backup UI
 and Codex receipts belong to candidate `75612344...` and are not relabeled as
 acceptance for the new build. Native transfer UI acceptance remains separate.
+
+The first actual production transfer runs exposed a source-owner metadata guard
+that was too strict: review could decrypt the source, but Apply refused before
+creating a destination database after only the owner's directory ctime changed.
+The retained failure proof is
+`.tmp/native-vault-transfer-ui-diagnostic/source-preservation-after-refusal.json`;
+its source file hashes remain unchanged. The revised guard tolerates only the
+owner's ctime-only activity while binding its identity, POSIX ownership/mode,
+group, flags, ACL digest and entry mtime. Nested directories and all vault,
+selection and database file witnesses retain their ctime checks. The focused
+native suites pass **116 tests** with two root-only ownership skips, including
+positive metadata-only cases and negative ACL, group and nested-directory cases.
+
+The production-only canary `scripts/smoke-native-vault-profile-transfer.mjs`
+creates encrypted source data through the real app and drives actual native
+review/apply and rollback, including an owner whose active data is an imported
+child. It exports no source keys and preserves failed fixtures. Source A's
+restart check and destination B's session setup pass on rebuilt candidate
+`7be6f04e...`; native UI steps
+are waiting for the Mac to be unlocked. The full transfer/rollback flow is not
+yet accepted. An independent shutdown issue also remains: a synchronous error
+modal can block the main-queue SIGTERM handler until the dialog is dismissed.
 
 An earlier run of this same flow completed the functionality checks but failed
 checkpoint retention after the computer tool reopened the test binary while

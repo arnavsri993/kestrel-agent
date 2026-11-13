@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <membership.h>
 #include <sys/stat.h>
 #include <sys/proc.h>
 #include <unistd.h>
@@ -136,6 +137,44 @@ int main(int argc, char** argv) {
       if ([action isEqual:@"replace-core"]) {
         NSString* core = descriptor[@"coreRoot"];
         if (rename(core.fileSystemRepresentation,[core stringByAppendingString:@"-kept"].fileSystemRepresentation) || mkdir(core.fileSystemRepresentation,0700)) return 2;
+      }
+      if ([@[@"root-metadata-only",@"active-profile-metadata-only",@"core-metadata-only",@"database-metadata-only"] containsObject:action]) {
+        NSString* target = [action isEqual:@"root-metadata-only"] ? owner : [action isEqual:@"active-profile-metadata-only"]
+            ? descriptor[@"profileRoot"] : [action isEqual:@"core-metadata-only"] ? descriptor[@"coreRoot"] : [descriptor[@"coreRoot"] stringByAppendingPathComponent:@"database"];
+        struct stat before{}, after{};
+        if (lstat(target.fileSystemRepresentation,&before) || chmod(target.fileSystemRepresentation,0500)) return 2;
+        usleep(1000);
+        if (chmod(target.fileSystemRepresentation,0700) || lstat(target.fileSystemRepresentation,&after) ||
+            before.st_dev != after.st_dev || before.st_ino != after.st_ino || before.st_mode != after.st_mode ||
+            before.st_mtimespec.tv_sec != after.st_mtimespec.tv_sec || before.st_mtimespec.tv_nsec != after.st_mtimespec.tv_nsec ||
+            (before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec && before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec)) return 2;
+      }
+      if ([action isEqual:@"root-acl-change"]) {
+        struct stat before{}, after{};
+        if (lstat(owner.fileSystemRepresentation,&before)) return 2;
+        uuid_t ownerUuid{};
+        acl_t acl = acl_init(1); acl_entry_t entry; acl_permset_t permissions;
+        const bool changed = acl && !mbr_uid_to_uuid(getuid(),ownerUuid) && !acl_create_entry(&acl,&entry) &&
+            !acl_set_tag_type(entry,ACL_EXTENDED_ALLOW) && !acl_set_qualifier(entry,ownerUuid) &&
+            !acl_get_permset(entry,&permissions) && !acl_add_perm(permissions,ACL_READ_ATTRIBUTES) &&
+            !acl_set_permset(entry,permissions) && !acl_set_file(owner.fileSystemRepresentation,ACL_TYPE_EXTENDED,acl);
+        if (acl) acl_free(acl);
+        if (!changed || lstat(owner.fileSystemRepresentation,&after) || before.st_dev != after.st_dev || before.st_ino != after.st_ino ||
+            before.st_mode != after.st_mode || before.st_uid != after.st_uid || before.st_gid != after.st_gid ||
+            before.st_mtimespec.tv_sec != after.st_mtimespec.tv_sec || before.st_mtimespec.tv_nsec != after.st_mtimespec.tv_nsec) return 2;
+      }
+      if ([action isEqual:@"root-group-change"]) {
+        struct stat before{}, after{};
+        if (lstat(owner.fileSystemRepresentation,&before)) return 2;
+        const int count = getgroups(0,nullptr); if (count <= 0) return 2;
+        std::vector<gid_t> groups(static_cast<size_t>(count)); if (getgroups(count,groups.data()) != count) return 2;
+        gid_t alternate = before.st_gid;
+        for (gid_t group : groups) if (group != before.st_gid) { alternate = group; break; }
+        if (alternate == before.st_gid || chown(owner.fileSystemRepresentation,static_cast<uid_t>(-1),alternate) ||
+            lstat(owner.fileSystemRepresentation,&after) || before.st_gid == after.st_gid || before.st_mode != after.st_mode || before.st_uid != after.st_uid ||
+            before.st_dev != after.st_dev || before.st_ino != after.st_ino || before.st_flags != after.st_flags ||
+            before.st_mtimespec.tv_sec != after.st_mtimespec.tv_sec || before.st_mtimespec.tv_nsec != after.st_mtimespec.tv_nsec ||
+            ![OwnerAclWitness(owner,after) isEqual:descriptor[@"witness"][owner][@"aclSha256"]]) return 2;
       }
       std::array<uint8_t,32> key{};
       const bool opened = [lease isCurrent] && ExistingNativeSourceKey(descriptor,&key,&store);
