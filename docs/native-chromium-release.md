@@ -159,6 +159,35 @@ conversation is captured in `native-Codex-conversation.png` in that directory.
 The vendor's own credential custody and Keychain behavior remain outside this
 acceptance. This private candidate has now run; it is not the canonical app.
 
+Native-to-native Core transfer now resolves the explicitly chosen owner root's
+exact active/default data profile. It holds the owner and active-child
+reservations plus the source's existing legacy lock, and uses only existing-key
+lookup for the source local vault. Test-key markers at either owner or active
+profile are refused. Interrupted recovery records an explicit source binding
+authenticated with the destination key before looking up the source key.
+Protected Electron-source formats remain unavailable; this does not migrate
+their keys or certify cross-Mac recovery.
+
+Active-child reservation can add one empty private coordination file alongside
+the child; the native consent discloses this. Existing database, vault and
+selection bytes stay unchanged in the fixtures. Prepared-profile inventory
+separately bounds 128 profiles and 128 validated reservation files. A retry
+releases the old source only after the previous worker's stop is confirmed;
+uncertain stops retain its reservation. The focused native compilation and
+fixtures pass **109 tests**, with two different-owner tests skipped because they
+require a root-run fixture. These injected-key fixtures do not establish actual
+production-vault UI transfer or interrupted-recovery acceptance.
+
+The updated private app built successfully and passed the actual seven-phase
+production-vault canary across three clean starts/stops. Its complete bundle
+SHA256 is `cc7c5a9a17fde6f912d9a139ca3aac5bb510071d6465f6c27a2a897efa7222b2`,
+unchanged before/after; the packaged framework remains `27dad894...`. Receipt:
+`.tmp/native-browser-local-vault-1794543453786-fe8e95f6-7335-4c98-9436-4e17d85ec7e9/receipt.json`.
+This is fresh encrypted Core/browser restart, native generated-form autofill and
+cookie-authentication rejection evidence for this app. Earlier Store, backup UI
+and Codex receipts belong to candidate `75612344...` and are not relabeled as
+acceptance for the new build. Native transfer UI acceptance remains separate.
+
 An earlier run of this same flow completed the functionality checks but failed
 checkpoint retention after the computer tool reopened the test binary while
 reconnecting. That extra instance was stopped. The failed receipt remains at

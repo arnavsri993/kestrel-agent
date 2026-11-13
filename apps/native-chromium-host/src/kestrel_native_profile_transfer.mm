@@ -1,4 +1,6 @@
 #import <Cocoa/Cocoa.h>
+#include <CommonCrypto/CommonDigest.h>
+#include <CommonCrypto/CommonHMAC.h>
 #include <array>
 #include <cerrno>
 #include <chrono>
@@ -18,6 +20,7 @@
 #include "kestrel_native_prepared_profiles.h"
 #include "kestrel_native_core_keychain.h"
 #include "kestrel_legacy_core_key.h"
+#include "kestrel_profile_reservation.h"
 
 namespace {
 constexpr size_t kFrameLimit = 64 * 1024;
@@ -199,10 +202,153 @@ NSDictionary* RecoveryFileWitness(NSString* path, bool required) {
   return @{@"device":@((unsigned long long)info.st_dev),@"inode":@((unsigned long long)info.st_ino),@"size":@(info.st_size),@"mode":@(info.st_mode),
       @"modifiedSeconds":@(info.st_mtimespec.tv_sec),@"modifiedNanos":@(info.st_mtimespec.tv_nsec),@"changedSeconds":@(info.st_ctimespec.tv_sec),@"changedNanos":@(info.st_ctimespec.tv_nsec)};
 }
+NSString* const kSourceBindingName = @"native-transfer-source-v1.json";
+NSDictionary* DirectoryWitness(NSString* path) {
+  struct stat info{};
+  if (!PrivateDirectory(path) || lstat(path.fileSystemRepresentation,&info)) return nil;
+  return @{@"device":@((unsigned long long)info.st_dev),@"inode":@((unsigned long long)info.st_ino),@"mode":@(info.st_mode),@"uid":@(info.st_uid),
+      @"modifiedSeconds":@(info.st_mtimespec.tv_sec),@"modifiedNanos":@(info.st_mtimespec.tv_nsec),@"changedSeconds":@(info.st_ctimespec.tv_sec),@"changedNanos":@(info.st_ctimespec.tv_nsec)};
+}
+NSString* HashBytes(NSData* bytes) {
+  unsigned char hash[CC_SHA256_DIGEST_LENGTH]{};
+  CC_SHA256(bytes.bytes,static_cast<CC_LONG>(bytes.length),hash);
+  NSMutableString* result = [NSMutableString stringWithCapacity:64];
+  for (unsigned char byte : hash) [result appendFormat:@"%02x",byte];
+  return result;
+}
+bool MissingPath(NSString* path) {
+  struct stat info{}; return lstat(path.fileSystemRepresentation,&info) && errno == ENOENT;
+}
+NSDictionary* BoundPrivateFile(NSString* path, size_t maximum, bool required) {
+  NSDictionary* before = RecoveryFileWitness(path,required);
+  if (!before) return nil;
+  if ([before[@"missing"] boolValue]) return before;
+  NSData* bytes = ReadPrivateFile(path,maximum);
+  NSDictionary* after = RecoveryFileWitness(path,true);
+  if (!bytes || ![before isEqualToDictionary:after]) return nil;
+  NSMutableDictionary* result = [before mutableCopy]; result[@"sha256"] = HashBytes(bytes); return result;
+}
+// No discovery or key access. The native picker supplies the owner root, whose
+// exact active selection is part of this immutable, host-private descriptor.
+NSDictionary* NativeSourceDescriptor(NSString* owner) {
+  if (![owner isKindOfClass:NSString.class] || ![CanonicalPath(owner) isEqual:owner] || !PrivateDirectory(owner)) return nil;
+  if (!MissingPath([owner stringByAppendingPathComponent:@"database"]) || !MissingPath([owner stringByAppendingPathComponent:@"secure"])) return nil;
+  NSDictionary* selection = Selection(owner);
+  NSString* profile = selection ? Profile(owner,selection[@"active"]) : nil;
+  NSString* core = [profile stringByAppendingPathComponent:@"native-core"];
+  NSString* database = [core stringByAppendingPathComponent:@"database"];
+  if (!profile || !PrivateDirectory(core) || !PrivateDirectory(database)) return nil;
+  for (NSString* path in @[[core stringByAppendingPathComponent:@"database.key"],
+      [owner stringByAppendingPathComponent:@"native-core/database.key"],
+      [owner stringByAppendingPathComponent:@".kestrel-native-test-core-key-v1"],
+      [owner stringByAppendingPathComponent:@".kestrel-native-test-profile-v1"],
+      [profile stringByAppendingPathComponent:@".kestrel-native-test-core-key-v1"],
+      [profile stringByAppendingPathComponent:@".kestrel-native-test-profile-v1"]]) if (!MissingPath(path)) return nil;
+  NSString* vault = [profile stringByAppendingPathComponent:@".kestrel-local-vault-v1"];
+  NSData* envelope = ReadPrivateFile(vault,16384);
+  const uint8_t magic[] = {0x4b,0x53,0x54,0x56,0x4c,0x54,1,0};
+  if (envelope.length <= sizeof(magic) || memcmp(envelope.bytes,magic,sizeof(magic))) return nil;
+  NSMutableDictionary* witness = [NSMutableDictionary dictionary];
+  for (NSString* path in @[owner,profile,core,database]) {
+    NSDictionary* row = DirectoryWitness(path); if (!row) return nil; witness[path] = row;
+  }
+  if ([selection[@"active"] length]) {
+    NSString* parent = [owner stringByAppendingPathComponent:@"native-core-profiles"];
+    NSMutableDictionary* row = [DirectoryWitness(parent) mutableCopy]; if (!row) return nil;
+    // The shared external reservation for a child lives in this directory.
+    // Bind its identity, not timestamps changed by that empty coordination file.
+    for (NSString* key in @[@"modifiedSeconds",@"modifiedNanos",@"changedSeconds",@"changedNanos"]) [row removeObjectForKey:key];
+    witness[parent] = row;
+  }
+  for (NSString* path in @[vault,[owner stringByAppendingPathComponent:kSelectionName]]) {
+    NSDictionary* row = BoundPrivateFile(path,[path isEqual:vault] ? 16384 : 32768,[path isEqual:vault]); if (!row) return nil; witness[path] = row;
+  }
+  NSString* sourceDatabase = [database stringByAppendingPathComponent:@"kestrel.sqlite"];
+  for (NSString* suffix in @[@"",@"-wal",@"-shm",@"-journal"]) {
+    NSString* path = [sourceDatabase stringByAppendingString:suffix];
+    NSDictionary* row = RecoveryFileWitness(path,!suffix.length);
+    if (!row || (![row[@"missing"] boolValue] && ([suffix isEqual:@"-journal"] || [row[@"size"] unsignedLongLongValue] > 256000000))) return nil;
+    witness[path] = row;
+  }
+  if (![Selection(owner) isEqualToDictionary:selection]) return nil;
+  for (NSString* path in @[owner,profile,core,database]) if (![DirectoryWitness(path) isEqual:witness[path]]) return nil;
+  if (![BoundPrivateFile(vault,16384,true) isEqual:witness[vault]]) return nil;
+  return @{@"kind":@"native-local-vault",@"ownerRoot":owner,@"profileRoot":profile,@"coreRoot":core,@"selection":selection,@"witness":witness};
+}
+bool NativeSourceCurrent(NSDictionary* descriptor) {
+  return [descriptor isKindOfClass:NSDictionary.class] && [descriptor[@"kind"] isEqual:@"native-local-vault"] && [NativeSourceDescriptor(descriptor[@"ownerRoot"]) isEqualToDictionary:descriptor];
+}
+bool ExistingNativeSourceKey(NSDictionary* descriptor, std::array<uint8_t,32>* key,
+    NativeCoreProfileKeyStore* injected = nullptr) {
+  Clear(key->data(),key->size());
+  if (!NativeSourceCurrent(descriptor)) return false;
+  NativeCoreProfileKeyStore production;
+  NativeCoreProfileKeyStore& store = injected ? *injected : production;
+  std::string encoded, error;
+  const bool opened = store.GetExisting(std::string([descriptor[@"profileRoot"] fileSystemRepresentation]),&encoded,&error);
+  NSMutableData* decoded = opened ? [[NSMutableData alloc] initWithBase64EncodedString:[NSString stringWithUTF8String:encoded.c_str()] options:0] : nil;
+  const bool valid = decoded.length == key->size() && NativeSourceCurrent(descriptor);
+  if (valid) memcpy(key->data(),decoded.bytes,key->size());
+  if (decoded) Clear(decoded.mutableBytes,decoded.length);
+  Clear(encoded.data(),encoded.size());
+  return valid;
+}
+NSData* SourceBindingMac(NSDictionary* payload, NSString* keyBase64) {
+  if (![payload isKindOfClass:NSDictionary.class] || ![keyBase64 isKindOfClass:NSString.class]) return nil;
+  NSData* bytes = [NSJSONSerialization dataWithJSONObject:payload options:NSJSONWritingSortedKeys error:nil];
+  NSMutableData* key = [[NSMutableData alloc] initWithBase64EncodedString:keyBase64 options:0];
+  if (!bytes || bytes.length > kFrameLimit || key.length != 32) { if (key) Clear(key.mutableBytes,key.length); return nil; }
+  NSMutableData* mac = [NSMutableData dataWithLength:CC_SHA256_DIGEST_LENGTH];
+  const char domain[] = "kestrel-native-transfer-source-binding/v1";
+  unsigned char bindingKey[CC_SHA256_DIGEST_LENGTH]{};
+  CCHmac(kCCHmacAlgSHA256,key.bytes,key.length,domain,sizeof(domain),bindingKey); Clear(key.mutableBytes,key.length);
+  CCHmac(kCCHmacAlgSHA256,bindingKey,sizeof(bindingKey),bytes.bytes,bytes.length,mac.mutableBytes); Clear(bindingKey,sizeof(bindingKey));
+  return mac;
+}
+bool SaveSourceBinding(NSString* destination, NSString* handoff, NSDictionary* descriptor, NSString* destinationKey) {
+  if (!NativeSourceCurrent(descriptor) || !ValidHandoffUUID(handoff)) return false;
+  NSDictionary* payload = @{@"version":@1,@"destination":destination,@"handoffId":handoff,@"source":descriptor};
+  NSData* mac = SourceBindingMac(payload,destinationKey);
+  if (!mac) return false;
+  NSData* bytes = [NSJSONSerialization dataWithJSONObject:@{@"payload":payload,@"mac":[mac base64EncodedStringWithOptions:0]} options:NSJSONWritingSortedKeys error:nil];
+  return bytes && bytes.length <= kFrameLimit && WritePrivateFile([destination stringByAppendingPathComponent:kSourceBindingName],bytes,false);
+}
+NSDictionary* ReadSourceBinding(NSString* destination, NSString* handoff, NSString* database) {
+  NSData* bytes = ReadPrivateFile([destination stringByAppendingPathComponent:kSourceBindingName],kFrameLimit);
+  id binding = bytes ? [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil] : nil;
+  if (![binding isKindOfClass:NSDictionary.class] || [binding count] != 2 || ![binding[@"payload"] isKindOfClass:NSDictionary.class] || ![binding[@"mac"] isKindOfClass:NSString.class]) return nil;
+  NSDictionary* payload = binding[@"payload"], *source = payload[@"source"];
+  if (payload.count != 4 || ![payload[@"version"] isEqual:@1] || ![payload[@"destination"] isEqual:destination] ||
+      ![payload[@"handoffId"] isEqual:handoff] || ![source isKindOfClass:NSDictionary.class] || ![source[@"coreRoot"] isKindOfClass:NSString.class] ||
+      ![[source[@"coreRoot"] stringByAppendingPathComponent:@"database/kestrel.sqlite"] isEqual:database] || !NativeSourceCurrent(source)) return nil;
+  return binding;
+}
+bool AuthenticateSourceBinding(NSDictionary* binding, NSString* destinationKey) {
+  if (![binding isKindOfClass:NSDictionary.class] || ![binding[@"mac"] isKindOfClass:NSString.class]) return false;
+  NSData* expected = SourceBindingMac(binding[@"payload"],destinationKey);
+  NSData* actual = [[NSData alloc] initWithBase64EncodedString:binding[@"mac"] options:0];
+  if (!expected || actual.length != expected.length) return false;
+  uint8_t different = 0;
+  for (NSUInteger index = 0; index < expected.length; ++index) different |= static_cast<const uint8_t*>(actual.bytes)[index] ^ static_cast<const uint8_t*>(expected.bytes)[index];
+  return different == 0;
+}
 NSDictionary* RecoveryInputWitness(NSString* source, NSString* destination) {
   NSMutableDictionary* result = [NSMutableDictionary dictionary];
-  for (NSString* path in @[source,[destination stringByAppendingString:@".kestrel-transfer-journal"],
-      [[source.stringByDeletingLastPathComponent stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"secure/database-key.bin"]]) {
+  NSString* core = [source.stringByDeletingLastPathComponent stringByDeletingLastPathComponent];
+  NSString* bindingPath = [[[destination.stringByDeletingLastPathComponent stringByDeletingLastPathComponent] stringByDeletingLastPathComponent] stringByAppendingPathComponent:kSourceBindingName];
+  if (!MissingPath(bindingPath)) {
+    NSData* bytes = ReadPrivateFile(bindingPath,kFrameLimit);
+    id binding = bytes ? [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil] : nil;
+    NSDictionary* descriptor = [binding isKindOfClass:NSDictionary.class] && [binding[@"payload"] isKindOfClass:NSDictionary.class] ? binding[@"payload"][@"source"] : nil;
+    if (![descriptor isKindOfClass:NSDictionary.class] || ![descriptor[@"coreRoot"] isEqual:core] || !NativeSourceCurrent(descriptor)) return nil;
+    NSDictionary* row = BoundPrivateFile(bindingPath,kFrameLimit,true); if (!row) return nil;
+    result[@"nativeSource"] = descriptor; result[bindingPath] = row;
+  } else if (!MissingPath([core.stringByDeletingLastPathComponent stringByAppendingPathComponent:@".kestrel-local-vault-v1"])) return nil;
+  else {
+    NSString* key = [core stringByAppendingPathComponent:@"secure/database-key.bin"];
+    NSDictionary* row = RecoveryFileWitness(key,true); if (!row) return nil; result[key] = row;
+  }
+  for (NSString* path in @[source,[destination stringByAppendingString:@".kestrel-transfer-journal"]]) {
     NSDictionary* file = RecoveryFileWitness(path,true); if (!file) return nil; result[path] = file;
   }
   for (NSString* suffix in @[@"-wal",@"-shm",@"-journal"]) {
@@ -248,6 +394,50 @@ NSString* KestrelCanonicalNativeCoreTransferSource(NSString* selected_path) {
   return PrivateDirectory(source) && PrivateDirectory([source stringByAppendingPathComponent:@"secure"]) &&
       PrivateDirectory([source stringByAppendingPathComponent:@"database"]) ? source : nil;
 }
+
+// Retain both current and older native hosts' exclusion mechanisms throughout
+// a reviewed transfer. Opening the source's existing lock never creates it.
+@interface KestrelNativeTransferSourceLease : NSObject {
+ @public
+  std::unique_ptr<kestrel::ProfileReservation> reservation;
+  std::unique_ptr<kestrel::ProfileReservation> activeReservation;
+  int lockFd;
+}
+@property(nonatomic,copy) NSDictionary* descriptor;
+@property(nonatomic,copy) NSDictionary* lockWitness;
++ (instancetype)acquire:(NSDictionary*)descriptor;
+- (BOOL)isCurrent;
+@end
+@implementation KestrelNativeTransferSourceLease
+- (instancetype)init { if ((self = [super init])) lockFd = -1; return self; }
+- (void)dealloc { if (lockFd >= 0) close(lockFd); }
++ (instancetype)acquire:(NSDictionary*)descriptor {
+  if (!NativeSourceCurrent(descriptor)) return nil;
+  KestrelNativeTransferSourceLease* lease = [[self alloc] init]; lease.descriptor = descriptor;
+  kestrel::ProfileReservationError error;
+  lease->reservation = kestrel::ProfileReservation::Acquire(std::string([descriptor[@"ownerRoot"] fileSystemRepresentation]),&error);
+  if (!lease->reservation) return nil;
+  if (![descriptor[@"profileRoot"] isEqual:descriptor[@"ownerRoot"]]) {
+    lease->activeReservation = kestrel::ProfileReservation::Acquire(std::string([descriptor[@"profileRoot"] fileSystemRepresentation]),&error);
+    if (!lease->activeReservation) return nil;
+  }
+  NSString* path = [descriptor[@"ownerRoot"] stringByAppendingPathComponent:@".kestrel-desktop.lock"];
+  lease.lockWitness = RecoveryFileWitness(path,true);
+  lease->lockFd = open(path.fileSystemRepresentation,O_RDWR|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC);
+  struct stat info{};
+  if (!lease.lockWitness || lease->lockFd < 0 || fstat(lease->lockFd,&info) || !S_ISREG(info.st_mode) || info.st_uid != getuid() ||
+      info.st_nlink != 1 || (info.st_mode & 07777) != 0600 || info.st_size != 0 || flock(lease->lockFd,LOCK_EX|LOCK_NB) || ![lease isCurrent]) return nil;
+  return lease;
+}
+- (BOOL)isCurrent {
+  if (!reservation || !reservation->IsCurrent() || (activeReservation && !activeReservation->IsCurrent()) || lockFd < 0 || !NativeSourceCurrent(self.descriptor)) return NO;
+  NSString* path = [self.descriptor[@"ownerRoot"] stringByAppendingPathComponent:@".kestrel-desktop.lock"];
+  struct stat info{};
+  return !fstat(lockFd,&info) && static_cast<unsigned long long>(info.st_dev) == [self.lockWitness[@"device"] unsignedLongLongValue] &&
+      static_cast<unsigned long long>(info.st_ino) == [self.lockWitness[@"inode"] unsignedLongLongValue] &&
+      [RecoveryFileWitness(path,true) isEqualToDictionary:self.lockWitness];
+}
+@end
 
 namespace {
 // Cooperating writers lock the profile directory, keeping read/compare/rename
@@ -408,6 +598,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 @property(nonatomic,copy) NSString* preparedHandoffId;
 @property(nonatomic,copy) NSDictionary* reviewedSelection;
 @property(nonatomic,copy) NSString* selectedSource;
+@property(nonatomic,strong) KestrelNativeTransferSourceLease* sourceLease;
 @property(atomic,strong) KestrelCoreTransferPipe* pipe;
 @property(nonatomic,strong) NSOpenPanel* picker;
 @property(nonatomic,strong) NSAlert* reviewAlert;
@@ -431,7 +622,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   return self;
 }
 - (BOOL)canBegin { return !self.busy && !self.stopped; }
-- (void)shutdown { self.stopped = YES; [self.picker cancel:nil]; if (self.reviewAlert) [NSApp abortModal]; dispatch_async(self.queue, ^{ [self.pipe stop]; self.pipe = nil; }); }
+- (void)shutdown { self.stopped = YES; [self.picker cancel:nil]; if (self.reviewAlert) [NSApp abortModal]; dispatch_async(self.queue, ^{ if ([self.pipe stop] || !self.pipe) { self.pipe = nil; self.sourceLease = nil; } }); }
 - (NSString*)destinationKey {
   if (self.stopped) return nil;
   NativeCoreProfileKeyStore store; std::string key, error;
@@ -474,7 +665,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
     self.busy = YES;
     dispatch_async(self.queue, ^{
       const BOOL confirmed = [self.pipe stop];
-      if (confirmed) self.pipe = nil;
+      if (confirmed) { self.pipe = nil; self.sourceLease = nil; }
       dispatch_async(dispatch_get_main_queue(), ^{
         if (self.stopped) return;
         self.busy = NO;
@@ -497,9 +688,16 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
     KestrelNativeProfileTransferController* owner = weakSelf; if (!owner || owner.stopped) return;
     owner.picker = nil;
     if (result != NSModalResponseOK || !picker.URL.isFileURL) { owner.busy = NO; return; }
-    NSString* source = KestrelCanonicalNativeCoreTransferSource(picker.URL.path);
+    NSString* selected = CanonicalPath(picker.URL.path);
+    NSDictionary* native = NativeSourceDescriptor(selected);
+    const bool nativeShape = selected && (!MissingPath([selected stringByAppendingPathComponent:@"native-core"]) ||
+        !MissingPath([selected stringByAppendingPathComponent:@".kestrel-local-vault-v1"]) || !MissingPath([selected stringByAppendingPathComponent:kSelectionName]));
+    NSString* source = native ? native[@"coreRoot"] : nativeShape ? nil : KestrelCanonicalNativeCoreTransferSource(picker.URL.path);
     if (!source) {
       owner.busy = NO; Alert(@"Profile unavailable",@"Choose an owned, private Kestrel profile folder containing its database and secure data. No existing files were changed."); return;
+    }
+    if (native && (owner.testKeys || ![selected isEqual:picker.URL.path] || [selected isEqual:owner.browserProfile] || [native[@"profileRoot"] isEqual:owner.currentCoreProfile])) {
+      owner.busy = NO; Alert(@"Separate production source required",@"Choose a separate, closed native profile in a production-vault session. Existing files were preserved."); return;
     }
     if (owner.testKeys) {
       NSString* temporary = CanonicalPath(NSFileManager.defaultManager.temporaryDirectory.path);
@@ -508,26 +706,30 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
         owner.busy = NO; Alert(@"Generated profile required",@"This disposable test session can review only a marked generated temporary profile. Real Kestrel data was not opened."); return;
       }
     }
-    NSData* envelope = ReadPrivateFile([source stringByAppendingPathComponent:@"secure/database-key.bin"],256);
-    if (!envelope) { owner.busy = NO; Alert(@"Profile key unavailable",@"This profile's protected database key could not be read safely. Existing data was preserved."); return; }
-    const auto format = InspectLegacyKestrelCoreKey(std::span<const uint8_t>(static_cast<const uint8_t*>(envelope.bytes),static_cast<size_t>(envelope.length)));
-    if (format == NativeLegacyCoreKeyFormat::Unsupported) { owner.busy = NO; Alert(@"Unsupported profile",@"This profile uses an unsupported key format. Existing data was preserved."); return; }
-    if (format != NativeLegacyCoreKeyFormat::DevelopmentPlaintext) { owner.busy = NO; Alert(@"Protected profile preserved",@"This profile needs the retired Keychain storage path. Transfer from this format is unavailable until a supported migration is ready. No keys were accessed and all files were preserved."); return; }
-    if (owner.testKeys && format != NativeLegacyCoreKeyFormat::DevelopmentPlaintext) { owner.busy = NO; Alert(@"Development fixture required",@"This disposable test session cannot request a real Keychain password. Use a generated development profile."); return; }
+    NSData* envelope = native ? nil : ReadPrivateFile([source stringByAppendingPathComponent:@"secure/database-key.bin"],256);
+    if (!native && !envelope) { owner.busy = NO; Alert(@"Profile key unavailable",@"This profile's protected database key could not be read safely. Existing data was preserved."); return; }
+    const auto format = native ? NativeLegacyCoreKeyFormat::Unsupported : InspectLegacyKestrelCoreKey(std::span<const uint8_t>(static_cast<const uint8_t*>(envelope.bytes),static_cast<size_t>(envelope.length)));
+    if (!native && format == NativeLegacyCoreKeyFormat::Unsupported) { owner.busy = NO; Alert(@"Unsupported profile",@"This profile uses an unsupported key format. Existing data was preserved."); return; }
+    if (!native && format != NativeLegacyCoreKeyFormat::DevelopmentPlaintext) { owner.busy = NO; Alert(@"Protected profile preserved",@"This profile needs the retired Keychain storage path. Transfer from this format is unavailable until a supported migration is ready. No keys were accessed and all files were preserved."); return; }
+    owner.sourceLease = native ? [KestrelNativeTransferSourceLease acquire:native] : nil;
+    if (native && !owner.sourceLease) { owner.busy = NO; Alert(@"Source is in use or changed",@"Close the Kestrel instance using this native profile, then choose it again. No key was opened and existing files were preserved."); return; }
     NSAlert* consent = [[NSAlert alloc] init]; consent.messageText = @"Review this Kestrel profile?";
-    consent.informativeText = format == NativeLegacyCoreKeyFormat::DevelopmentPlaintext
+    consent.informativeText = native ? @"Review conversations and memory from this Mac's existing native local vault? Existing source data stays unchanged. Kestrel reserves the source while you review; this may add an empty private coordination file beside its data profile. A separate destination will be prepared. Nothing will be imported until you review and apply the plan." : format == NativeLegacyCoreKeyFormat::DevelopmentPlaintext
         ? @"This development profile stores its encryption key without protection. Continue with a read-only data review? A separate destination profile will be prepared. Nothing will be imported until you review and apply the plan."
         : @"Kestrel will unlock this profile for a read-only data review. macOS may ask you to allow access to Kestrel Safe Storage. A separate protected destination profile will be prepared. Nothing will be imported until you review and apply the plan.";
     [consent addButtonWithTitle:@"Review Data"]; [consent addButtonWithTitle:@"Cancel"];
-    if ([consent runModal] != NSAlertFirstButtonReturn) { owner.busy = NO; return; }
-    owner.selectedSource = source;
+    if ([consent runModal] != NSAlertFirstButtonReturn || owner.stopped) { owner.sourceLease = nil; owner.busy = NO; return; }
+    owner.selectedSource = native ? selected : source;
     dispatch_async(owner.queue, ^{ @autoreleasepool {
-      std::array<uint8_t,32> key{}; std::string failure; auto reader = CreateNativeLegacyKestrelKeychainReader();
-      const bool unlocked = UnlockLegacyKestrelCoreKey(std::span<const uint8_t>(static_cast<const uint8_t*>(envelope.bytes),static_cast<size_t>(envelope.length)),*reader,NativeLegacyKeychainPromptPolicy::DoNotPrompt,format == NativeLegacyCoreKeyFormat::DevelopmentPlaintext,&key,&failure);
+      std::array<uint8_t,32> key{}; std::string failure;
+      bool unlocked = false;
+      if (native) unlocked = [owner.sourceLease isCurrent] && ExistingNativeSourceKey(native,&key);
+      else { auto reader = CreateNativeLegacyKestrelKeychainReader();
+        unlocked = UnlockLegacyKestrelCoreKey(std::span<const uint8_t>(static_cast<const uint8_t*>(envelope.bytes),static_cast<size_t>(envelope.length)),*reader,NativeLegacyKeychainPromptPolicy::DoNotPrompt,format == NativeLegacyCoreKeyFormat::DevelopmentPlaintext,&key,&failure); }
       NSDictionary* planned = nil;
       if (unlocked && !owner.stopped) {
         NSString* destination_key = [owner destinationKey];
-        if (destination_key && !owner.stopped) {
+        if (destination_key && !owner.stopped && (!native || ([owner.sourceLease isCurrent] && SaveSourceBinding(owner.preparedProfile,owner.preparedHandoffId,native,destination_key)))) {
           owner.pipe = [[KestrelCoreTransferPipe alloc] init]; owner.pipe.projectMode = YES;
           if ([owner.pipe start]) {
             NSString* encoded = [[NSData dataWithBytes:key.data() length:key.size()] base64EncodedStringWithOptions:0];
@@ -545,7 +747,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   if (![planned[@"ok"] boolValue] || ![planned[@"planId"] isKindOfClass:NSString.class] || ![planned[@"preview"] isKindOfClass:NSDictionary.class] ||
       ![planned[@"preview"][@"counts"] isKindOfClass:NSDictionary.class] || ![planned[@"preview"][@"excluded"] isKindOfClass:NSDictionary.class] ||
       ![planned[@"preview"][@"planSha256"] isKindOfClass:NSString.class] || !SafeLegacyCounts(planned[@"preview"][@"legacy"]) || !SafeProjectHandoffPreview(planned[@"preview"][@"projectHandoff"],self.preparedHandoffId)) {
-    if ([self.pipe stop]) self.pipe = nil;
+    if ([self.pipe stop] || !self.pipe) { self.pipe = nil; self.sourceLease = nil; }
     self.busy = NO;
     NSString* detail = [planned[@"error"][@"message"] isKindOfClass:NSString.class] ? planned[@"error"][@"message"] : @"The selected profile could not be unlocked or reviewed. Existing data was preserved.";
     if (self.preparedProfile) [self showTransferFailure:detail]; else Alert(@"Profile review unavailable",detail);
@@ -558,16 +760,16 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   closed.frame = NSMakeRect(0,0,390,32); review.accessoryView = closed; review.buttons.firstObject.enabled = NO; self.reviewAlert = review;
   std::cout << "KESTREL_NATIVE_CORE_TRANSFER_REVIEW_READY" << std::endl;
   const NSModalResponse decision = [review runModal]; self.reviewAlert = nil;
-  if (decision != NSAlertFirstButtonReturn || closed.state != NSControlStateValueOn) { if ([self.pipe stop]) self.pipe = nil; self.busy = NO; return; }
+  if (decision != NSAlertFirstButtonReturn || closed.state != NSControlStateValueOn) { if ([self.pipe stop] || !self.pipe) { self.pipe = nil; self.sourceLease = nil; } self.busy = NO; return; }
   dispatch_async(self.queue, ^{ @autoreleasepool {
-    NSString* destination_key = [self destinationKey];
+    NSString* destination_key = (!self.sourceLease || [self.sourceLease isCurrent]) ? [self destinationKey] : nil;
     NSDictionary* applied = destination_key && !self.stopped ? [self.pipe request:@{@"method":@"apply-profile",@"planId":planned[@"planId"],@"acceptedPlanSha256":planned[@"preview"][@"planSha256"],@"approved":@YES,@"destinationKeyBase64":destination_key}] : nil;
     NSDictionary* verified = [applied[@"ok"] boolValue] && [applied[@"handoffId"] isEqual:self.preparedHandoffId] ? [self.pipe request:@{@"method":@"verify-profile",@"recoveryId":applied[@"recoveryId"]}] : nil;
     const BOOL worker_stopped = !self.pipe || [self.pipe stop];
     if (worker_stopped) self.pipe = nil;
     dispatch_async(dispatch_get_main_queue(), ^{
       if (self.stopped) return;
-      if ([verified[@"ok"] boolValue] && [verified[@"handoffId"] isEqual:self.preparedHandoffId] && worker_stopped) {
+      if ([verified[@"ok"] boolValue] && [verified[@"handoffId"] isEqual:self.preparedHandoffId] && worker_stopped && (!self.sourceLease || [self.sourceLease isCurrent])) {
         NSDictionary* current = Selection(self.browserProfile);
         NSString* relative = [@"native-core-profiles" stringByAppendingPathComponent:self.preparedProfile.lastPathComponent];
         NSString* active = current[@"active"];
@@ -575,7 +777,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
         const auto saved = [active_path isEqualToString:self.currentCoreProfile] && [current isEqualToDictionary:self.reviewedSelection] && [current[@"handoffs"][relative] isEqual:self.preparedHandoffId]
             ? KestrelSaveReviewedNativeCoreProfileSelection(self.browserProfile,relative,active,self.reviewedSelection) : KestrelNativeProfileSelectionResult::Unchanged;
         if (saved != KestrelNativeProfileSelectionResult::Unchanged) {
-          self.preparedProfile = nil; self.preparedHandoffId = nil; self.reviewedSelection = nil; self.busy = NO;
+          self.preparedProfile = nil; self.preparedHandoffId = nil; self.reviewedSelection = nil; self.sourceLease = nil; self.busy = NO;
           Alert(saved == KestrelNativeProfileSelectionResult::Selected ? @"Transfer complete" : @"Transfer selected; storage needs attention",
               saved == KestrelNativeProfileSelectionResult::Selected
               ? @"The imported conversations and memory were verified. Quit and reopen Kestrel to use them. Your previous data profile and the original source remain available."
@@ -583,6 +785,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
           std::cout << "KESTREL_NATIVE_CORE_TRANSFER_SELECTED" << std::endl; return;
         }
       }
+      if (worker_stopped) self.sourceLease = nil;
       self.busy = NO;
       [self showTransferFailure:@"The transfer could not be activated safely. Your current data profile and the original source remain available."];
     });
@@ -601,7 +804,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   if (decision != NSAlertFirstButtonReturn) { self.busy = NO; return; }
   dispatch_async(self.queue, ^{ @autoreleasepool {
     const BOOL confirmed = !self.pipe || [self.pipe stop];
-    if (confirmed) self.pipe = nil;
+    if (confirmed) { self.pipe = nil; self.sourceLease = nil; }
     dispatch_async(dispatch_get_main_queue(), ^{
       if (self.stopped) return;
       if (!confirmed) { self.busy = NO; Alert(@"Transfer worker still stopping",@"Kestrel could not confirm that its private transfer worker stopped. All files were kept. Leave this preparation available for review before retrying."); return; }
@@ -621,14 +824,14 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 }
 - (BOOL)interruptedRowIsCurrent:(NSDictionary*)row selection:(NSDictionary*)selection {
   NSDictionary* current = Selection(self.browserProfile);
-  return !self.stopped && current && [current isEqualToDictionary:selection] &&
+  return !self.stopped && (!self.sourceLease || [self.sourceLease isCurrent]) && current && [current isEqualToDictionary:selection] &&
       [Profile(self.browserProfile,current[@"active"]) isEqualToString:self.currentCoreProfile] &&
       KestrelPreparedCoreProfileIsCurrent(self.browserProfile,row,current[@"active"],current[@"previous"]);
 }
 - (void)finishInterruptedWithTitle:(NSString*)title message:(NSString*)message {
   dispatch_async(self.queue, ^{ @autoreleasepool {
     const BOOL confirmed = !self.pipe || [self.pipe stop];
-    if (confirmed) self.pipe = nil;
+    if (confirmed) { self.pipe = nil; self.sourceLease = nil; }
     dispatch_async(dispatch_get_main_queue(), ^{
       if (self.stopped) return;
       self.busy = NO;
@@ -642,7 +845,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   if (self.pipe) {
     self.busy = YES;
     dispatch_async(self.queue, ^{
-      const BOOL confirmed = [self.pipe stop]; if (confirmed) self.pipe = nil;
+      const BOOL confirmed = [self.pipe stop]; if (confirmed) { self.pipe = nil; self.sourceLease = nil; }
       dispatch_async(dispatch_get_main_queue(), ^{
         if (self.stopped) return;
         self.busy = NO;
@@ -706,10 +909,17 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   }
   NSString* sourceDatabase = reviewed[@"preview"][@"sourceDatabasePath"];
   NSString* source = [sourceDatabase.stringByDeletingLastPathComponent stringByDeletingLastPathComponent];
-  NSString* canonical = KestrelCanonicalNativeCoreTransferSource(source);
+  NSString* identifier = selection[@"handoffs"][row[@"relative"]];
+  NSDictionary* binding = ReadSourceBinding(row[@"path"],identifier,sourceDatabase);
+  NSDictionary* native = binding[@"payload"][@"source"];
+  const bool hasBinding = !MissingPath([row[@"path"] stringByAppendingPathComponent:kSourceBindingName]);
+  NSString* canonical = native ? native[@"coreRoot"] : hasBinding || !MissingPath([source.stringByDeletingLastPathComponent stringByAppendingPathComponent:@".kestrel-local-vault-v1"]) ? nil : KestrelCanonicalNativeCoreTransferSource(source);
   if (![sourceDatabase.lastPathComponent isEqualToString:@"kestrel.sqlite"] || ![sourceDatabase.stringByDeletingLastPathComponent.lastPathComponent isEqualToString:@"database"] ||
       ![canonical isEqualToString:source] || [source isEqual:self.browserProfile] || [source isEqual:self.currentCoreProfile] || [source isEqual:row[@"path"]]) {
     [self finishInterruptedWithTitle:@"Original source unavailable" message:@"The recorded source is not an available, separate private Kestrel profile. All files were kept. No keys were accessed."]; return;
+  }
+  if (native && (self.testKeys || [native[@"ownerRoot"] isEqual:self.browserProfile] || [native[@"profileRoot"] isEqual:self.currentCoreProfile])) {
+    [self finishInterruptedWithTitle:@"Separate source required" message:@"This recovery needs its original, separate native local-vault source. All files were preserved."]; return;
   }
   if (self.testKeys) {
     NSString* temporary = CanonicalPath(NSFileManager.defaultManager.temporaryDirectory.path);
@@ -721,18 +931,20 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   // Inspect the bounded key envelope's format without unlocking it or asking
   // Keychain. Clear this host-owned copy immediately, including development keys.
   NSDictionary* inputWitness = RecoveryInputWitness(sourceDatabase,destination);
-  NSMutableData* inspectedEnvelope = (NSMutableData*)ReadPrivateFile([source stringByAppendingPathComponent:@"secure/database-key.bin"],256);
+  NSMutableData* inspectedEnvelope = native ? nil : (NSMutableData*)ReadPrivateFile([source stringByAppendingPathComponent:@"secure/database-key.bin"],256);
   const auto reviewedFormat = inspectedEnvelope ? InspectLegacyKestrelCoreKey(std::span<const uint8_t>(static_cast<const uint8_t*>(inspectedEnvelope.bytes),static_cast<size_t>(inspectedEnvelope.length))) : NativeLegacyCoreKeyFormat::Unsupported;
   if (inspectedEnvelope) Clear(inspectedEnvelope.mutableBytes,inspectedEnvelope.length);
-  if (!inputWitness || ![RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness] || reviewedFormat == NativeLegacyCoreKeyFormat::Unsupported || (self.testKeys && reviewedFormat != NativeLegacyCoreKeyFormat::DevelopmentPlaintext)) {
+  if (!inputWitness || ![RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness] || (!native && (reviewedFormat == NativeLegacyCoreKeyFormat::Unsupported || (self.testKeys && reviewedFormat != NativeLegacyCoreKeyFormat::DevelopmentPlaintext)))) {
     [self finishInterruptedWithTitle:@"Source key unavailable" message:@"The original source key is missing, unsafe or unsupported. All files and existing keys were preserved."]; return;
   }
-  if (reviewedFormat != NativeLegacyCoreKeyFormat::DevelopmentPlaintext) {
+  if (!native && reviewedFormat != NativeLegacyCoreKeyFormat::DevelopmentPlaintext) {
     [self finishInterruptedWithTitle:@"Protected source preserved" message:@"Recovery from the retired Keychain format is unavailable until a supported migration is ready. No keys were accessed and all files were preserved."]; return;
   }
+  self.sourceLease = native ? [KestrelNativeTransferSourceLease acquire:native] : nil;
+  if (native && !self.sourceLease) { [self finishInterruptedWithTitle:@"Source is in use or changed" message:@"Close the original native Kestrel source and review recovery again. No keys were opened and all files were preserved."]; return; }
   NSAlert* review = [[NSAlert alloc] init]; review.messageText = @"Recover this interrupted transfer?";
   review.informativeText = [NSString stringWithFormat:@"Original source:\n%@\n\n%@\n\n%@ Kestrel will authenticate the original and prepared data using their existing keys. A separate choice lets you use the recovered profile after verification. Your current profile stays selected until then.",source,CountSummary(reviewed[@"preview"]),
-      reviewedFormat == NativeLegacyCoreKeyFormat::DevelopmentPlaintext ? @"This development source stores its encryption key without protection." : @"Kestrel will unlock the protected keys. macOS may ask for Keychain access."];
+      native ? @"This native source uses its existing device-bound local vault." : @"This development source stores its encryption key without protection."];
   [review addButtonWithTitle:@"Recover Transfer"]; [review addButtonWithTitle:@"Cancel"];
   NSButton* closed = [NSButton checkboxWithTitle:@"The Kestrel instance using this source is closed" target:self action:@selector(sourceClosed:)];
   closed.frame = NSMakeRect(0,0,390,32); review.accessoryView = closed; review.buttons.firstObject.enabled = NO; self.reviewAlert = review;
@@ -743,26 +955,33 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   dispatch_async(self.queue, ^{ @autoreleasepool {
     NSDictionary* planned = nil;
     std::array<uint8_t,32> sourceKey{}; std::string destinationKey, failure;
-    if ([self interruptedRowIsCurrent:row selection:selection] && [KestrelCanonicalNativeCoreTransferSource(source) isEqualToString:source] && [RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness]) {
-      NSMutableData* envelope = (NSMutableData*)ReadPrivateFile([source stringByAppendingPathComponent:@"secure/database-key.bin"],256);
-      if (envelope) {
+    if ([self interruptedRowIsCurrent:row selection:selection] && (!native || [self.sourceLease isCurrent]) && [RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness]) {
+      NativeCoreProfileKeyStore store;
+      const bool existing = self.testKeys
+          ? store.GetExistingDisposableTestKey(std::string([row[@"path"] fileSystemRepresentation]),std::string(NSBundle.mainBundle.bundleIdentifier.UTF8String ?: ""),std::string(NSBundle.mainBundle.bundlePath.fileSystemRepresentation ?: ""),&destinationKey,&failure)
+          : store.GetExisting(std::string([row[@"path"] fileSystemRepresentation]),&destinationKey,&failure);
+      bool unlocked = false;
+      if (native) {
+        NSString* encodedDestination = existing ? [NSString stringWithUTF8String:destinationKey.c_str()] : nil;
+        unlocked = existing && AuthenticateSourceBinding(binding,encodedDestination) &&
+            [ReadSourceBinding(row[@"path"],identifier,sourceDatabase) isEqualToDictionary:binding] &&
+            [self.sourceLease isCurrent] && ExistingNativeSourceKey(native,&sourceKey);
+      } else if (existing && [KestrelCanonicalNativeCoreTransferSource(source) isEqualToString:source]) {
+        NSMutableData* envelope = (NSMutableData*)ReadPrivateFile([source stringByAppendingPathComponent:@"secure/database-key.bin"],256);
+        if (envelope) {
         const auto bytes = std::span<const uint8_t>(static_cast<const uint8_t*>(envelope.bytes),static_cast<size_t>(envelope.length));
         const auto format = InspectLegacyKestrelCoreKey(bytes);
-        if (format == reviewedFormat) {
+        if (format == reviewedFormat && format == NativeLegacyCoreKeyFormat::DevelopmentPlaintext) {
           auto reader = CreateNativeLegacyKestrelKeychainReader();
-          if (UnlockLegacyKestrelCoreKey(bytes,*reader,NativeLegacyKeychainPromptPolicy::DoNotPrompt,format == NativeLegacyCoreKeyFormat::DevelopmentPlaintext,&sourceKey,&failure) && [self interruptedRowIsCurrent:row selection:selection]) {
-            NativeCoreProfileKeyStore store;
-            const bool existing = self.testKeys
-                ? store.GetExistingDisposableTestKey(std::string([row[@"path"] fileSystemRepresentation]),std::string(NSBundle.mainBundle.bundleIdentifier.UTF8String ?: ""),std::string(NSBundle.mainBundle.bundlePath.fileSystemRepresentation ?: ""),&destinationKey,&failure)
-                : store.GetExisting(std::string([row[@"path"] fileSystemRepresentation]),&destinationKey,&failure);
-            if (existing && [self interruptedRowIsCurrent:row selection:selection] && [KestrelCanonicalNativeCoreTransferSource(source) isEqualToString:source] && [RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness]) {
-              NSString* encodedSource = [[NSData dataWithBytes:sourceKey.data() length:sourceKey.size()] base64EncodedStringWithOptions:0];
-              NSString* encodedDestination = [NSString stringWithUTF8String:destinationKey.c_str()];
-              planned = [self.pipe request:@{@"method":@"plan-profile-recovery",@"reviewId":reviewed[@"reviewId"],@"acceptedRecoverySha256":reviewed[@"preview"][@"recoverySha256"],@"sourceKeyBase64":encodedSource,@"destinationKeyBase64":encodedDestination}];
-            }
-          }
+          unlocked = UnlockLegacyKestrelCoreKey(bytes,*reader,NativeLegacyKeychainPromptPolicy::DoNotPrompt,true,&sourceKey,&failure);
         }
         Clear(envelope.mutableBytes,envelope.length);
+        }
+      }
+      if (unlocked && [self interruptedRowIsCurrent:row selection:selection] && (!native || [self.sourceLease isCurrent]) && [RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness]) {
+        NSString* encodedSource = [[NSData dataWithBytes:sourceKey.data() length:sourceKey.size()] base64EncodedStringWithOptions:0];
+        NSString* encodedDestination = [NSString stringWithUTF8String:destinationKey.c_str()];
+        planned = [self.pipe request:@{@"method":@"plan-profile-recovery",@"reviewId":reviewed[@"reviewId"],@"acceptedRecoverySha256":reviewed[@"preview"][@"recoverySha256"],@"sourceKeyBase64":encodedSource,@"destinationKeyBase64":encodedDestination}];
       }
     }
     Clear(sourceKey.data(),sourceKey.size()); Clear(destinationKey.data(),destinationKey.size()); destinationKey.clear();
@@ -800,14 +1019,14 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
       if (self.stopped) return;
       if (!confirmed) { self.busy = NO; Alert(@"Transfer worker still stopping",@"The private worker could not be confirmed stopped. All profiles and recovery files were kept."); return; }
       std::cout << "KESTREL_NATIVE_INTERRUPTED_TRANSFER_WORKER_STOPPED" << std::endl;
-      if (!unchanged || ![verified[@"ok"] boolValue] || ![verified[@"handoffId"] isEqual:identifier] || ![verified[@"recovery"][@"originalReadable"] isEqual:@YES] || ![verified[@"recovery"][@"destinationReadable"] isEqual:@YES] || ![verified[@"recovery"][@"activationPerformed"] isEqual:@NO]) { self.busy = NO; Alert(@"Recovery needs another review",@"The recovered data and project links could not be verified. All profiles were kept. Your current profile is still selected."); return; }
+      if (!unchanged || ![verified[@"ok"] boolValue] || ![verified[@"handoffId"] isEqual:identifier] || ![verified[@"recovery"][@"originalReadable"] isEqual:@YES] || ![verified[@"recovery"][@"destinationReadable"] isEqual:@YES] || ![verified[@"recovery"][@"activationPerformed"] isEqual:@NO]) { self.sourceLease = nil; self.busy = NO; Alert(@"Recovery needs another review",@"The recovered data and project links could not be verified. All profiles were kept. Your current profile is still selected."); return; }
       std::cout << "KESTREL_NATIVE_INTERRUPTED_TRANSFER_RECOVERED" << std::endl;
       [self showRecoveredSelection:row selection:selection witness:witness source:source];
     });
   } });
 }
 - (void)showRecoveredSelection:(NSDictionary*)row selection:(NSDictionary*)selection witness:(NSDictionary*)witness source:(NSString*)source {
-  if (![self interruptedRowIsCurrent:row selection:selection]) { self.busy = NO; Alert(@"Recovery preserved",@"The data selection changed after recovery. All files were kept. Start a new review before selecting the recovered profile."); return; }
+  if (![self interruptedRowIsCurrent:row selection:selection]) { self.sourceLease = nil; self.busy = NO; Alert(@"Recovery preserved",@"The data selection changed after recovery. All files were kept. Start a new review before selecting the recovered profile."); return; }
   NSAlert* choice = [[NSAlert alloc] init]; choice.messageText = @"Recovered transfer verified";
   choice.informativeText = @"The original and recovered conversations and memory were authenticated, and the private transfer worker has stopped. Use the recovered data after restarting Kestrel, or keep your current profile. Recovery metadata stays available for a fresh review later.";
   [choice addButtonWithTitle:@"Use Recovered Data Profile"]; [choice addButtonWithTitle:@"Keep Current Profile"];
@@ -816,10 +1035,11 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   const NSModalResponse decision = [choice runModal]; self.reviewAlert = nil;
   if (self.stopped) return;
   self.busy = NO;
-  if (decision != NSAlertFirstButtonReturn) return;
+  if (decision != NSAlertFirstButtonReturn) { self.sourceLease = nil; return; }
   const auto saved = [self interruptedRowIsCurrent:row selection:selection] && [RecoveryWitness(source,[row[@"path"] stringByAppendingPathComponent:@"native-core/database/kestrel.sqlite"]) isEqualToDictionary:witness]
       ? KestrelSaveReviewedNativeCoreProfileSelection(self.browserProfile,row[@"relative"],selection[@"active"],selection)
       : KestrelNativeProfileSelectionResult::Unchanged;
+  self.sourceLease = nil;
   if (saved == KestrelNativeProfileSelectionResult::Unchanged) { Alert(@"Recovery preserved",@"The data profile selection changed or could not be saved. All files were kept. Start a new review."); return; }
   std::cout << "KESTREL_NATIVE_INTERRUPTED_TRANSFER_SELECTED" << std::endl;
   Alert(saved == KestrelNativeProfileSelectionResult::Selected ? @"Recovered data profile selected" : @"Recovered data selected; storage needs attention",

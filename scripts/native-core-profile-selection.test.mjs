@@ -1,11 +1,11 @@
 import { compileNativeLocalVaultCrypto, nativeLocalVaultLinkFlags } from "./build-native-local-vault.mjs";
 import { describe, beforeAll, afterAll, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 describe.skipIf(process.platform !== "darwin")("native Core data profile selection", () => {
 	let temporary, executable;
@@ -18,7 +18,7 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 			"-I", join(repository, "apps/native-chromium-host/src"),
 			crypto, ...nativeLocalVaultLinkFlags(),
 			... ["kestrel_local_vault.mm", "kestrel_local_vault_crypto_process.mm"].map(file => join(repository, "apps/native-chromium-host/src", file)),
-			... ["kestrel_native_core_keychain.mm", "kestrel_native_prepared_profiles.mm", "kestrel_legacy_core_key.cc", "kestrel_legacy_keychain.mm"].map(file => join(repository, "apps/native-chromium-host/src", file)),
+				... ["kestrel_native_core_keychain.mm", "kestrel_native_prepared_profiles.mm", "kestrel_profile_reservation.cc", "kestrel_legacy_core_key.cc", "kestrel_legacy_keychain.mm"].map(file => join(repository, "apps/native-chromium-host/src", file)),
 			join(repository, "apps/native-chromium-host/tests/profile_selection_fixture.mm"), "-framework", "Foundation", "-framework", "AppKit", "-framework", "Security", "-framework", "LocalAuthentication", "-o", executable], { timeout: 30000, stdio: "pipe" });
 	// Allow the complete bounded cold build: Swift (60s), target info (10s),
 	// SDK lookup (5s), and C++/link (30s), plus fixture setup. Individual
@@ -37,6 +37,24 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 		const result = spawnSync(executable, [path, "--source"], { encoding: "utf8" }); expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout);
 	}
 	function sourceProfile() { const value = profile(); for (const name of ["secure", "database"]) mkdirSync(join(value.root, name), { mode: 0o700 }); return value; }
+		// These use an injected in-memory existing-key backend. They do not unlock
+		// a production vault or establish Secure Enclave/runtime acceptance.
+		function nativeSource(active = false) {
+			const value = profile();
+			writeFileSync(join(value.root, ".kestrel-desktop.lock"), "", { mode: 0o600 });
+			function core(root) {
+				mkdirSync(join(root, "native-core/database"), { mode: 0o700, recursive: true });
+				writeFileSync(join(root, "native-core/database/kestrel.sqlite"), "generated inert database fixture", { mode: 0o600 });
+				writeFileSync(join(root, ".kestrel-local-vault-v1"), Buffer.from([0x4b,0x53,0x54,0x56,0x4c,0x54,1,0,1,2,3]), { mode: 0o600 });
+			}
+			core(value.root);
+			let selected = value.root;
+			if (active) {
+				const relative = value.child(); selected = join(value.root, relative); core(selected);
+				value.select({ version: 2, active: relative, previous: "", handoffs: { "": null, [relative]: randomUUID() } });
+			}
+			return { ...value, selected };
+		}
 	function stopWorker(mode) {
 		const result = spawnSync(executable, [temporary, `--stop-${mode}`], { encoding: "utf8", timeout: 10000 });
 		expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout);
@@ -102,6 +120,84 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 			expect(registry(value).selection).toEqual(initial);
 		}
 	});
+	it.each([false, true])("looks up only the selected native source's existing key (active child %s)", active => {
+		const value = nativeSource(active), vault = join(value.selected, ".kestrel-local-vault-v1"), db = join(value.selected, "native-core/database/kestrel.sqlite");
+		const before = [readFileSync(vault), readFileSync(db)];
+		expect(fixture(value.root, "--native-source", "lookup")).toMatchObject({ valid: true, profile: value.selected, lease: true, current: true,
+			opened: true, reads: 1, creates: 0, legacyReaders: 0, sourceUnchanged: true, reservationsBlock: true, preparedReadable: true });
+		expect([readFileSync(vault), readFileSync(db)]).toEqual(before);
+	});
+	it("does not generate or use a legacy reader when the existing native key is unavailable", () => {
+		const value = nativeSource();
+		expect(fixture(value.root, "--native-source", "lookup-missing")).toMatchObject({ valid: true, lease: true, opened: false,
+			reads: 1, creates: 0, legacyReaders: 0, sourceUnchanged: true });
+	});
+	it.each(["transfer", "recovery"])("releases a stopped worker's source before retrying %s", operation => {
+		const value = nativeSource(true);
+		expect(fixture(value.root, "--native-source", `retry-${operation}-confirmed`)).toEqual({
+			stopCalled: true, reentered: true, pipeRetained: false, leaseRetained: false,
+		});
+	});
+	it.each(["transfer", "recovery"])("keeps the source reserved when the previous %s worker stop is uncertain", operation => {
+		const value = nativeSource(true);
+		expect(fixture(value.root, "--native-source", `retry-${operation}-uncertain`)).toEqual({
+			stopCalled: true, reentered: false, pipeRetained: true, leaseRetained: true,
+		});
+	});
+	it.each(["busy-source", "busy-reservation", "busy-active-reservation"])("refuses native source in use through %s before key access", action => {
+		const value = nativeSource(true);
+		expect(fixture(value.root, "--native-source", action)).toMatchObject({ valid: true, lease: false, opened: false,
+			reads: 0, creates: 0, legacyReaders: 0, sourceUnchanged: true });
+	});
+	it.each(["mutate-vault", "replace-vault", "move-owner", "mutate-selection", "switch-selection", "replace-core"])("invalidates reviewed source after %s without accessing a key", action => {
+		const value = nativeSource(true);
+		expect(fixture(value.root, "--native-source", action)).toMatchObject({ valid: true, lease: true, current: false, opened: false,
+			reads: 0, creates: 0, legacyReaders: 0 });
+	});
+	it("clears a looked-up key if the native source changes during lookup", () => {
+		const value = nativeSource(true);
+		expect(fixture(value.root, "--native-source", "changed-during-lookup")).toMatchObject({ valid: true, opened: false, current: false,
+			reads: 1, creates: 0, legacyReaders: 0, failureCleared: true });
+	});
+	it.each(["missing-vault", "corrupt-vault", "linked-vault", "unsafe-vault", "missing-active", "missing-database", "unsettled-journal", "malformed-selection", "ambiguous-layout", "test-key", "owner-test-marker", "owner-test-key", "owner-file-key", "missing-lock"])("refuses %s without fallback or source key creation", action => {
+		const value = nativeSource(true), vault = join(value.selected, ".kestrel-local-vault-v1");
+		if (action === "missing-vault") rmSync(vault);
+		if (action === "corrupt-vault") writeFileSync(vault, "not a vault");
+		if (action === "linked-vault") { rmSync(vault); symlinkSync(join(value.root, ".kestrel-local-vault-v1"), vault); }
+		if (action === "unsafe-vault") chmodSync(vault, 0o644);
+		if (action === "missing-active") value.select({ version: 1, active: `native-core-profiles/${randomUUID()}`, previous: "" });
+		if (action === "missing-database") rmSync(join(value.selected, "native-core/database/kestrel.sqlite"));
+		if (action === "unsettled-journal") writeFileSync(join(value.selected, "native-core/database/kestrel.sqlite-journal"), "generated unsettled fixture", { mode: 0o600 });
+		if (action === "malformed-selection") writeFileSync(value.file, '{"version":2,"active":""}');
+		if (action === "ambiguous-layout") mkdirSync(join(value.root, "database"), { mode: 0o700 });
+		if (action === "test-key") writeFileSync(join(value.selected, ".kestrel-native-test-core-key-v1"), Buffer.alloc(32), { mode: 0o600 });
+		if (action === "owner-test-marker") writeFileSync(join(value.root, ".kestrel-native-test-profile-v1"), "native-test-profile-v1\n", { mode: 0o600 });
+		if (action === "owner-test-key") writeFileSync(join(value.root, ".kestrel-native-test-core-key-v1"), Buffer.alloc(32), { mode: 0o600 });
+		if (action === "owner-file-key") writeFileSync(join(value.root, "native-core/database.key"), Buffer.alloc(32), { mode: 0o600 });
+		if (action === "missing-lock") rmSync(join(value.root, ".kestrel-desktop.lock"));
+		const result = fixture(value.root, "--native-source", "lookup");
+		expect(result).toMatchObject({ opened: false, reads: 0, creates: 0, legacyReaders: 0 });
+		if (action !== "missing-lock") expect(result.valid).toBe(false);
+		else expect(result.lease).toBe(false);
+	});
+	it.each([false, true])("authenticates the explicit owner and selection for recovery (active child %s)", active => {
+		const value = nativeSource(active), destination = profile();
+		mkdirSync(join(destination.root, "native-core/database"), { mode: 0o700, recursive: true });
+		writeFileSync(join(destination.root, "native-core/database/kestrel.sqlite.kestrel-transfer-journal"), "generated journal fixture", { mode: 0o600 });
+		expect(fixture(value.root, "--native-source", "binding", destination.root)).toMatchObject({ opened: true, bindingValid: true,
+			wrongKeyRejected: true, bindingNoKeys: true, bindingWitness: true, sourceUnchanged: true, creates: 0, legacyReaders: 0 });
+	});
+	it("rejects an altered source binding with matching source paths", () => {
+		const value = nativeSource(true), destination = profile();
+		expect(fixture(value.root, "--native-source", "tamper-binding", destination.root)).toMatchObject({ bindingValid: false,
+			wrongKeyRejected: true, bindingNoKeys: true, sourceUnchanged: true });
+	});
+	it("rejects recovery when the same vault bytes are replaced after the binding is recorded", () => {
+		const value = nativeSource(true), destination = profile();
+		mkdirSync(join(destination.root, "native-core/database"), { mode: 0o700, recursive: true });
+		writeFileSync(join(destination.root, "native-core/database/kestrel.sqlite.kestrel-transfer-journal"), "generated journal fixture", { mode: 0o600 });
+		expect(fixture(value.root, "--native-source", "stale-binding", destination.root)).toMatchObject({ bindingValid: false, bindingWitness: false, sourceUnchanged: true });
+	});
 	it("rejects corrupt v2 maps, unknown fields, invalid UUIDs and booleans", () => {
 		const value = profile(), child = value.child();
 		for (const selected of [
@@ -143,6 +239,32 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 			badFreshExtra: true, badFreshMissing: true, badFreshType: true, badFreshRange: true, badFreshID: true,
 			badRecoveryExtra: true, badRecoveryMissing: true, badRecoveryType: true, badRecoveryRange: true, badRecoveryID: true,
 		});
+	});
+	it("adds only the shared empty active-child fence while preserving existing source data, vault and selection bytes", () => {
+		const value = nativeSource(true), parent = join(value.root, "native-core-profiles");
+		const files = [join(value.root, ".kestrel-local-vault-v1"), value.file, join(value.selected, ".kestrel-local-vault-v1"), join(value.selected, "native-core/database/kestrel.sqlite")];
+		const bytes = files.map(path => readFileSync(path)), before = readdirSync(parent);
+		expect(fixture(value.root, "--native-source", "lookup").sourceUnchanged).toBe(true);
+		const added = readdirSync(parent).filter(name => !before.includes(name));
+		expect(added).toEqual([`.kestrel-profile-${createHash("sha256").update(value.selected).digest("hex")}.lock`]);
+		const fence = join(parent, added[0]), info = lstatSync(fence);
+		expect(info.isFile() && info.size === 0 && info.nlink === 1 && info.uid === process.getuid() && (info.mode & 0o7777) === 0o600).toBe(true);
+		expect(files.map(path => readFileSync(path))).toEqual(bytes);
+	});
+	it("keeps 128 prepared profiles inspectable alongside 128 strictly validated reservation files", () => {
+		const value = nativeSource(true), parent = join(value.root, "native-core-profiles");
+		for (let index = 0; index < 127; index++) {
+			value.child();
+			writeFileSync(join(parent, `.kestrel-profile-${index.toString(16).padStart(64, "0")}.lock`), "", { mode: 0o600 });
+		}
+		expect(fixture(value.root, "--native-source", "lookup").preparedReadable).toBe(true);
+	});
+	it.each(["unsafe", "nonempty", "linked", "excessive"])("refuses %s reservation metadata during prepared-profile enumeration", kind => {
+		const value = nativeSource(true), parent = join(value.root, "native-core-profiles"), guard = join(parent, `.kestrel-profile-${"0".repeat(64)}.lock`);
+		if (kind === "linked") symlinkSync(value.file, guard);
+		else writeFileSync(guard, kind === "nonempty" ? "x" : "", { mode: kind === "unsafe" ? 0o644 : 0o600 });
+		if (kind === "excessive") for (let index = 1; index < 128; index++) writeFileSync(join(parent, `.kestrel-profile-${index.toString(16).padStart(64, "0")}.lock`), "", { mode: 0o600 });
+		expect(fixture(value.root, "--native-source", "lookup").preparedReadable).toBe(false);
 	});
 	it.each(["source", "destination", "key", "journal", "sidecar"])("invalidates a recovery witness when %s changes", target => {
 		const sourceRoot = sourceProfile().root, destinationRoot = sourceProfile().root;

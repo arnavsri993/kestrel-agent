@@ -51,6 +51,17 @@ bool SafeJournal(int profile) {
  const bool safe = !fstatat(database, "kestrel.sqlite.kestrel-transfer-journal", &st, AT_SYMLINK_NOFOLLOW) && S_ISREG(st.st_mode) && st.st_uid == getuid() && st.st_nlink == 1 && (st.st_mode & 0777) == 0600 && st.st_size > 0 && st.st_size <= 65536;
  close(database); return safe;
 }
+bool ReservationName(NSString* name) {
+ NSString* prefix = @".kestrel-profile-", *suffix = @".lock";
+ if (name.length != prefix.length + 64 + suffix.length || ![name hasPrefix:prefix] || ![name hasSuffix:suffix]) return false;
+ NSString* hash = [name substringWithRange:NSMakeRange(prefix.length,64)];
+ return [hash rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet]].location == NSNotFound;
+}
+bool SafeReservation(int parent, const char* name) {
+ struct stat info{};
+ return !fstatat(parent,name,&info,AT_SYMLINK_NOFOLLOW) && S_ISREG(info.st_mode) && info.st_uid == getuid() && info.st_nlink == 1 &&
+     (info.st_mode & 07777) == 0600 && info.st_size == 0;
+}
 }
 
 NSArray<NSDictionary*>* KestrelInspectPreparedCoreProfiles(NSString* root, NSString* active, NSString* previous, NSError** error) {
@@ -70,13 +81,19 @@ NSArray<NSDictionary*>* KestrelInspectPreparedCoreProfiles(NSString* root, NSStr
  if (fstat(parent, &parentIdentity) || !PrivateDirectory(parentIdentity)) { close(parent); if (error) *error = Failure(); return nil; }
  int enumeration = dup(parent); DIR* directory = enumeration < 0 ? nullptr : fdopendir(enumeration);
  if (!directory) { if (enumeration >= 0) close(enumeration); close(parent); if (error) *error = Failure(); return nil; }
- NSMutableArray<NSDictionary*>* rows = [NSMutableArray array]; bool ok = true; size_t count = 0;
+ NSMutableArray<NSDictionary*>* rows = [NSMutableArray array]; bool ok = true; size_t count = 0, reservations = 0;
  for (;;) {
   errno = 0; dirent* entry = readdir(directory); if (!entry) { if (errno) ok = false; break; }
   if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-  if (++count > 128) { ok = false; break; }
   NSString* name = [NSString stringWithUTF8String:entry->d_name];
   if (!name) { ok = false; break; }
+  // A closed active child can be reserved for transfer without launching it.
+  // Its existing shared external fence is coordination metadata, not a profile.
+  if (ReservationName(name)) {
+   if (++reservations > 128 || !SafeReservation(parent,entry->d_name)) { ok = false; break; }
+   continue;
+  }
+  if (++count > 128) { ok = false; break; }
   NSString* relative = [@"native-core-profiles" stringByAppendingPathComponent:name];
   if (!ValidRelative(relative) || !name.length) continue;
   NSString* path = [root stringByAppendingPathComponent:relative];

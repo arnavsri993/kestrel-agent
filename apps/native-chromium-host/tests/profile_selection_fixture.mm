@@ -4,9 +4,17 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <sys/stat.h>
 #include <sys/proc.h>
 #include <unistd.h>
+#include "kestrel_legacy_core_key.h"
+
+static size_t FixtureLegacyReaderCalls = 0;
+static std::unique_ptr<NativeLegacyKestrelKeychainReader> FixtureLegacyReader() {
+  ++FixtureLegacyReaderCalls;
+  return CreateNativeLegacyKestrelKeychainReader();
+}
 
 // Compile the production module below with a fixture-only sync replacement.
 // The shipping source and executable have no fault flag or replacement.
@@ -17,11 +25,168 @@ static int FixtureFsync(int fd) {
   return fsync(fd);
 }
 #define fsync FixtureFsync
+#define CreateNativeLegacyKestrelKeychainReader FixtureLegacyReader
 #include "../src/kestrel_native_profile_transfer.mm"
+#undef CreateNativeLegacyKestrelKeychainReader
 #undef fsync
+
+class ReadOnlySourceFixtureBackend final : public NativeCoreKeychainBackend {
+ public:
+  size_t reads = 0, creates = 0;
+  bool found = true;
+  std::function<void()> onRead;
+  NativeCoreKeychainResult Read(const std::string&,std::vector<unsigned char>* bytes) override {
+    ++reads;
+    if (onRead) onRead();
+    if (!found) return NativeCoreKeychainResult::NotFound;
+    bytes->assign(32,0x4a); return NativeCoreKeychainResult::Success;
+  }
+  NativeCoreKeychainResult Add(const std::string&,const std::vector<unsigned char>&) override {
+    ++creates; return NativeCoreKeychainResult::Failure;
+  }
+};
+
+// Stop at the next UI-entry boundary so retry cleanup exercises the actual
+// controller queue without opening a picker, alert or native application.
+@interface FixtureRetryController : KestrelNativeProfileTransferController
+@property(nonatomic) NSUInteger entries;
+@property(nonatomic) BOOL reentered;
+@end
+@implementation FixtureRetryController
+- (void)beginTransfer { if (++self.entries == 1) [super beginTransfer]; else self.reentered = YES; }
+- (void)reviewInterruptedTransfers { if (++self.entries == 1) [super reviewInterruptedTransfers]; else self.reentered = YES; }
+@end
+@interface FixtureRetryPipe : KestrelCoreTransferPipe
+@property(nonatomic,weak) FixtureRetryController* owner;
+@property(nonatomic) BOOL confirmed;
+@property(atomic) BOOL stopCalled;
+@end
+@implementation FixtureRetryPipe
+- (BOOL)stop {
+  // On an uncertain stop, model owner shutdown before the main-queue alert.
+  // This leaves the actual guarded cleanup path intact without native UI.
+  if (!self.confirmed) self.owner.stopped = YES;
+  self.stopCalled = YES;
+  return self.confirmed;
+}
+@end
 
 int main(int argc, char** argv) {
   @autoreleasepool {
+    if ((argc == 4 || argc == 5) && !strcmp(argv[2],"--native-source")) {
+      NSString* owner = [NSString stringWithUTF8String:argv[1]], *action = [NSString stringWithUTF8String:argv[3]];
+      NSDictionary* descriptor = NativeSourceDescriptor(owner);
+      KestrelNativeTransferSourceLease* lease = nil;
+      int busyFd = -1;
+      std::unique_ptr<kestrel::ProfileReservation> busyReservation;
+      NSString* vault = [descriptor[@"profileRoot"] stringByAppendingPathComponent:@".kestrel-local-vault-v1"];
+      NSString* database = [descriptor[@"coreRoot"] stringByAppendingPathComponent:@"database/kestrel.sqlite"];
+      NSData* originalVault = vault ? ReadPrivateFile(vault,16384) : nil;
+      NSData* originalDatabase = database ? ReadPrivateFile(database,16384) : nil;
+      NSString* selectionPath = [owner stringByAppendingPathComponent:kSelectionName];
+      NSData* originalSelection = ReadPrivateFile(selectionPath,32768);
+      if ([action isEqual:@"busy-source"]) {
+        busyFd = open([owner stringByAppendingPathComponent:@".kestrel-desktop.lock"].fileSystemRepresentation,O_RDWR|O_NOFOLLOW);
+        if (busyFd < 0 || flock(busyFd,LOCK_EX|LOCK_NB)) return 2;
+      }
+      if ([action isEqual:@"busy-reservation"] || [action isEqual:@"busy-active-reservation"]) {
+        kestrel::ProfileReservationError error;
+        NSString* reserved = [action isEqual:@"busy-active-reservation"] ? descriptor[@"profileRoot"] : owner;
+        busyReservation = kestrel::ProfileReservation::Acquire(std::string(reserved.fileSystemRepresentation),&error);
+        if (!busyReservation) return 2;
+      }
+      if (descriptor) lease = [KestrelNativeTransferSourceLease acquire:descriptor];
+      if ([action hasPrefix:@"retry-"]) {
+        if (!lease) return 2;
+        FixtureRetryController* controller = [[FixtureRetryController alloc] initWithBrowserProfile:owner currentCoreProfile:owner testKeys:NO];
+        FixtureRetryPipe* pipe = [[FixtureRetryPipe alloc] init];
+        pipe.confirmed = [action hasSuffix:@"confirmed"]; pipe.owner = controller;
+        controller.pipe = pipe; controller.sourceLease = lease;
+        if ([action hasPrefix:@"retry-recovery-"]) [controller reviewInterruptedTransfers]; else [controller beginTransfer];
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(750);
+        while (std::chrono::steady_clock::now() < deadline && !(pipe.stopCalled && (controller.reentered || controller.stopped))) {
+          CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.01,true);
+        }
+        NSData* result = [NSJSONSerialization dataWithJSONObject:@{@"stopCalled":@(pipe.stopCalled),@"reentered":@(controller.reentered),
+            @"pipeRetained":@(controller.pipe != nil),@"leaseRetained":@(controller.sourceLease != nil)} options:0 error:nil];
+        return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
+      }
+      auto backend = std::make_shared<ReadOnlySourceFixtureBackend>();
+      backend->found = ![action isEqual:@"lookup-missing"];
+      NativeCoreProfileKeyStore store(backend);
+      if ([action isEqual:@"mutate-vault"]) {
+        NSMutableData* changed = [originalVault mutableCopy]; const uint8_t byte = 7; [changed appendBytes:&byte length:1];
+        if (!WritePrivateFile(vault,changed,true)) return 2;
+      }
+      if ([action isEqual:@"replace-vault"] && !WritePrivateFile(vault,originalVault,true)) return 2;
+      if ([action isEqual:@"move-owner"] && rename(owner.fileSystemRepresentation,[owner stringByAppendingString:@"-kept"].fileSystemRepresentation)) return 2;
+      if ([action isEqual:@"mutate-selection"]) {
+        NSDictionary* selection = descriptor[@"selection"];
+        NSData* changed = [NSJSONSerialization dataWithJSONObject:selection options:NSJSONWritingPrettyPrinted error:nil];
+        if (!WritePrivateFile([owner stringByAppendingPathComponent:kSelectionName],changed,true)) return 2;
+      }
+      if ([action isEqual:@"switch-selection"]) {
+        NSMutableDictionary* selection = [descriptor[@"selection"] mutableCopy]; selection[@"active"] = @"";
+        NSData* changed = [NSJSONSerialization dataWithJSONObject:selection options:0 error:nil];
+        if (!WritePrivateFile([owner stringByAppendingPathComponent:kSelectionName],changed,true)) return 2;
+      }
+      if ([action isEqual:@"changed-during-lookup"]) backend->onRead = [=] {
+        if (!WritePrivateFile(vault,originalVault,true)) abort();
+      };
+      if ([action isEqual:@"replace-core"]) {
+        NSString* core = descriptor[@"coreRoot"];
+        if (rename(core.fileSystemRepresentation,[core stringByAppendingString:@"-kept"].fileSystemRepresentation) || mkdir(core.fileSystemRepresentation,0700)) return 2;
+      }
+      std::array<uint8_t,32> key{};
+      const bool opened = [lease isCurrent] && ExistingNativeSourceKey(descriptor,&key,&store);
+      bool failureCleared = true;
+      if (!opened) for (uint8_t byte : key) failureCleared = failureCleared && byte == 0;
+      bool bindingValid = false, wrongKeyRejected = false, bindingNoKeys = false, bindingWitness = false;
+      bool reservationsBlock = false, preparedReadable = false;
+      if (lease && [lease isCurrent]) {
+        kestrel::ProfileReservationError ownerError, activeError;
+        auto ownerAttempt = kestrel::ProfileReservation::Acquire(std::string(owner.fileSystemRepresentation),&ownerError);
+        auto activeAttempt = kestrel::ProfileReservation::Acquire(std::string([descriptor[@"profileRoot"] fileSystemRepresentation]),&activeError);
+        reservationsBlock = !ownerAttempt && !activeAttempt && ownerError == kestrel::ProfileReservationError::kBusy && activeError == kestrel::ProfileReservationError::kBusy;
+        NSDictionary* selection = descriptor[@"selection"];
+        preparedReadable = KestrelInspectPreparedCoreProfiles(owner,selection[@"active"],selection[@"previous"],nil) != nil;
+      }
+      if (argc == 5 && descriptor && [lease isCurrent]) {
+        NSString* destination = [NSString stringWithUTF8String:argv[4]], *handoff = @"123e4567-e89b-42d3-a456-426614174000";
+        std::array<uint8_t,32> generatedDestination{}; generatedDestination.fill(0x6b);
+        NSString* encoded = [[NSData dataWithBytes:generatedDestination.data() length:generatedDestination.size()] base64EncodedStringWithOptions:0];
+        if (!SaveSourceBinding(destination,handoff,descriptor,encoded)) return 2;
+        NSDictionary* binding = ReadSourceBinding(destination,handoff,database);
+        bindingValid = binding && AuthenticateSourceBinding(binding,encoded);
+        wrongKeyRejected = !AuthenticateSourceBinding(binding,[[NSData dataWithBytes:key.data() length:key.size()] base64EncodedStringWithOptions:0]);
+        NSString* text = [[NSString alloc] initWithData:ReadPrivateFile([destination stringByAppendingPathComponent:kSourceBindingName],kFrameLimit) encoding:NSUTF8StringEncoding];
+        bindingNoKeys = ![text containsString:encoded] && ![text containsString:[[NSData dataWithBytes:key.data() length:key.size()] base64EncodedStringWithOptions:0]];
+        NSString* target = [destination stringByAppendingPathComponent:@"native-core/database/kestrel.sqlite"];
+        bindingWitness = RecoveryInputWitness(database,target) != nil;
+        if ([action isEqual:@"tamper-binding"]) {
+          NSMutableDictionary* changed = [binding mutableCopy]; changed[@"mac"] = [[NSMutableData dataWithLength:32] base64EncodedStringWithOptions:0];
+          NSData* bytes = [NSJSONSerialization dataWithJSONObject:changed options:0 error:nil];
+          if (!WritePrivateFile([destination stringByAppendingPathComponent:kSourceBindingName],bytes,true)) return 2;
+          bindingValid = AuthenticateSourceBinding(ReadSourceBinding(destination,handoff,database),encoded);
+        }
+        if ([action isEqual:@"stale-binding"]) {
+          if (!WritePrivateFile(vault,originalVault,true)) return 2;
+          bindingValid = AuthenticateSourceBinding(ReadSourceBinding(destination,handoff,database),encoded);
+          bindingWitness = RecoveryInputWitness(database,target) != nil;
+        }
+      }
+      const bool sourceUnchanged = (!originalVault || [ReadPrivateFile(vault,16384) isEqualToData:originalVault]) &&
+          (!originalDatabase || [ReadPrivateFile(database,16384) isEqualToData:originalDatabase]) &&
+          (originalSelection ? [ReadPrivateFile(selectionPath,32768) isEqualToData:originalSelection] : MissingPath(selectionPath));
+      Clear(key.data(),key.size());
+      if (busyFd >= 0) close(busyFd);
+      NSData* result = [NSJSONSerialization dataWithJSONObject:@{@"valid":@(descriptor != nil),@"profile":descriptor[@"profileRoot"] ?: NSNull.null,
+          @"lease":@(lease != nil),@"current":@([lease isCurrent]),@"opened":@(opened),@"reads":@(backend->reads),@"creates":@(backend->creates),
+          @"legacyReaders":@(FixtureLegacyReaderCalls),@"sourceUnchanged":@(sourceUnchanged),@"failureCleared":@(failureCleared),@"bindingValid":@(bindingValid),
+          @"wrongKeyRejected":@(wrongKeyRejected),@"bindingNoKeys":@(bindingNoKeys),@"bindingWitness":@(bindingWitness),
+          @"reservationsBlock":@(reservationsBlock),@"preparedReadable":@(preparedReadable)} options:0 error:nil];
+      return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
+    }
     if (argc == 2 && !strcmp(argv[1],"--sleep-child")) {
       signal(SIGTERM,SIG_IGN); write(STDOUT_FILENO,"fixture-ready\n",14);
       for (;;) pause();
