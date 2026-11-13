@@ -77,6 +77,15 @@ notarization, profile transfer/rollback, and canonical Dock app proof.
 
 ### CI and Chrome Web Store status
 
+Head `72b5c4006484c275816abf30596d85afa7a0e572` subsequently passed both jobs in
+[CI 43351558822](https://github.com/arnavsri993/kestrel-agent/actions/runs/43351558822).
+The downloaded native artifact matches SHA256
+`91cde5b3a9e6dfd9c789149af19cb6f1aaba34857b0d62a187bef950d2a194ed`.
+Eight unchanged candidate-bound receipts report 93 passing phases against
+generated CI candidate `178186079a1ef5fa6844b48a69f6e4aab8934344971c1d703aa5dc8a8c45679e`;
+two unbound receipts are excluded. These generated stock/mock workflows remain
+separate from the actual local production-vault and Store observations below.
+
 The production-vault candidate `75612344...` completed the real native Store
 flow with **17 passed phases**, three clean starts/stops, and matching before/
 after bundle hashes. Official JSON Formatter `0.10.2` and uBlock Origin Lite
@@ -107,6 +116,23 @@ Receipt: `.tmp/native-production-backup-ui/receipt.json`. The visible backup
 disclosure correctly described the original local-vault dependency. This proves
 creation/persistence and native panel behavior, not restoration after vault loss
 or migration to another Mac.
+
+The explicit live Codex canary now supports production-vault fixtures through
+`KESTREL_TEST_REAL_CODEX=1`. Default fixtures still disable subscription discovery;
+the opt-in retains environment sanitization and disabled local-model discovery.
+It selects an available model/effort from advertised capabilities, requires an
+exact generated reply on the selected completed route, rejects Core-recorded
+tool calls/executions and checks persisted reply readback after app restart.
+The focused environment/completion tests pass 25 checks across two files.
+This does not certify that the official vendor CLI never uses its own Keychain
+or built-in tools; credentials remain owned by that vendor's profile.
+
+The first live attempt stopped before provider setup because the Mac locked
+again and Settings could not receive the click. Its eight browser/Core phases
+passed, but **no real Codex entitlement, model response or restart acceptance
+is claimed**. Failed receipt: `.tmp/native-production-codex-final/receipt.json`.
+A fresh byte-identical private copy passed the unchanged single-link/signature/
+vault-engine preflight for a later unlocked run; it has not been launched.
 
 An earlier run of this same flow completed the functionality checks but failed
 checkpoint retention after the computer tool reopened the test binary while

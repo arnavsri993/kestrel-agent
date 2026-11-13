@@ -21,6 +21,7 @@ let candidate, profile, cleanup = [], previous;
 beforeEach(async () => {
  previous = process.env.KESTREL_TEST_NATIVE_LOCAL_VAULT;
  process.env.KESTREL_TEST_NATIVE_LOCAL_VAULT = "1";
+ vi.stubEnv("KESTREL_TEST_REAL_CODEX", undefined);
  candidate = await realpath(await mkdtemp(join(tmpdir(), "fixture-candidate-")));
  profile = await realpath(await mkdtemp(join(tmpdir(), "kestrel-chromium-desktop-canary-")));
  cleanup.push(candidate, profile);
@@ -29,6 +30,7 @@ beforeEach(async () => {
  vi.mocked(execFileSync).mockReset().mockReturnValue(" 1 /sbin/launchd\n");
 });
 afterEach(async () => {
+ vi.unstubAllEnvs();
  if (previous === undefined) delete process.env.KESTREL_TEST_NATIVE_LOCAL_VAULT;
  else process.env.KESTREL_TEST_NATIVE_LOCAL_VAULT = previous;
  await Promise.all(cleanup.map(path => rm(path, { recursive: true, force: true })));
@@ -43,6 +45,41 @@ async function fixture() {
  return { storage, evidence, candidate, candidateSha256: storage.candidateSha256, root: candidate, profile };
 }
 describe("generated native browser fixture storage", () => {
+ it.each([undefined, "0", "true", "yes"])("keeps production discovery disabled without exact opt-in (%s)", async value => {
+  vi.stubEnv("KESTREL_TEST_REAL_CODEX", value);
+  vi.stubEnv("KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY", "0");
+  vi.stubEnv("OPENAI_API_KEY", "generated-secret-must-not-inherit");
+  vi.stubEnv("KESTREL_CODEX_PATH", "/generated/vendor-override");
+  vi.stubEnv("CODEX_HOME", "/generated/vendor-profile");
+  const storage = await selectNativeBrowserFixtureStorage({candidate, root: candidate});
+  expect(nativeBrowserFixtureStorageEnv(storage)).toEqual({
+   PATH: "/usr/bin:/bin", HOME: process.env.HOME ?? "", TMPDIR: process.env.TMPDIR ?? tmpdir(), LANG: "en_US.UTF-8",
+   KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
+  });
+ });
+ it("allows explicitly requested live Codex discovery without inheriting credentials or overrides", async () => {
+  vi.stubEnv("KESTREL_TEST_REAL_CODEX", "1");
+  for (const name of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "KESTREL_CODEX_MCP_TOKEN", "ARBITRARY_SETTING"])
+   vi.stubEnv(name, "generated-secret-must-not-inherit");
+  vi.stubEnv("KESTREL_CODEX_PATH", "/generated/vendor-override");
+  vi.stubEnv("CODEX_HOME", "/generated/vendor-profile");
+  vi.stubEnv("PATH", "/generated/untrusted-bin");
+  vi.stubEnv("KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY", "1");
+  vi.stubEnv("KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY", "0");
+  const storage = await selectNativeBrowserFixtureStorage({candidate, root: candidate});
+  expect(nativeBrowserFixtureStorageEnv(storage)).toEqual({
+   PATH: "/usr/bin:/bin", HOME: process.env.HOME ?? "", TMPDIR: process.env.TMPDIR ?? tmpdir(), LANG: "en_US.UTF-8",
+   KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
+  });
+ });
+ it("snapshots the explicit discovery opt-in when selecting the candidate", async () => {
+  const disabled = await selectNativeBrowserFixtureStorage({candidate, root: candidate});
+  vi.stubEnv("KESTREL_TEST_REAL_CODEX", "1");
+  const enabled = await selectNativeBrowserFixtureStorage({candidate, root: candidate});
+  expect(nativeBrowserFixtureStorageEnv(disabled).KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY).toBe("1");
+  vi.stubEnv("KESTREL_TEST_REAL_CODEX", "0");
+  expect(nativeBrowserFixtureStorageEnv(enabled)).not.toHaveProperty("KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY");
+ });
  it("captures and revalidates production vault evidence without creating a test key", async () => {
   const f = await fixture();
   expect(nativeBrowserFixtureStorageArgs(f.storage)).toEqual([]);
@@ -113,7 +150,9 @@ describe("generated native browser fixture storage", () => {
  });
  it("keeps the existing test-key marker behavior by default", async () => {
   delete process.env.KESTREL_TEST_NATIVE_LOCAL_VAULT;
+  vi.stubEnv("GENERATED_LEGACY_FIXTURE_SETTING", "preserved");
   const storage = await selectNativeBrowserFixtureStorage({candidate,root:candidate});
+  expect(nativeBrowserFixtureStorageEnv(storage)).toEqual({ ...process.env });
   await prepareNativeBrowserFixtureProfile({profile,storage});
   expect(nativeBrowserFixtureStorageArgs(storage)).toEqual(["--kestrel-test-profile-key"]);
   expect(await readFile(join(profile,".kestrel-native-test-profile-v1"),"utf8")).toBe("native-test-profile-v1\n");

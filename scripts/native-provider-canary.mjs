@@ -225,6 +225,26 @@ export async function nativeProviderCanary({ settings, home, profile, evidence, 
 
 // Explicit opt-in live entitlement check. This uses the official vendor CLI's
 // existing login; Kestrel receives account metadata and never copies its tokens.
+export function selectNativeCodexCanaryModel(models) {
+	const available = models?.filter(model => model.availability === "available" && model.capabilities?.reasoningEfforts?.length);
+	assert(available?.length, "The official route must advertise an available model and supported reasoning effort.");
+	const model = available.find(model => model.id === "gpt-6-luna") ?? available.find(model => model.id === "gpt-5.6-luna") ?? available[0];
+	const efforts = model.capabilities.reasoningEfforts;
+	return { model, reasoningEffort: efforts.includes("low") ? "low" : efforts[0] };
+}
+export function verifyNativeCodexCanaryCompletion({ sessionId, prompt, marker, accountId, model, messages, runs, executions }) {
+	assert(Array.isArray(messages) && Array.isArray(runs) && Array.isArray(executions));
+	assert(messages.every(message => message.sessionId === sessionId), "Codex observations must belong to the generated session.");
+	assert.equal(messages.filter(message => message.role === "user" && message.content === prompt).length, 1);
+	assert.equal(messages.filter(message => message.role === "user").length, 1, "Only the generated prompt belongs in this acceptance session.");
+	assert(!messages.some(message => message.role === "tool" || message.modelToolCalls?.length || message.sourceToolExecutionIds?.length || message.toolExecutionId), "The generated Codex check recorded a Core tool call.");
+	assert.equal(executions.length, 0, "The generated Codex check recorded a Core tool execution.");
+	assert(runs.length > 0 && runs.every(run => run.sessionId === sessionId && run.model === model && run.providerIds?.length === 1 && run.providerIds[0] === accountId), "The generated reply used a different route or model.");
+	const run = runs.find(run => run.status === "completed");
+	const assistant = messages.find(message => message.role === "assistant" && message.content.trim() === marker);
+	assert(run && assistant, "Codex must finish and persist the exact generated marker.");
+	return { sessionId, assistantMessageId: assistant.id, runId: run.id, accountId, model, coreRecordedToolExecutions: 0 };
+}
 export async function nativeCodexCanary({ settings, home, evidence, receipt }) {
 	await settings.bringToFront(); await selectSettingsSection(settings, "agent-connections", "Accounts & access");
 	await settings.locator("summary").filter({ hasText: "Model provider · ChatGPT" }).click();
@@ -239,19 +259,20 @@ export async function nativeCodexCanary({ settings, home, evidence, receipt }) {
 	const account = refreshed.providerAccounts.find(account => account.id === "native-cli-codex");
 	const models = account?.models.filter(model => model.availability === "available");
 	assert(models?.length, "The official Codex app-server did not return an available entitled model.");
-	const model = models.find(model => model.id === "gpt-5.6-luna") ?? models.find(model => model.id === "gpt-6-luna") ?? models[0];
+	const { model, reasoningEffort } = selectNativeCodexCanaryModel(models);
 	await selectSettingsSection(settings, "agent-models", "Models & routing");
 	const subscriptionCard = settings.locator(".provider-account-card").filter({ hasText: "ChatGPT plan through Codex" });
 	await subscriptionCard.waitFor(); assert.equal(await subscriptionCard.getByRole("button", { name: "Connect", exact: true }).count(), 0);
 	await subscriptionCard.getByText("Manage this connection in Accounts and access.", { exact: true }).waitFor();
-	await home.evaluate(({ accountId, model }) => {
+	await home.evaluate(({ accountId, model, reasoningEffort }) => {
 		localStorage.setItem("kestrel:execution-mode", "manual"); localStorage.setItem("kestrel:provider-id", accountId);
 		localStorage.setItem("kestrel:provider-account-id", accountId); localStorage.setItem("kestrel:model", model);
-		localStorage.setItem("kestrel:reasoning-effort", "low");
-	}, { accountId: account.id, model: model.id });
+		localStorage.setItem("kestrel:reasoning-effort", reasoningEffort);
+	}, { accountId: account.id, model: model.id, reasoningEffort });
 	await home.bringToFront(); await home.reload(); await home.locator("#new-tab-chat-input").waitFor();
 	const marker = `NATIVE_CODEX_OK_${Date.now()}`;
-	await home.locator("#new-tab-chat-input").fill(`Reply with only ${marker}. Do not use tools or read files.`);
+	const prompt = `Reply with only ${marker}. Do not use tools or read files.`;
+	await home.locator("#new-tab-chat-input").fill(prompt);
 	await home.getByRole("button", { name: /^Send message to / }).click();
 	let sessionId;
 	for (const deadline = Date.now() + 120_000; Date.now() < deadline;) {
@@ -263,6 +284,21 @@ export async function nativeCodexCanary({ settings, home, evidence, receipt }) {
 		if (sessionId) break; await delay(250);
 	}
 	assert(sessionId, "The visible native Home prompt did not receive a real Codex response.");
+	let completion;
+	for (const deadline = Date.now() + 30000; Date.now() < deadline;) {
+		const runs = await home.evaluate(sessionId => window.kestrel.request({ type: "runtime-list-runs", sessionId }), sessionId);
+		if (runs.ok && runs.runs?.some(run => run.status === "completed")) {
+			const messages = await home.evaluate(sessionId => window.kestrel.request({ type: "runtime-list-messages", sessionId }), sessionId);
+			const executions = await home.evaluate(sessionId => window.kestrel.request({ type: "runtime-list-executions", sessionId }), sessionId);
+			assert(messages.ok && executions.ok);
+			completion = verifyNativeCodexCanaryCompletion({ sessionId, prompt, marker, accountId: account.id, model: model.id, messages: messages.messages, runs: runs.runs, executions: executions.executions });
+			break;
+		}
+		await delay(100);
+	}
+	assert(completion, "The real Codex run did not persist completion.");
 	await home.screenshot({ path: join(evidence, "native-Codex-conversation.png") });
-	receipt.phases.push({ phase: "native-existing-Codex-login-model-discovery-and-Home-agent", passed: true, accountId: account.id, model: model.id, sessionId });
+	receipt.phases.push({ phase: "native-existing-Codex-login-model-discovery-and-Home-agent", passed: true, ...completion, reasoningEffort,
+		inputScope: "generated-marker-only", vendorAuthCustody: "official-vendor-profile", vendorKeychainBehaviorVerified: false });
+	return { ...completion, marker };
 }

@@ -96,10 +96,13 @@ async function verifyCandidate(state) {
 }
 export async function selectNativeBrowserFixtureStorage({ candidate, root }) {
  const mode = process.env.KESTREL_TEST_NATIVE_LOCAL_VAULT === "1" ? "production-vault" : "test-key";
+ // Bind the live-provider opt-in to this selection, including later restarts.
+ // It authorizes discovery only; no vendor paths or credentials are inherited.
+ const realCodexRequested = process.env.KESTREL_TEST_REAL_CODEX === "1";
  const selected = mode === "production-vault" ? (await validateVaultCanaryCandidate(candidate, { root })).candidate : await realpath(resolve(candidate));
  const candidateSha256 = await candidateDigest(selected);
  const descriptor = Object.freeze({ mode, candidate: selected, candidateSha256 });
- states.set(descriptor, { mode, candidate: selected, candidateSha256, root, profile: null });
+ states.set(descriptor, { mode, candidate: selected, candidateSha256, root, profile: null, realCodexRequested });
  return descriptor;
 }
 export async function prepareNativeBrowserFixtureProfile({ profile, storage }) {
@@ -116,9 +119,11 @@ export function nativeBrowserFixtureStorageArgs(storage) {
  return stateFor(storage).mode === "test-key" ? ["--kestrel-test-profile-key"] : [];
 }
 export function nativeBrowserFixtureStorageEnv(storage) {
- if (stateFor(storage).mode === "test-key") return { ...process.env };
+ const state = stateFor(storage);
+ if (state.mode === "test-key") return { ...process.env };
  return { PATH: "/usr/bin:/bin", HOME: process.env.HOME ?? "", TMPDIR: process.env.TMPDIR ?? tmpdir(), LANG: "en_US.UTF-8",
-  KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1" };
+  ...(!state.realCodexRequested ? { KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1" } : {}),
+  KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1" };
 }
 export async function captureNativeBrowserFixtureStorage({ profile, storage }) {
  const state = stateFor(storage);

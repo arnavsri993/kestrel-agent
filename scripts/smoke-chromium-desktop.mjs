@@ -80,7 +80,7 @@ const server=createServer((req,res)=>{
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 let child,browser,output='',profileRetained=false,uiActionPage;
-let savedSession,providerEvidence,workspaceEvidence;
+let savedSession,providerEvidence,workspaceEvidence,codexEvidence;
 function ownedNodeProcesses(){
  const rows=execFileSync('/bin/ps',['-axo','pid=,ppid=,comm='],{encoding:'utf8'}).trim().split('\n').map(line=>line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)).filter(Boolean);
  const owned=new Set([child.pid]);let changed=true;
@@ -362,7 +362,7 @@ try{
  await settings.locator('[data-app-page="settings"]').waitFor();
  if(process.env.KESTREL_TEST_NATIVE_WORKSPACE==='1'||workspaceFixture)workspaceEvidence=await nativeWorkspaceCanary({settings,getHome:()=>home,profile,evidence,receipt,origin:`http://127.0.0.1:${server.address().port}`,fixtures:isolationFixtures,fixtureGranted:workspaceFixture});
  if(providers)providerEvidence=await nativeProviderCanary({settings,home,profile,evidence,receipt,endpoint});
- if(process.env.KESTREL_TEST_REAL_CODEX==='1')await nativeCodexCanary({settings,home,evidence,receipt});
+ if(process.env.KESTREL_TEST_REAL_CODEX==='1')codexEvidence=await nativeCodexCanary({settings,home,evidence,receipt});
  await settings.bringToFront();
  await settings.getByRole('tab',{name:'Browser',exact:true}).click();
  await settings.getByRole('combobox',{name:'Browser settings section',exact:true}).selectOption('browser-extensions');
@@ -614,6 +614,11 @@ try{
  home=restarted.home;context=restarted.context;endpoint=restarted.endpoint;
  const sessions=await restarted.home.evaluate(()=>window.kestrel.request({type:'runtime-list-sessions'}));assert.equal(sessions.ok,true);assert(sessions.sessions.some(session=>session.id===savedSession),'Actual Core session must survive full app restart.');
  if(workspaceEvidence)await finishNativeWorkspaceCanary({home,state:workspaceEvidence,receipt});
+ if(codexEvidence){
+  const messages=await home.evaluate(sessionId=>window.kestrel.request({type:'runtime-list-messages',sessionId}),codexEvidence.sessionId);
+  assert(messages.ok&&messages.messages?.some(message=>message.id===codexEvidence.assistantMessageId&&message.role==='assistant'&&message.content.trim()===codexEvidence.marker),'The generated Codex reply must survive the production-profile restart.');
+  receipt.phases.push({phase:'native-real-Codex-generated-response-restart-readback',passed:true,sessionId:codexEvidence.sessionId,model:codexEvidence.model});
+ }
  if(providerEvidence){
   const accounts=await home.evaluate(()=>window.kestrel.request({type:'provider-account-list'}));assert(accounts.ok&&accounts.providerAccounts.some(account=>account.id===providerEvidence.accountId));
   const messages=await home.evaluate(sessionId=>window.kestrel.request({type:'runtime-list-messages',sessionId}),providerEvidence.sessionId);assert(messages.ok&&messages.messages.some(message=>message.content.includes(providerEvidence.answer)));
