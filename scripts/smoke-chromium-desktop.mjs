@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import {spawn,execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {lstat,mkdtemp,mkdir,readFile,readdir,rm,writeFile} from 'node:fs/promises';
+import {lstat,mkdtemp,mkdir,readFile,readdir,writeFile} from 'node:fs/promises';
 import {createServer} from 'node:http';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
-import {setTimeout as delay} from 'node:timers/promises';
+import {setTimeout as cleanupDelay} from 'node:timers/promises';
+import {rmSync,writeFileSync} from 'node:fs';
+import {createNativeDesktopCancellation} from './native-desktop-cancellation.mjs';
 import {chromium} from '@playwright/test';
 import {tsImport} from 'tsx/esm/api';
 import {nativeProviderCanary,nativeCodexCanary} from './native-provider-canary.mjs';
@@ -19,6 +21,18 @@ import {validateDisposableNativeTestProfile} from './native-test-profile.mjs';
 import {retainStoreUpdateFixture} from './native-store-update-profile.mjs';
 import {CEF_VERSION} from './prepare-native-chromium-runtime.mjs';
 
+let receipt;
+const cancellation=createNativeDesktopCancellation({onCancel:error=>{
+ process.exitCode=error.signal==='SIGINT'?130:143;
+ if(receipt){receipt.cancelled={signal:error.signal};receipt.failed=String(error);}
+}});
+const onInt=()=>cancellation.cancel('SIGINT'),onTerm=()=>cancellation.cancel('SIGTERM');
+process.on('SIGINT',onInt);process.on('SIGTERM',onTerm);
+const delay=(...args)=>cancellation.delay(...args);
+async function connect(endpoint){
+ cancellation.check();
+ return cancellation.wait(chromium.connectOverCDP(endpoint,{noDefaults:true,timeout:15_000}).then(value=>cancellation.bindTransport(value)));
+}
 const store=process.env.KESTREL_TEST_REAL_CHROME_WEB_STORE==='1';
 const requireExtensionParity=process.env.KESTREL_TEST_REQUIRE_CHROMIUM_EXTENSION_PARITY==='1';
 const retainUpdateProfile=process.env.KESTREL_TEST_KEEP_STORE_UPDATE_PROFILE==='1';
@@ -53,7 +67,7 @@ const formatter='bcjindcccaagfpapjjmafapmmgkkhgoa';
 // JSON Formatter is a content-only MV3 extension. Use the official uBO Lite
 // Store package for the separate background-worker and action-popup probes.
 const actionExtension='ddkjiahejlhfcafbddmgiahcphecmpfh';
-const receipt={kind:'native-chromium-desktop-receipt',at:new Date().toISOString(),candidate:app,candidateSha256:fixtureStorage.candidateSha256,executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),fixtureStorageMode:fixtureStorage.mode,storeRequested:store,extensionParityRequired:requireExtensionParity,lifecycleRequested:lifecycle,phases:[]};
+receipt={kind:'native-chromium-desktop-receipt',at:new Date().toISOString(),candidate:app,candidateSha256:fixtureStorage.candidateSha256,executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),fixtureStorageMode:fixtureStorage.mode,storeRequested:store,extensionParityRequired:requireExtensionParity,lifecycleRequested:lifecycle,phases:[]};
 const jsonFixture={source:'kestrel-native-canary',nested:{installedExtensionRuns:true},values:[1,2,3]};
 const isolationFixtures=createIsolationFixtures();
 const isolatedDownloadFixtures=createIsolatedDownloadFixtures();
@@ -88,8 +102,12 @@ function ownedNodeProcesses(){
  return rows.filter(row=>owned.has(Number(row[1]))&&row[3].endsWith('/node')).map(row=>({pid:Number(row[1]),ppid:Number(row[2])}));
 }
 async function start(){
+ cancellation.check();
  output='';
  child=spawn(executable,['--kestrel-chromium-desktop','--kestrel-cache-path',profile,'--kestrel-durable-profile',...nativeBrowserFixtureStorageArgs(fixtureStorage),'--remote-debugging-port=0'],{stdio:['ignore','pipe','pipe'],env:nativeBrowserFixtureStorageEnv(fixtureStorage)});
+ cancellation.bindChild(child);
+ (receipt.launches??=[]).push({pid:child.pid,profile});
+ console.log('NATIVE_DESKTOP_PROBE_LAUNCHED '+JSON.stringify({pid:child.pid,profile,evidence}));
  child.stdout.on('data',b=>output+=b);child.stderr.on('data',b=>output+=b);
  let endpoint;
  for(let i=0;i<200;i++){
@@ -98,7 +116,7 @@ async function start(){
   if(endpoint)break;await delay(100);
  }
  assert(endpoint,'Owned native endpoint missing: '+output);
- browser=await chromium.connectOverCDP(endpoint,{noDefaults:true});
+ browser=await connect(endpoint);
  const observedVersion=browser.version();
  assert.equal(observedVersion,expectedChromium,'The running Chromium version must match the verified runtime pin.');
  (receipt.observedChromiumVersions??=[]).push(observedVersion);
@@ -112,33 +130,32 @@ async function start(){
    if(targets.targetInfos.some(target=>target.type==='page'&&/chrome-extension:\/\/[^/]+\/index.html$/.test(target.url))){
     // Chrome may have created the first page between Playwright's discovery
     // and auto-attach setup. Reconnect only when that real target exists.
-    await browser.close();browser=await chromium.connectOverCDP(endpoint,{noDefaults:true});context=browser.contexts()[0];
+    await browser.close();browser=await connect(endpoint);context=browser.contexts()[0];
    }
   }
   await delay(100);
  }
  assert(home,'Authenticated native Home did not open: '+output);
  await home.waitForFunction(()=>typeof window.kestrel?.request==='function');
+ console.log('NATIVE_DESKTOP_PROBE_READY '+JSON.stringify({pid:child.pid,profile,evidence}));
  return {context,home,endpoint};
 }
 async function close(){
- const exited=new Promise(resolve=>child.once('exit',(code,signal)=>resolve({code,signal})));
- // Exercise the production launcher's clean process-stop path. Closing the
- // last browser window intentionally keeps the macOS app and Core alive.
- assert(child.kill('SIGTERM'),'Native process could not receive its stop signal.');
- const result=await Promise.race([exited,delay(12_000,undefined,{ref:false}).then(()=>{throw Error('Native shutdown timed out: '+output);})]);
- assert.deepEqual(result,{code:0,signal:null},output);
+ const result=await cancellation.stop();
+ assert(!result.forced&&!result.cleanupUnconfirmed&&!result.spawnError,'Native graceful shutdown failed: '+JSON.stringify(result));
+ assert.equal(result.code,0,output);assert.equal(result.signal,null,output);
  await waitForCandidateStop();
  (receipt.stops??=[]).push({pid:child.pid,exitCode:result.code,signal:result.signal,forced:false,candidateProcessesStopped:true});
- await browser.close().catch(()=>{});browser=undefined;
+ await cancellation.disconnect();browser=undefined;
  await writeFile(join(evidence,'runtime.log'),output);
+ cancellation.check();
 }
 async function waitForCandidateStop(){
  const deadline=Date.now()+10_000;
  for(;;){
   try{assertNativeBrowserFixtureStopped(fixtureStorage);return;}
   catch(error){if(Date.now()>=deadline)throw error;}
-  await delay(100);
+  await cleanupDelay(100);
  }
 }
 async function ownedUiDiagnostics(page) {
@@ -216,11 +233,12 @@ try{
   ({context,home,endpoint}=await start());
  }
  async function createdPage(predicate){
+  cancellation.check();
   let page=browser.contexts().flatMap(context=>context.pages()).find(page=>predicate(page.url()));
   if(page)return page;
   // CEF's browser target does not auto-attach every native-created tab.
   // Reconnect to its existing targets; the product tab/window stays intact.
-  await browser.close();browser=await chromium.connectOverCDP(endpoint,{noDefaults:true});context=browser.contexts()[0];
+  await browser.close();browser=await connect(endpoint);context=browser.contexts()[0];
   home=context.pages().find(page=>/chrome-extension:\/\/[^/]+\/index.html$/.test(page.url()));
   for(let i=0;i<100;i++){page=browser.contexts().flatMap(context=>context.pages()).find(page=>predicate(page.url()));if(page)return page;await delay(100);}
   throw Error('Native-created target could not be attached by the test connection.');
@@ -266,6 +284,7 @@ try{
  assert(downloadedFiles.some(item=>item.filename===join(downloadPath,'canary.txt')),'The native download must stay in the disposable profile.');
  assert.equal(await readFile(join(downloadPath,'canary.txt'),'utf8'),'Native Chromium download canary.');
  async function coreTool(toolName,input,approved=true){
+  cancellation.check();
   const response=await home.evaluate(({sessionId,toolName,input,approved})=>window.kestrel.request({type:'runtime-call-tool',sessionId,toolName,input,
    ...(approved?{approvalStatus:'approved'}:{}),idempotencyKey:crypto.randomUUID()}),{sessionId:savedSession,toolName,input,approved});
   assert.equal(response.ok,true,response.error);return response.execution;
@@ -312,6 +331,7 @@ try{
  if(process.env.KESTREL_TEST_NATIVE_ISOLATED_AUTOMATION==='1')await prepareIsolatedCoreResetCanary({coreTool,origin:`http://127.0.0.1:${server.address().port}`,fixtures:isolationFixtures});
  const originalNodes=ownedNodeProcesses();assert.equal(originalNodes.length,3,'The test must identify its exact broker, relay, and Core.');
  const originalCore=originalNodes.find(node=>!originalNodes.some(child=>child.ppid===node.pid));assert(originalCore);
+ cancellation.check();
  process.kill(originalCore.pid,'SIGKILL'); // Only this disposable canary's verified Core child.
  let recoveredCore,recoveredSnapshot;
  for(const deadline=Date.now()+15_000;Date.now()<deadline;){
@@ -456,7 +476,7 @@ try{
     extensionWorker=context.serviceWorkers().find(item=>item.url().startsWith(`chrome-extension://${actionExtension}/`));
     if(!extensionWorker&&i%20===0){
      const discovery=await browser.newBrowserCDPSession();const targets=await discovery.send('Target.getTargets');await discovery.detach();
-     if(targets.targetInfos.some(target=>target.type==='service_worker'&&target.url.startsWith(`chrome-extension://${actionExtension}/`))){await browser.close();browser=await chromium.connectOverCDP(endpoint,{noDefaults:true});context=browser.contexts()[0];home=context.pages().find(page=>/chrome-extension:\/\/[^/]+\/index.html$/.test(page.url()));}
+     if(targets.targetInfos.some(target=>target.type==='service_worker'&&target.url.startsWith(`chrome-extension://${actionExtension}/`))){await browser.close();browser=await connect(endpoint);context=browser.contexts()[0];home=context.pages().find(page=>/chrome-extension:\/\/[^/]+\/index.html$/.test(page.url()));}
     }
     if(!extensionWorker)await delay(100);
    }
@@ -613,6 +633,15 @@ try{
  const restarted=await start();
  home=restarted.home;context=restarted.context;endpoint=restarted.endpoint;
  const sessions=await restarted.home.evaluate(()=>window.kestrel.request({type:'runtime-list-sessions'}));assert.equal(sessions.ok,true);assert(sessions.sessions.some(session=>session.id===savedSession),'Actual Core session must survive full app restart.');
+ const restoredState=await restarted.home.evaluate(()=>window.kestrel.request({type:'browser-get-state'}));
+ const restoredDownload=restoredState.browserState?.downloads.find(item=>item.id===nativeDownload.id);
+ assert(restoredDownload?.filename==='canary.txt'&&restoredDownload.status==='completed','The exact completed native download metadata must survive full restart.');
+ const restoredCoreDownloads=await coreTool('browser.visible-downloads',{});
+ assert.equal(restoredCoreDownloads.status,'verified',JSON.stringify(restoredCoreDownloads));
+ assert(restoredCoreDownloads.output.downloads.some(item=>item.filename==='canary.txt'&&item.status==='completed'),'Core must read the completed download after restart.');
+ assert(!JSON.stringify(restoredCoreDownloads.output).includes('canary_metadata_secret'),'Restarted Core download metadata must still redact credentials.');
+ assert.equal(await readFile(join(downloadPath,'canary.txt'),'utf8'),'Native Chromium download canary.');
+ receipt.phases.push({phase:'native-download-metadata-and-bytes-after-restart',passed:true});
  if(workspaceEvidence)await finishNativeWorkspaceCanary({home,state:workspaceEvidence,receipt});
  if(codexEvidence){
   const messages=await home.evaluate(sessionId=>window.kestrel.request({type:'runtime-list-messages',sessionId}),codexEvidence.sessionId);
@@ -646,21 +675,40 @@ try{
  if(retainUpdateProfile)receipt.storeUpdateFixture={profileRoot:fixtureStorage.mode==='test-key'?await validateDisposableNativeTestProfile(profile):profile,checkpointPath:join(evidence,'store-update-checkpoint.json')};
  await writeFile(join(evidence,'receipt.json'),JSON.stringify(receipt,null,2),{mode:0o600});
  if(retainUpdateProfile){await retainStoreUpdateFixture({profile,receiptPath:join(evidence,'receipt.json'),checkpointPath:receipt.storeUpdateFixture.checkpointPath,storageEvidence,root:process.cwd()});profileRetained=true;console.log('STORE_UPDATE_FIXTURE_RETAINED: '+receipt.storeUpdateFixture.checkpointPath+'; a real published-version upgrade remains a separate acceptance check.');}
+ cancellation.check();
  console.log('Native Chromium desktop passed: real Kestrel Home/Settings, Core tab tools and approval enforcement, native tabs, web bridge isolation, durable restart, and clean shutdown'+(store?', plus native Store install and functional extension restart.':'.'));
 }catch(error){
+ receipt.failed=String(cancellation.error??error);
  const info=await lstat(executable).catch(()=>undefined);
  if(info)receipt.failedCandidateFileState={uid:info.uid,expectedUid:process.getuid(),mode:info.mode,nlink:info.nlink,nlinkType:typeof info.nlink,isFile:info.isFile(),isSymbolicLink:info.isSymbolicLink()};
- if(uiActionPage){receipt.failedUiState=await ownedUiDiagnostics(uiActionPage);await uiActionPage.screenshot({path:join(evidence,'failed-ui.png'),timeout:5000}).catch(()=>{});}
+ if(uiActionPage&&!cancellation.cancelled){receipt.failedUiState=await ownedUiDiagnostics(uiActionPage);await uiActionPage.screenshot({path:join(evidence,'failed-ui.png'),timeout:5000}).catch(()=>{});}
  await writeFile(join(evidence,'failure.log'),output+'\n'+String(error));await writeFile(join(evidence,'receipt.json'),JSON.stringify({...receipt,failed:String(error)},null,2));throw error;
 }
 finally{
- await browser?.close().catch(()=>{});
- if(child&&child.exitCode===null&&child.signalCode===null){child.kill('SIGKILL');await new Promise(resolve=>child.once('exit',resolve));}
- await new Promise(resolve=>server.close(resolve));
- if(!profileRetained&&retainUpdateProfile){
-  console.error('Generated Store fixture kept for inspection without an accepted checkpoint: '+profile);
- }else if(!profileRetained){
-  try{await waitForCandidateStop();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
-  catch(error){console.error('Generated fixture retained because candidate shutdown or cleanup could not be verified: '+profile);throw error;}
+ await cancellation.disconnect();
+ try{
+  const stopped=await cancellation.stop();receipt.cleanup=stopped;
+  if(stopped.forced||stopped.cleanupUnconfirmed||stopped.spawnError){
+   receipt.shutdownFailed=stopped;receipt.cleanupUnconfirmed=true;
+   receipt.failed??='Owned native process did not stop cleanly.';process.exitCode ||= 1;
+  }
+  await waitForCandidateStop();receipt.exactCandidateAbsent=true;
+ }catch(error){
+  receipt.shutdownFailed=String(error);receipt.cleanupUnconfirmed=true;receipt.exactCandidateAbsent=false;
+  receipt.failed??=String(error);process.exitCode ||= 1;
  }
+ await new Promise(resolve=>server.close(resolve));
+ if(cancellation.cancelled){receipt.cancelled={signal:cancellation.error.signal};receipt.failed=String(cancellation.error);}
+ if(!profileRetained&&(retainUpdateProfile||receipt.failed)){
+  receipt.generatedProfilesRemoved=false;receipt.retainedProfile=profile;
+  console.error('Generated native fixture kept for inspection without an accepted checkpoint: '+profile);
+ }else if(!profileRetained){
+  // No awaited boundary between the cancellation check and removal: a queued
+  // signal cannot resume this branch after cancellation has been recorded.
+  cancellation.check();
+  try{rmSync(profile,{recursive:true,force:true,maxRetries:10,retryDelay:100});receipt.generatedProfilesRemoved=true;}
+  catch(error){receipt.failed=String(error);receipt.generatedProfilesRemoved=false;receipt.retainedProfile=profile;process.exitCode ||= 1;}
+ }
+ writeFileSync(join(evidence,'receipt.json'),JSON.stringify(receipt,null,2),{mode:0o600});
+ process.removeListener('SIGINT',onInt);process.removeListener('SIGTERM',onTerm);
 }

@@ -12,7 +12,7 @@ vi.mock("./native-vault-canary-candidate.mjs", () => ({
 }));
 import { validateVaultCanaryCandidate } from "./native-vault-canary-candidate.mjs";
 import { execFileSync } from "node:child_process";
-import { selectNativeBrowserFixtureStorage, prepareNativeBrowserFixtureProfile, nativeBrowserFixtureStorageArgs,
+import { selectNativeBrowserFixtureStorage, prepareNativeBrowserFixtureProfile, adoptRetainedNativeBrowserFixtureProfile, nativeBrowserFixtureStorageArgs,
  nativeBrowserFixtureStorageEnv, captureNativeBrowserFixtureStorage, validateRetainedNativeBrowserFixtureStorage,
  assertNativeBrowserFixtureStopped } from "./native-browser-fixture-storage.mjs";
 
@@ -106,6 +106,53 @@ describe("generated native browser fixture storage", () => {
    await writeFile(join(copy,"binary"),"different version");
    await expect(validateRetainedNativeBrowserFixtureStorage({...f,candidateCopy:copy})).rejects.toThrow(/candidate changed/);
   } finally { vi.mocked(validateVaultCanaryCandidate).mockImplementation(async selected=>({candidate:selected})); }
+ });
+ it("adopts a validated retained production-vault profile and captures it with the selected copy", async () => {
+  const f = await fixture(), copy = await realpath(await mkdtemp(join(tmpdir(), "fixture-candidate-copy-")));
+  cleanup.push(copy); await cp(candidate, copy, { recursive: true });
+  const storage = await selectNativeBrowserFixtureStorage({ candidate: copy, root: candidate });
+  const evidenceBefore = JSON.stringify(f.evidence);
+  expect(await adoptRetainedNativeBrowserFixtureProfile({ profile, storage, evidence: f.evidence, originalCandidate: candidate })).toBe(profile);
+  expect(await captureNativeBrowserFixtureStorage({ profile, storage })).toMatchObject({
+   ...f.evidence, candidate: copy, candidateSha256: storage.candidateSha256,
+  });
+  expect(JSON.stringify(f.evidence)).toBe(evidenceBefore);
+  expect(vi.mocked(validateVaultCanaryCandidate)).toHaveBeenCalledWith(copy, { root: candidate });
+ });
+ it("rejects adoption when the descriptor is already bound", async () => {
+  const f = await fixture(), otherProfile = await realpath(await mkdtemp(join(tmpdir(), "kestrel-chromium-desktop-canary-")));
+  cleanup.push(otherProfile);
+  const storage = await selectNativeBrowserFixtureStorage({ candidate, root: candidate });
+  await prepareNativeBrowserFixtureProfile({ profile: otherProfile, storage });
+  await expect(adoptRetainedNativeBrowserFixtureProfile({ profile, storage, evidence: f.evidence, originalCandidate: candidate }))
+   .rejects.toThrow("already bound");
+ });
+ it("rejects adoption when retained vault bytes changed", async () => {
+  const f = await fixture(), storage = await selectNativeBrowserFixtureStorage({ candidate, root: candidate });
+  await writeFile(join(profile, ".kestrel-local-vault-v1"), Buffer.concat([magic, Buffer.from([9])]), { mode: 0o600 });
+  await expect(adoptRetainedNativeBrowserFixtureProfile({ profile, storage, evidence: f.evidence, originalCandidate: candidate }))
+   .rejects.toThrow("vault changed");
+ });
+ it("rejects adoption when the retained profile identity changed", async () => {
+  const f = await fixture(), storage = await selectNativeBrowserFixtureStorage({ candidate, root: candidate });
+  const moved = `${profile}-adoption-original`; cleanup.push(moved);
+  await rename(profile, moved); await mkdir(profile, { mode: 0o700 });
+  await writeFile(join(profile, ".kestrel-local-vault-v1"), magic, { mode: 0o600 });
+  await expect(adoptRetainedNativeBrowserFixtureProfile({ profile, storage, evidence: f.evidence, originalCandidate: candidate })).rejects.toThrow();
+ });
+ it("rejects adoption when the selected candidate copy digest changed", async () => {
+  const f = await fixture(), copy = await realpath(await mkdtemp(join(tmpdir(), "fixture-candidate-copy-")));
+  cleanup.push(copy); await cp(candidate, copy, { recursive: true });
+  const storage = await selectNativeBrowserFixtureStorage({ candidate: copy, root: candidate });
+  await writeFile(join(copy, "binary"), "changed copy");
+  await expect(adoptRetainedNativeBrowserFixtureProfile({ profile, storage, evidence: f.evidence, originalCandidate: candidate }))
+   .rejects.toThrow("candidate changed");
+ });
+ it("rejects retained-profile adoption for test-key storage", async () => {
+  delete process.env.KESTREL_TEST_NATIVE_LOCAL_VAULT;
+  const storage = await selectNativeBrowserFixtureStorage({ candidate, root: candidate });
+  await expect(adoptRetainedNativeBrowserFixtureProfile({ profile, storage, evidence: {}, originalCandidate: candidate }))
+   .rejects.toThrow("production-vault");
  });
  it("rejects a replacement directory at the same profile path", async () => {
   const f = await fixture(), moved = `${profile}-original`;

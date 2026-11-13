@@ -281,6 +281,82 @@ This is current-candidate installation/compatibility evidence, not a published
 version transition or complete extension parity. No forced version edits or
 repeat update-resume request were used.
 
+### Production desktop isolation and checked recovery continuation
+
+The supported Chromium desktop passed **16 production-vault phases** on a
+fully validated byte-identical copy of candidate `91eab4bb...`, with three clean
+stops and unchanged complete-bundle hashes. The run exercised visible Core
+actions and private-field redaction, separate isolated cookies/storage,
+trusted input and navigation, screenshots, bounded isolated downloads,
+active-renderer cleanup/recreation after a Core crash, and full-restart
+download ID/metadata/file-byte persistence. Credential redaction after restart
+is checked at the Core `browser.visible-downloads` boundary. The trusted app
+UI retains its own download URL. Receipt:
+`.tmp/native-production-modern-browser-verified/receipt.json`, SHA256
+`94e02ee35245cdc7b5798eefbfa92d5f92fffbfacd2e17f16d68a7e923f40992`.
+
+The three `test:native-browser-backend`, `test:native-isolated-automation` and
+`test:native-download-capture` commands now route through this actual desktop
+entry point. Each uses fresh evidence and only its requested local scope;
+Store, provider, workspace and other optional external flows are disabled.
+The previous BrowserView-based diagnostic route crashed under this custom
+engine when attaching an isolated profile to its shared widget. That failed
+run remains at `.tmp/native-production-isolated-automation-fixed.log`; it is
+not credited as production desktop acceptance or relabeled as a pass. The
+production desktop uses its separate windowless isolated-browser backend.
+
+The generated production-vault interruption test reached an actual published
+encrypted destination while the original selection remained active, then
+SIGKILLed only its directly owned app. It never signalled a discovered worker,
+injected product code or exported source keys. The original source stayed
+unchanged and all owned processes stopped. Its next launch failed bridge
+readiness; inspection also found an extra executable hard link. The bundle
+bytes remained unchanged, but the single-link guard refused it. The alias's
+origin is unknown; scoped metadata searches do not establish a cause. The
+original failed receipt remains immutable at
+`.tmp/native-vault-published-recovery/receipt.json`.
+
+A separate checked continuation in a fully preflighted byte-identical copy
+passed **seven phases and four clean starts/stops**. Actual native recovery
+authenticated source/destination vaults, kept the original profile on request,
+rediscovered and reverified the journal after restart, selected the recovered
+profile only after the separate native choice, read back its generated message
+after restart, and restored the original profile through native rollback.
+The recovered message was also observed in the native UI. Receipt:
+`.tmp/native-vault-recovery-continued/receipt.json`, SHA256
+`f4f3447f112d9f769e537af473e9e72864f3811a51c27d94ef73ce86e9f5eefd`.
+Both original generated profiles remain retained. The continuation binds the
+original failure and interruption digests, opaque vault/journal digests and
+profile identities. Its older checkpoint witnesses are explicitly labeled
+`post-failure-generated-fixture`; newer crash stages record those witnesses at
+interruption. This proves the scoped copied-app continuation, not same-path
+restart, mid-stage/power-loss recovery, real-profile migration or resolution of
+the original executable alias.
+
+To exercise a fresh published interruption, use the production transfer canary
+with `KESTREL_TEST_NATIVE_TRANSFER_PUBLISHED_RECOVERY=1`. To continue a retained
+generated failure, also supply the checked
+`KESTREL_NATIVE_VAULT_RECOVERY_CONTINUATION` and select a fully validated exact
+candidate copy. Always use a new `KESTREL_NATIVE_PROFILE_UI_EVIDENCE` directory;
+do not rewrite the original failed receipt or disable the single-link guard.
+
+Desktop probe cancellation now cooperatively disconnects CDP, blocks later
+launches/Core calls and stops only its bound child. Cleanup checks exact
+candidate/helper absence; cancellation and uncertain cleanup retain fixtures
+and a failed receipt. A live production-vault wrapper SIGTERM after its second
+native-ready event passed: clean native exit, no third launch, no remaining
+helpers and retained fixture. Its proof is
+`.tmp/native-modern-probe-cancel/cancellation-regression.json`. A forced
+fallback is explicitly unconfirmed and never earns a successful cleanup claim.
+The current production-vault command runs passed 11 backend phases, 15 isolated
+automation phases and 12 download phases, each with three clean stops,
+unchanged complete-bundle hashes and confirmed process absence. Receipts are
+under `.tmp/native-modern-probe-{backend,isolated,download}-verified/`.
+Focused fixture, interruption, continuation, routing, cancellation and existing
+Store tests pass **121 tests across seven files**. Syntax, whitespace and the
+production-secret scan also pass. No native product binary was changed by
+these harness-only changes.
+
 An earlier run of this same flow completed the functionality checks but failed
 checkpoint retention after the computer tool reopened the test binary while
 reconnecting. That extra instance was stopped. The failed receipt remains at
@@ -313,6 +389,14 @@ checked: 93 phases passed with unchanged complete-bundle hash pairs; two
 unbound receipts were excluded. The summary is
 `.tmp/ci-c05611d8-evidence/verified-summary.json`. This remains stock/mock CI,
 separate from the private custom-engine production-vault UI runs.
+
+Documentation head `1c4b161198dbb9a9bb260b17dc4881ee26cad981` passed both
+jobs in [CI 43474740815](https://github.com/arnavsri993/kestrel-agent/actions/runs/43474740815).
+Artifact `14064397098` matched SHA256
+`f24c45c4800c55e98e8f9e2a5a92b0e24f281343e42a4dcf2636ca7a9f64a1db`.
+Independent archive/receipt checks confirmed eight matching candidate hash
+pairs and 93 passed phases, with two unbound receipts excluded. This is still
+stock/mock CI; it does not substitute for the production runs above.
 
 The new Store fixture storage/checkpoint/continuation support and existing
 candidate metadata/profile checks pass **92 tests across five files** locally.

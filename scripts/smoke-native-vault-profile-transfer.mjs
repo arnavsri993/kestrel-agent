@@ -13,7 +13,10 @@ import { chromium } from "@playwright/test";
 import { candidateDigest } from "./native-retirement-evidence.mjs";
 import { validateVaultCanaryCandidate } from "./native-vault-canary-candidate.mjs";
 import { selectNativeBrowserFixtureStorage, prepareNativeBrowserFixtureProfile, nativeBrowserFixtureStorageArgs,
- nativeBrowserFixtureStorageEnv, captureNativeBrowserFixtureStorage, assertNativeBrowserFixtureStopped } from "./native-browser-fixture-storage.mjs";
+ nativeBrowserFixtureStorageEnv, captureNativeBrowserFixtureStorage, assertNativeBrowserFixtureStopped,
+ adoptRetainedNativeBrowserFixtureProfile } from "./native-browser-fixture-storage.mjs";
+import { captureOwnedTransferProcesses, interruptOwnedPublishedTransfer } from "./native-vault-published-interruption.mjs";
+import { loadNativeVaultRecoveryContinuation } from "./native-vault-recovery-continuation.mjs";
 
 assert.equal(process.platform, "darwin"); assert.equal(process.arch, "arm64");
 assert.equal(process.env.KESTREL_TEST_NATIVE_LOCAL_VAULT, "1", "Explicit generated-profile production-vault opt-in required.");
@@ -32,10 +35,17 @@ assert.equal((await readdir(evidence)).length, 0, "Evidence directory must be fr
 const run = randomUUID().slice(0, 8), temp = await realpath(await mkdtemp(join(tmpdir(), "kestrel-vault-transfer-")));
 const profiles = {}, descriptors = {}, fixtureEvidence = {};
 const modalQuitRequested = process.env.KESTREL_TEST_NATIVE_TRANSFER_MODAL_QUIT === "1";
-const receipt = { kind: "native-vault-profile-transfer-canary", version: 1, result: "failed", startedAt: new Date().toISOString(), candidate,
- candidateSha256: await candidateDigest(candidate), modalQuitRequested, phases: [], stages: [],
- scope: "Generated private temporary profiles, production local vaults, loopback CDP and operator-driven native menus/dialogs. No real profile, test key, provider credential, mock key, external fixture/provider request, Store, release gate or crash-recovery claim. Browser background network traffic is not measured." };
+const publishedRecoveryRequested = process.env.KESTREL_TEST_NATIVE_TRANSFER_PUBLISHED_RECOVERY === "1";
+const continuationPath = process.env.KESTREL_NATIVE_VAULT_RECOVERY_CONTINUATION;
+assert(!continuationPath || publishedRecoveryRequested, "A continuation requires explicit published-recovery mode.");
+assert(!(modalQuitRequested && publishedRecoveryRequested), "Run modal-Quit and published recovery separately.");
+const receipt = { kind: publishedRecoveryRequested ? "native-vault-published-recovery-canary" : "native-vault-profile-transfer-canary", version: 1, result: "failed", startedAt: new Date().toISOString(), candidate,
+ candidateSha256: await candidateDigest(candidate), modalQuitRequested, publishedRecoveryRequested, phases: [], stages: [],
+ scope: publishedRecoveryRequested
+  ? "Generated production-vault profiles; actual owned parent-process SIGKILL after publication but before activation, native recovery choices, restart and rollback. No worker injection/signalling, source key export, real profile, provider, Store, release gate, mid-stage or power-loss recovery claim. Browser background network traffic is not measured."
+  : "Generated private temporary profiles, production local vaults, loopback CDP and operator-driven native menus/dialogs. No real profile, test key, provider credential, mock key, external fixture/provider request, Store, release gate or crash-recovery claim. Browser background network traffic is not measured." };
 let running, browser, currentStage = "preflight", interrupted = false;
+let continuationLoaded = false;
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 function phase(name) { receipt.phases.push({ phase: name, passed: true }); console.log(`PASS ${name}`); }
 async function exists(path) { try { await lstat(path); return true; } catch (error) { if (error.code === "ENOENT") return false; throw error; } }
@@ -60,6 +70,7 @@ async function setup(name) {
 async function start(name) {
  const profile = profiles[name], storage = descriptors[name];
  assert(profile && storage); assertNoCandidate();
+ await validateVaultCanaryCandidate(candidate, { root });
  assert.equal(await candidateDigest(candidate), receipt.candidateSha256);
  const env = nativeBrowserFixtureStorageEnv(storage);
  assert.equal(env.KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY, "1", "Provider discovery must remain disabled for this local fixture.");
@@ -92,6 +103,7 @@ async function start(name) {
   if (targets.targetInfos.some(item => /chrome-extension:\/\/[^/]+\/index\.html$/.test(item.url))) { await browser.close(); browser = await chromium.connectOverCDP(endpoint, { noDefaults: true }); }
   return false;
  }, "Native Home missing.");
+ state.home = home;
  await home.waitForFunction(() => typeof window.kestrel?.request === "function");
  await home.evaluate(() => { localStorage.setItem("kestrel:onboarded", "yes"); localStorage.setItem("kestrel:default-browser-prompted", "yes"); });
  await home.reload(); await home.locator(".kestrel-sidebar").waitFor();
@@ -181,7 +193,7 @@ async function beginNativeTransfer(owner, sourceProfile, label) {
  await operator(`${label}-choose-review`, `In the visible native app menu choose Kestrel > Transfer Conversations & Memory…, choose this exact source profile in the native folder picker, then stop at the transfer review without applying.`, { sourceProfile, ownerProfile: state.profile });
  await eventually(() => state.output.includes("KESTREL_NATIVE_CORE_TRANSFER_REVIEW_READY"), "Native transfer review did not appear.", 10 * 60_000);
 }
-async function applyNativeTransfer(owner, label, oldSelection, oldSnapshot, sourceProfile, liveSessionId, incomingSessionId) {
+async function preparedNativeTransfer(owner, oldSelection, oldSnapshot, sourceProfile) {
  const relative = await eventually(async () => {
   const now = await selection(owner.state.profile);
   if (!now.handoffs || typeof now.handoffs !== "object") return false;
@@ -196,6 +208,10 @@ async function applyNativeTransfer(owner, label, oldSelection, oldSnapshot, sour
  await verifySourceUnchanged(sourceProfile, oldSnapshot);
  assert.deepEqual(await selection(owner.state.profile), { ...oldSelection, handoffs: { ...(oldSelection.handoffs ?? {}), [relative]: (await selection(owner.state.profile)).handoffs[relative] } },
   "Selection must still point at the old live Core before Apply Transfer.");
+ return { relative, child, reviewedSelection: await selection(owner.state.profile) };
+}
+async function applyNativeTransfer(owner, label, oldSelection, oldSnapshot, sourceProfile, liveSessionId, incomingSessionId) {
+ const { relative, child } = await preparedNativeTransfer(owner, oldSelection, oldSnapshot, sourceProfile);
  await operator(`${label}-apply`, "Review the visible native transfer summary. Confirm the source is closed checkbox, choose Apply Transfer, then dismiss the Transfer complete alert.", { ownerProfile: owner.state.profile, sourceProfile, destination: child });
  await eventually(() => owner.state.output.includes("KESTREL_NATIVE_CORE_TRANSFER_SELECTED"), "Native Apply Transfer did not complete and select its verified destination.", 10 * 60_000);
  const after = await selection(owner.state.profile);
@@ -214,9 +230,126 @@ async function previous(owner, label) {
  const selected = await selection(owner.profile); assert.equal(selected.active, "");
  return selected;
 }
+async function publishedRecovery(source, sourceSession, sourceText, sourceSnapshot) {
+ currentStage = "seed-D-recovery";
+ const D = await setup("D"), first = await start("D");
+ const own = (await request(first.home, { type: "runtime-create-session", title: `Recovery D original ${run}`, kind: "conversation" })).session;
+ assert(own?.id); await stop();
+ const before = await selection(D); let live = await start("D");
+ await beginNativeTransfer(live, source, "D-published");
+ const prepared = await preparedNativeTransfer(live, before, sourceSnapshot, source);
+ const database = join(prepared.child, "native-core/database/kestrel.sqlite");
+ const journal = `${database}.kestrel-transfer-journal`, vault = join(prepared.child, ".kestrel-local-vault-v1");
+ const vaultHash = hash(await readFile(vault));
+ const ownership = captureOwnedTransferProcesses(live.state.child, { executable,
+  workerExecutable: join(candidate, "Contents/Resources/agent-core/node/bin/node"),
+  workerEntry: join(candidate, "Contents/Resources/agent-core/service/host-profile-project-transfer.js") });
+ currentStage = "interrupt-D-after-publication";
+ let armed;
+ const watcherArmed = new Promise(resolve => { armed = resolve; });
+ const interruption = interruptOwnedPublishedTransfer({ child: live.state.child, ownership, database,
+  sourceDatabase: join(source, "native-core/database/kestrel.sqlite"), readSelection: () => selection(D),
+  reviewedSelection: prepared.reviewedSelection, cancelled: () => interrupted, onArmed: armed }).then(async result => {
+   await writeFile(join(evidence, "published-interruption.json"), `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+   console.log("NATIVE_VAULT_PUBLISHED_PARENT_INTERRUPTED"); return result;
+  }).then(result => ({ result }), error => ({ error }));
+ await Promise.race([watcherArmed, interruption.then(outcome => { throw outcome.error ?? Error("Interruption ended before its watch was armed."); })]);
+ await operator("D-publish-and-interrupt", "Confirm the source-closed checkbox and Apply Transfer. The harness will interrupt only its own disposable app after publication, before activation. After the test window closes, acknowledge this stage.", { ownerProfile: D, destination: prepared.child });
+ const interruptedResult = await interruption; if (interruptedResult.error) throw interruptedResult.error;
+ const exit = await Promise.race([live.state.exited, delay(15_000).then(() => null)]);
+ assert.deepEqual(exit, { code: null, signal: "SIGKILL" });
+ running = undefined; await browser?.close().catch(() => {}); browser = undefined;
+ await eventually(() => { try { assertNativeBrowserFixtureStopped(descriptors.D); assertNoCandidate(); return true; } catch (error) {
+  if (/process is still running|bundle process remains/.test(error.message)) return false; throw error;
+ } }, "Interrupted app or an owned helper remains; preserve all generated profiles.", 20_000);
+ assert.deepEqual(await selection(D), prepared.reviewedSelection);
+ await verifySourceUnchanged(source, sourceSnapshot);
+ const journalHash = hash(await readFile(journal));
+ assert.equal(hash(await readFile(vault)), vaultHash);
+ receipt.stages.push({ stage: "published-crash-D", pid: live.state.child.pid, ...exit, ...interruptedResult.result,
+  preparedRelative: prepared.relative, reviewedSelection: prepared.reviewedSelection, journalSha256: journalHash, vaultSha256: vaultHash });
+ phase("production-published-parent-crash-left-source-and-selection-preserved");
+ await continuePublishedRecovery({ D, source, sourceSession, sourceText, sourceSnapshot, prepared, before,
+  vaultHash, journalHash, originalId: own.id });
+}
+async function continuePublishedRecovery({ D, source, sourceSession, sourceText, sourceSnapshot, prepared,
+ before, vaultHash, journalHash, originalId, originalTitle }) {
+ const journal = join(prepared.child, "native-core/database/kestrel.sqlite.kestrel-transfer-journal");
+ const vault = join(prepared.child, ".kestrel-local-vault-v1");
+ assert.deepEqual(await selection(D), prepared.reviewedSelection);
+ assert.equal(hash(await readFile(journal)), journalHash); assert.equal(hash(await readFile(vault)), vaultHash);
+ await verifySourceUnchanged(source, sourceSnapshot);
+ currentStage = "restart-D-after-crash"; let live = await start("D");
+ if (!originalId) {
+  const candidates = (await request(live.home, { type: "runtime-list-sessions" })).sessions.filter(row => row.title === originalTitle);
+  assert.equal(candidates.length, 1, "Continuation must find the exact generated original conversation."); originalId = candidates[0].id;
+ }
+ const isSource = row => sourceSession.id ? row.id === sourceSession.id : row.title === sourceSession.title;
+ const assertOriginal = async () => {
+  const rows = (await request(live.home, { type: "runtime-list-sessions" })).sessions;
+  assert(rows.some(row => row.id === originalId) && !rows.some(isSource));
+ };
+ await assertOriginal(); phase("crash-restart-keeps-original-Core-until-explicit-selection");
+ async function reviewAndVerify(label) {
+  currentStage = `${label}-review`;
+  await operator(`${label}-review`, "Open Kestrel > Review Interrupted Transfers, review the only journal-bearing prepared profile, and stop at Recover this interrupted transfer without accepting.", { ownerProfile: D, destination: prepared.child });
+  assert(live.state.output.includes("KESTREL_NATIVE_INTERRUPTED_TRANSFER_REVIEW_READY"));
+  assert.deepEqual(await selection(D), prepared.reviewedSelection);
+  currentStage = `${label}-verify`;
+  await operator(`${label}-verify`, "Confirm the source-closed checkbox and Recover Transfer, accept the separate project-link review, then stop at Recovered transfer verified without choosing a data profile.", { ownerProfile: D, destination: prepared.child });
+  for (const marker of ["KESTREL_NATIVE_INTERRUPTED_TRANSFER_WORKER_STOPPED", "KESTREL_NATIVE_INTERRUPTED_TRANSFER_RECOVERED", "KESTREL_NATIVE_INTERRUPTED_TRANSFER_SELECTION_READY"])
+   assert(live.state.output.includes(marker), `Missing native recovery marker ${marker}.`);
+  assert.deepEqual(await selection(D), prepared.reviewedSelection);
+  assert.equal(hash(await readFile(journal)), journalHash); assert.equal(hash(await readFile(vault)), vaultHash);
+  await verifySourceUnchanged(source, sourceSnapshot);
+ }
+ await reviewAndVerify("D-first-recovery");
+ phase("native-production-recovery-authenticates-without-activation-or-key-export");
+ await operator("D-keep-current", "Choose Keep Current Profile in the recovered-transfer choice.", { ownerProfile: D });
+ assert.deepEqual(await selection(D), prepared.reviewedSelection); await assertOriginal();
+ await stop(); live = await start("D"); await assertOriginal();
+ assert.equal(hash(await readFile(journal)), journalHash); assert.equal(hash(await readFile(vault)), vaultHash);
+ phase("keep-current-survives-restart-with-recovery-journal-preserved");
+ await reviewAndVerify("D-second-recovery");
+ phase("published-transfer-rediscovered-and-reverified-after-restart");
+ await operator("D-use-recovered", "Choose Use Recovered Data Profile and dismiss its restart notice.", { ownerProfile: D });
+ assert(live.state.output.includes("KESTREL_NATIVE_INTERRUPTED_TRANSFER_SELECTED"));
+ assert.deepEqual(await selection(D), { ...prepared.reviewedSelection, active: prepared.relative, previous: before.active });
+ await assertOriginal(); await stop();
+ currentStage = "restart-D-recovered"; live = await start("D");
+ const rows = (await request(live.home, { type: "runtime-list-sessions" })).sessions;
+ const imported = rows.filter(isSource); assert.equal(imported.length, 1);
+ assert(!rows.some(row => row.id === originalId));
+ assert((await request(live.home, { type: "runtime-list-messages", sessionId: imported[0].id })).messages.some(row => row.content === sourceText));
+ phase("explicit-recovered-selection-and-message-readback-after-restart");
+ await previous({ ...live, profile: D }, "D"); await stop();
+ currentStage = "restart-D-rollback"; live = await start("D"); await assertOriginal(); await stop();
+ await verifySourceUnchanged(source, sourceSnapshot);
+ phase("recovered-production-profile-native-rollback-readback");
+}
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => { interrupted = true; process.exitCode = signal === "SIGINT" ? 130 : 143; });
 
 try {
+ if (continuationPath) {
+  currentStage = "validate-published-recovery-continuation";
+  const loaded = await loadNativeVaultRecoveryContinuation(continuationPath, { candidateSha256: receipt.candidateSha256 });
+  continuationLoaded = true;
+  receipt.kind = "native-vault-published-recovery-continuation-canary";
+  receipt.continuation = { path: loaded.path, sha256: loaded.sha256, failedReceiptSha256: loaded.failedReceiptSha256,
+   interruptionSha256: loaded.interruptionSha256, originalCandidate: loaded.failedReceipt.candidate, witnessOrigin: loaded.witnessOrigin };
+  receipt.scope += " Continuation uses a fully validated byte-identical private candidate copy; the original failed receipt is unchanged. This does not prove same-path restart or resolve the original executable's extra hard link.";
+  for (const [name, profile] of Object.entries({ A: loaded.sourceProfile, D: loaded.ownerProfile })) {
+   const storage = await selectNativeBrowserFixtureStorage({ candidate, root });
+   await adoptRetainedNativeBrowserFixtureProfile({ profile, storage, evidence: loaded.fixtureEvidence[name], originalCandidate: loaded.failedReceipt.candidate });
+   profiles[name] = profile; descriptors[name] = storage;
+  }
+  receipt.sourceSnapshots = { A: loaded.sourceSnapshot };
+  phase("validated-failed-run-continuation-and-identical-candidate-copy");
+  await continuePublishedRecovery({ D: loaded.ownerProfile, source: loaded.sourceProfile,
+   sourceSession: { title: loaded.sourceExpectation.title }, sourceText: loaded.sourceExpectation.message,
+   sourceSnapshot: loaded.sourceSnapshot, prepared: loaded.prepared, before: loaded.prepared.reviewedSelection,
+   vaultHash: loaded.spec.vaultSha256, journalHash: loaded.spec.journalSha256, originalTitle: loaded.originalTitle });
+ } else {
  currentStage = "seed-A"; const A = await setup("A"), a = await start("A");
  const aTitle = `Vault transfer A ${run}`, aText = `Generated A message ${run}`;
  const aSession = (await request(a.home, { type: "runtime-create-session", title: aTitle, kind: "conversation" })).session;
@@ -227,7 +360,9 @@ try {
  await stop(); const aBefore = await snapshotSource(A);
  receipt.sourceSnapshots = { A: aBefore };
  phase("A-production-vault-generated-session-restart-readback-and-snapshot");
-
+ if (publishedRecoveryRequested) {
+  await publishedRecovery(A, aSession, aText, aBefore);
+ } else {
  currentStage = "seed-B"; const B = await setup("B"), b = await start("B");
  const bTitle = `Vault transfer B original ${run}`;
  const bSession = (await request(b.home, { type: "runtime-create-session", title: bTitle, kind: "conversation" })).session; assert(bSession?.id);
@@ -288,9 +423,16 @@ try {
  sessions = await request(bRestored.home, { type: "runtime-list-sessions" }); assert(sessions.sessions.some(item => item.id === bSession.id) && !sessions.sessions.some(item => item.id === aSession.id));
  await stop(); phase("B-native-previous-profile-rollback-verified-after-restart");
  await verifySourceUnchanged(A, aBefore); assert.notDeepEqual(bOwnSnapshot, await snapshotSource(B), "B's transfer history should be visible in its prepared profiles/selection.");
- receipt.result = "passed"; receipt.profileOwners = { A, B, C }; receipt.fixtureEvidence = fixtureEvidence;
+ }
+ }
+ receipt.result = "passed"; receipt.profileOwners = { ...profiles }; receipt.fixtureEvidence = fixtureEvidence;
 } catch (error) {
  receipt.result = "failed"; receipt.failedStage = currentStage; receipt.error = String(error?.message || error).slice(0, 700);
+ if (running) {
+  await writeFile(join(evidence, "failure-native-output.log"), running.output, { mode: 0o600, flag: "wx" });
+  const file = await lstat(executable).catch(() => null);
+  receipt.failedProcess = { pid: running.child.pid, executableLinkCount: file?.nlink, exited: running.child.exitCode, signal: running.child.signalCode };
+ }
  console.error(`Native production-vault profile transfer failed at ${currentStage}: ${receipt.error}`); process.exitCode ||= 1;
 } finally {
  try { await stop(); } catch (error) { receipt.result = "failed"; receipt.shutdownError = String(error?.message || error); process.exitCode = 1; }
@@ -298,7 +440,7 @@ try {
  try { assertNoCandidate(); receipt.exactCandidateAbsent = true; } catch { receipt.result = "failed"; receipt.exactCandidateAbsent = false; process.exitCode = 1; }
  receipt.fixtureEvidence = fixtureEvidence;
  receipt.finishedAt = new Date().toISOString();
- if (receipt.result === "passed" && !running) {
+ if (receipt.result === "passed" && !running && !continuationLoaded) {
   for (const name of Object.keys(profiles)) await rm(profiles[name], { recursive: true });
   await rm(temp, { recursive: true, force: true }); receipt.generatedProfilesRemoved = true;
  } else { receipt.generatedProfilesRemoved = false; receipt.retainedProfiles = profiles; receipt.retainedTemporaryRoot = temp; }

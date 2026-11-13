@@ -138,6 +138,21 @@ export async function captureNativeBrowserFixtureStorage({ profile, storage }) {
  else await validateDisposableNativeTestProfile(info.canonical);
  return evidence;
 }
+export async function adoptRetainedNativeBrowserFixtureProfile({ profile, storage, evidence, originalCandidate }) {
+ const state = stateFor(storage);
+ assert.equal(state.profile, null, "Fixture storage is already bound to a profile.");
+ assert.equal(state.mode, "production-vault", "Retained profile adoption requires production-vault storage.");
+ const validated = await validateRetainedNativeBrowserFixtureStorage({
+  profile, candidate: originalCandidate, candidateCopy: state.candidate,
+  candidateSha256: state.candidateSha256, evidence, root: state.root,
+ });
+ const info = await profileInfo(validated);
+ assert.equal(info.canonical, validated, "Validated fixture profile identity changed during adoption.");
+ assert.equal(info.dev, evidence.profileDev, "Validated fixture device changed during adoption.");
+ assert.equal(info.ino, evidence.profileIno, "Validated fixture inode changed during adoption.");
+ state.profile = info;
+ return info.canonical;
+}
 export async function validateRetainedNativeBrowserFixtureStorage({ profile, candidate, candidateCopy, candidateSha256, evidence, root }) {
  assert(evidence && evidence.kind === "native-browser-fixture-storage" && evidence.version === 1);
  assert(["test-key", "production-vault"].includes(evidence.mode));
