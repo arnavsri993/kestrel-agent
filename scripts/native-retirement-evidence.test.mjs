@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it as test } from "vitest";
-import { candidateDigest, RETIREMENT_GATES, validateNativeExtensionParityEvidence, validateRetirementEvidence } from "./native-retirement-evidence.mjs";
+import { candidateDigest, RETIREMENT_GATES, validateNativeExtensionParityEvidence, validateNativePreCutoverEvidence, validateRetirementEvidence } from "./native-retirement-evidence.mjs";
 
 const sha = bytes => createHash("sha256").update(bytes).digest("hex");
 async function fixture(t) {
@@ -108,6 +108,21 @@ async function writeDesktopParityArtifact(f, desktop) {
 test("accepts complete candidate-bound receipts with unchanged artifacts", async t => {
   const f = await fixture(t);
   assert.deepEqual((await validateRetirementEvidence(f.candidate, f.manifestPath)).problems, []);
+});
+test("allows only absent canonical observations before cutover while full retirement still requires them", async t => {
+  const f = await fixture(t);
+  delete f.manifest.gates["canonical-dock-app-on-screen"]; await f.save();
+  assert.deepEqual((await validateNativePreCutoverEvidence(f.candidate, f.manifestPath)).problems, []);
+  assert.deepEqual((await validateRetirementEvidence(f.candidate, f.manifestPath)).problems, ["canonical-dock-app-on-screen: missing receipt or receipt digest"]);
+  delete f.manifest.gates["native-local-vault"]; await f.save();
+  assert((await validateNativePreCutoverEvidence(f.candidate, f.manifestPath)).problems.some(item => item.startsWith("native-local-vault:")));
+});
+test("does not skip supplied but malformed canonical evidence during pre-cutover validation", async t => {
+  const f = await fixture(t);
+  for (const value of [null, {}, { receipt: "canonical-dock-app-on-screen.json", sha256: "0".repeat(64) }]) {
+    f.manifest.gates["canonical-dock-app-on-screen"] = value; await f.save();
+    assert((await validateNativePreCutoverEvidence(f.candidate, f.manifestPath)).problems.some(item => item.startsWith("canonical-dock-app-on-screen:")));
+  }
 });
 for (const gate of ["native-local-vault", "native-browser-local-vault"]) test(`requires dedicated ${gate} proof and rejects incomplete or stale observations`, async t => {
   const f = await fixture(t);

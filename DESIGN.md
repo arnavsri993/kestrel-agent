@@ -1,3 +1,16 @@
+# Native vault recovery guidance — November 12, 2026
+
+Tiny copy correction in the existing React recovery panel and native macOS
+dialogs. Keep system typography, layout, native buttons, accessible names,
+keyboard focus and reduced-motion behavior. Add no new controls or effects.
+
+- State that existing encrypted data is preserved, retry on this Mac, and keep
+  the original profile and local vault. Do not direct people to Keychain prompts.
+- Explain that a data backup cannot recover a missing vault or unlock the data
+  on another Mac; copying encrypted files is not a portable recovery promise.
+- Verify the real native package and updated backup disclosure. Build/typecheck
+  results alone do not prove the canonical app or a successful recovery.
+
 # App page interaction during route transitions — November 5, 2026
 
 Motion refinement for the existing dense macOS application, visual intensity 1.

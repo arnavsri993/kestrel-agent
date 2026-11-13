@@ -45,7 +45,18 @@ No sandbox bypass was used. The resulting private candidate is
 
 ### Candidate-bound production-vault evidence
 
-That exact candidate passed the production-vault canary across **three starts**
+The later recovery-guidance package at
+`.tmp/native-vault-recovery-guidance-host/Kestrel.app`, SHA256
+`75612344370ea4bde9b427b39e4a976e6390093d338fa2d0cf2442f9fe617157`,
+also passed all seven production-vault phases across three clean starts/stops.
+Receipt:
+`.tmp/native-browser-local-vault-1794505806539-6ef2d19a-f338-4f2d-8a99-236c7fb09139/receipt.json`.
+Its unlock and backup disclosures now refer to the local vault and state that
+a backup cannot recover a missing vault or unlock the data on another Mac.
+The native build and renderer typecheck passed; no recovery from a missing vault
+or installed canonical-app acceptance is claimed.
+
+The earlier `1f320168...` candidate passed the production-vault canary across **three starts**
 and **three clean exit-0 stops**, with **seven phases passed**: generated device
 password creation; first-start Core message and encrypted `v99` cookie/password;
 native password autofill after restart; Core readback after restart; cookie
@@ -65,6 +76,38 @@ provider and workspace flows, restart/recovery, Developer ID signing and
 notarization, profile transfer/rollback, and canonical Dock app proof.
 
 ### CI and Chrome Web Store status
+
+The production-vault candidate `75612344...` completed the real native Store
+flow with **17 passed phases**, three clean starts/stops, and matching before/
+after bundle hashes. Official JSON Formatter `0.10.2` and uBlock Origin Lite
+`2026.1110.1816` installed through Chromium's actual permission sheets in the
+same window as Kestrel Home and Settings. Content injection, extension-created
+tabs, isolated toolbar popup, Chrome manager disable/re-enable, Core crash
+recovery and functional restart all passed. The generated production profile
+and its candidate/vault-bound checkpoint were retained:
+`.tmp/native-production-store-retained-final/store-update-checkpoint.json`.
+The full receipt and verified summary are in that same evidence directory.
+
+The production resume path then passed five functional/persistence phases and
+two clean stops on the retained profile, with its vault and bundle unchanged.
+Receipt: `.tmp/native-production-store-resume-final/receipt.json`.
+The actual update query returned `no_update`; resume exited **2 / incomplete**
+because a newer published version was not observed. Installation/functionality/
+persistence are verified for this candidate; the strict Store version-upgrade
+gate remains open. No version was edited or relabeled to manufacture an update.
+
+An earlier run of this same flow completed the functionality checks but failed
+checkpoint retention after the computer tool reopened the test binary while
+reconnecting. That extra instance was stopped. The failed receipt remains at
+`.tmp/native-production-store-recovery-guidance/receipt.json`; it is not the
+accepted retained fixture. Failed retention requests now preserve generated
+profiles for inspection without creating an accepted checkpoint.
+
+Head `d6ed53b94411dfa3ad9e808d575ba85a13507ede` completed
+[CI 43263110625](https://github.com/arnavsri993/kestrel-agent/actions/runs/43263110625)
+with Core/website/security successful. The desktop job never acquired a hosted
+runner and was canceled. Its check annotations explicitly report macOS arm64
+capacity constraints. This is not a desktop CI pass or an observed code failure.
 
 The CI result for head
 `c6ea726c8169839376a65748e6b1a39f869d925e` is successful in both jobs under
@@ -86,16 +129,15 @@ behavior is preserved. Retention is fixture provenance, not Store upgrade or
 release acceptance. The complete source suite at the prior CI head passed
 3,310 tests with three explicit skips; that is separate from these new checks.
 
-The live Store install/upgrade attempt against the custom candidate remains
-incomplete; no Store acceptance or published-version upgrade is claimed. The
-latest receipt, `.tmp/native-production-store-1794502330/receipt.json`, records
+Before the successful Store run above, the first attempt against the earlier
+custom candidate failed while the Mac was locked.
+Receipt `.tmp/native-production-store-1794502330/receipt.json` records
 eight passed Core/browser/security phases, including download handling, trusted
 input, and Core crash recovery. It then timed out clicking Settings before the
 Store flow began: the Mac was locked, the Home target remained hidden, its
-window was not focused, and it produced no animation frames. The user-unlock
-step is pending. Keep this gate open until the actual native Kestrel UI installs
-and exercises both official Store extensions using a fresh production-vault
-profile, then a real published update is observed.
+window was not focused, and it produced no animation frames. That failed run
+remains historical evidence; the successful newer run does not turn it into a
+pass.
 
 A later read-only check found the private candidate executable's link count had
 changed from one to two while its bytes still matched. The second path has not
@@ -109,6 +151,24 @@ not available for signing. The Keychain-item statement covers the reviewed
 storage paths and native host/helper imports, not unrelated macOS certificate
 APIs. The generated password check uses Chromium's device-store API; it does
 not test the save-password bubble.
+
+### Canonical transaction sequencing
+
+The installer previously required candidate-bound canonical on-screen proof
+before the first native installation that would make that proof possible.
+Pre-cutover validation now permits only that absent post-install observation to
+remain pending; all other gates, signing and exact-candidate Store parity stay
+required. The transaction journals `awaiting-verification`, waits at most ten
+minutes for fresh transaction-bound observations with private decoded PNGs,
+then repeats full retirement/signing/process/hash checks before committing.
+Failure and interruption use guarded restoration; incomplete recovery remains
+pending and blocks another installation. The final full-retirement validator
+still requires every gate. See [the canonical installation protocol](native-canonical-cutover.md).
+
+Focused fault-injection tests cover verifier failure, process crash, changed
+bundles, interruption around commit and a running candidate blocking recovery.
+These are simulated filesystem transactions, not an installation or rollback
+of `/Applications/Kestrel.app`. No canonical cutover was attempted.
 
 ## Previous checkpoint — vault implementation and engine preparation, 2026-11-11
 

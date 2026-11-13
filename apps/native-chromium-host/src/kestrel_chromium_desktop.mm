@@ -313,7 +313,7 @@ bool native_core_key_failure_notified = false;
 void ShowNativeDataUnlockFailure() {
   NSAlert* alert = [[NSAlert alloc] init];
   alert.messageText = @"Kestrel data couldn’t be unlocked";
-  alert.informativeText = @"Chats, memory and saved connections are unavailable. Your existing data has been kept. Reopen Kestrel and respond to any macOS Keychain prompt.";
+  alert.informativeText = @"Chats, memory and saved connections are unavailable. Your existing data has been kept. Quit and reopen Kestrel on this Mac to retry. Keep the original profile and local vault; resetting them will not recover your data.";
   [alert addButtonWithTitle:@"OK"];
   [alert addButtonWithTitle:@"Quit Kestrel"];
   if ([alert runModal] == NSAlertSecondButtonReturn) [NSApp terminate:nil];
@@ -1020,7 +1020,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
               open_panel.canChooseDirectories = !context_files && !plugin_publisher && !recovery_open; open_panel.canChooseFiles = context_files || plugin_publisher || recovery_open;
               open_panel.allowsMultipleSelection = context_files; panel.canCreateDirectories = save_panel || (!context_files && !plugin_publisher && !plugin_bundle && !recovery_open);
               open_panel.treatsFilePackagesAsDirectories = YES;
-              if (backup_folder) panel.message = @"Choose a folder for a Kestrel app data backup. Conversations and credentials stay encrypted. It requires this Mac’s original profile and Keychain. Browser history, cookies, website logins, projects, and provider app logins are excluded.";
+              if (backup_folder) panel.message = @"Choose a folder for a Kestrel app data backup. Conversations and credentials stay encrypted. It requires this Mac’s original profile and local vault. It cannot recover a lost vault or unlock your data on another Mac. Browser history, cookies, website logins, projects, and provider app logins are excluded.";
               if (recovery_save || recovery_open) {
                 panel.allowedFileTypes = @[@"kestrel-memory"];
                 panel.allowsOtherFileTypes = NO;

@@ -5825,7 +5825,8 @@ function Readiness() {
 								<>
 									Saves encrypted conversations, task records, Kestrel credentials,
 									settings, plugins, and learned skills from this profile.{" "}
-									Requires this Mac’s original profile and Keychain.{" "}
+									Requires this Mac’s original profile and local vault. It cannot recover
+									a lost vault or unlock your data on another Mac.{" "}
 									Excludes Chromium history, cookies and site logins, other Core
 									profiles, provider app logins, model downloads, and project folders.
 									Keep this backup private. Restoring it requires a separate recovery step.

@@ -94,7 +94,8 @@ async function openReadiness() {
   await readiness.locator(".loading-screen").waitFor({ state: "hidden" });
   await readiness.locator(".readiness-checks .check-pass").filter({ hasText: "Local agent core" }).waitFor();
   await readiness.getByRole("button", { name: "Choose backup folder", exact: true }).waitFor();
-  await readiness.getByText("Requires this Mac’s original profile and Keychain.", { exact: false }).waitFor();
+  await readiness.getByText("Requires this Mac’s original profile and local vault.", { exact: false }).waitFor();
+  await readiness.getByText("It cannot recover a lost vault or unlock your data on another Mac.", { exact: false }).waitFor();
 }
 async function operatorStage(stage, action, selectedPath) {
   const acknowledgement = join(evidence, `continue-${stage}`);

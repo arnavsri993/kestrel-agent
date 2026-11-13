@@ -106,6 +106,17 @@ async function validateLocalVaultArtifact(gate, wrapper, wrapperPath, candidateS
 // Paths are relative to the containing manifest/receipt respectively. Artifact
 // hashes prevent accidental substitution; reviewers must still inspect evidence.
 export async function validateRetirementEvidence(candidate, manifestPath) {
+  return validateEvidencePhase(candidate, manifestPath, false);
+}
+
+// Eligibility for a recoverable installation is not retirement acceptance.
+// Only an absent canonical on-screen receipt may remain pending; a supplied
+// but invalid receipt and every other missing gate still fail this phase.
+export async function validateNativePreCutoverEvidence(candidate, manifestPath) {
+  return validateEvidencePhase(candidate, manifestPath, true);
+}
+
+async function validateEvidencePhase(candidate, manifestPath, pendingCanonical) {
   const problems = [];
   let candidateSha256;
   try { candidateSha256 = await candidateDigest(candidate); }
@@ -123,6 +134,7 @@ export async function validateRetirementEvidence(candidate, manifestPath) {
   if (manifest.candidateSha256 !== candidateSha256) problems.push("Evidence manifest does not match the complete candidate bundle.");
   const seen = new Set();
   for (const gate of RETIREMENT_GATES) {
+    if (pendingCanonical && gate === "canonical-dock-app-on-screen" && !Object.hasOwn(manifest.gates, gate)) continue;
     const item = manifest.gates[gate];
     if (!item || typeof item.receipt !== "string" || !item.receipt || !SHA256.test(item.sha256 ?? "")) {
       problems.push(`${gate}: missing receipt or receipt digest`); continue;

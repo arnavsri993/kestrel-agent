@@ -652,7 +652,9 @@ finally{
  await browser?.close().catch(()=>{});
  if(child&&child.exitCode===null&&child.signalCode===null){child.kill('SIGKILL');await new Promise(resolve=>child.once('exit',resolve));}
  await new Promise(resolve=>server.close(resolve));
- if(!profileRetained){
+ if(!profileRetained&&retainUpdateProfile){
+  console.error('Generated Store fixture kept for inspection without an accepted checkpoint: '+profile);
+ }else if(!profileRetained){
   try{await waitForCandidateStop();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
   catch(error){console.error('Generated fixture retained because candidate shutdown or cleanup could not be verified: '+profile);throw error;}
  }

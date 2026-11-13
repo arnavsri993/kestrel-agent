@@ -3,7 +3,7 @@
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateRetirementEvidence } from "./native-retirement-evidence.mjs";
+import { validateNativePreCutoverEvidence, validateNativeExtensionParityEvidence } from "./native-retirement-evidence.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const stagedBundle = process.argv[2] ? resolve(process.argv[2]) : undefined;
@@ -14,9 +14,11 @@ if (!stagedBundle || !manifestPath) {
   process.exit(1);
 }
 
-const evidence = await validateRetirementEvidence(stagedBundle, resolve(manifestPath));
-if (evidence.problems.length) {
-  console.error(`Staged native bundle does not match the retirement evidence:\n${evidence.problems.map(problem => `- ${problem}`).join("\n")}`);
+const evidence = await validateNativePreCutoverEvidence(stagedBundle, resolve(manifestPath));
+const parity = await validateNativeExtensionParityEvidence(stagedBundle, resolve(manifestPath), evidence.candidateSha256);
+const problems = [...evidence.problems, ...parity.problems];
+if (problems.length) {
+  console.error(`Staged native bundle does not match the cutover prerequisites:\n${problems.map(problem => `- ${problem}`).join("\n")}`);
   process.exit(1);
 }
 
@@ -27,4 +29,4 @@ const signing = spawnSync(process.execPath, [
 ], { stdio: "inherit" });
 if (signing.status !== 0) process.exit(signing.status ?? 1);
 
-console.log(`Staged native bundle matches candidate evidence: ${evidence.candidateSha256}`);
+console.log(`Staged native bundle matches pre-cutover evidence: ${evidence.candidateSha256}. This is not canonical on-screen acceptance.`);

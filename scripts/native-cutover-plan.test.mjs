@@ -21,12 +21,14 @@ async function fixture() {
 	return { root, candidate, target, manifestPath, manifest };
 }
 
-it("reports all existing gates before apply and plans an exclusive UUID backup without writing any bundle", async () => {
+it("keeps canonical proof pending after apply while requiring every other prerequisite without writing bundles", async () => {
 	const f = await fixture(), before = await candidateDigest(f.target);
 	const plan = await createNativeCutoverPlan(f);
 	expect(plan.version).toBe(2);
 	expect(plan.preCutover.evidenceComplete).toBe(false);
-	expect(plan.preCutover.evidenceProblems.some(p => p.startsWith("canonical-dock-app-on-screen:"))).toBe(true);
+	expect(plan.preCutover.evidenceProblems.some(p => p.startsWith("canonical-dock-app-on-screen:"))).toBe(false);
+	expect(plan.postCutover.evidenceProblems.some(p => p.startsWith("canonical-dock-app-on-screen:"))).toBe(true);
+	expect(plan.preCutover.evidenceProblems.some(p => p.startsWith("native-local-vault:"))).toBe(true);
 	expect(plan.backup.allocatedExclusivelyDuringApply).toBe(true);
 	expect(plan.backup.pathTemplate).toContain("<transaction UUID>/previous/Kestrel.app");
 	expect(await candidateDigest(f.target)).toBe(before);

@@ -20,7 +20,8 @@ async function fixture() {
     await writeFile(join(path, "Contents", "fixture"), content);
   }
   const expectedCandidateSha256 = await candidateDigest(source), previous = await candidateDigest(target);
-  const options = { source, target, expectedCandidateSha256, copy: (from, to) => cp(from, to, { recursive: true, verbatimSymlinks: true }), validate: vi.fn(async () => {}), beforeReplace: vi.fn(async () => {}), register: vi.fn(async () => {}) };
+  // The verifier is simulated for filesystem fixtures; it is not UI evidence.
+  const options = { source, target, expectedCandidateSha256, copy: (from, to) => cp(from, to, { recursive: true, verbatimSymlinks: true }), validate: vi.fn(async () => {}), beforeReplace: vi.fn(async () => {}), register: vi.fn(async () => {}), verifyInstalled: vi.fn(async () => {}) };
   return { root, source, target, previous, options };
 }
 async function change(path) { await writeFile(join(path, "Contents", "fixture"), "changed"); }
@@ -62,7 +63,88 @@ it("rejects unapproved candidate hashes and missing trusted callbacks", async ()
   const f = await fixture();
   await expect(installNativeBundleTransaction({ ...f.options, expectedCandidateSha256: "0".repeat(64) })).rejects.toThrow(/expected SHA/);
   await expect(installNativeBundleTransaction({ ...f.options, validate: undefined })).rejects.toThrow(/Trusted validate/);
+  await expect(installNativeBundleTransaction({ ...f.options, verifyInstalled: undefined })).rejects.toThrow(/Trusted verifyInstalled/);
   expect(await candidateDigest(f.target)).toBe(f.previous);
+  expect(await readdir(dirname(f.target))).toEqual(["Kestrel.app"]);
+});
+it("journals pending verification before invoking the fixture verifier, then commits after checks", async () => {
+  const f = await fixture(), events = [];
+  f.options.register = async () => { events.push("register"); };
+  f.options.beforeReplace = async () => { events.push("process-check"); };
+  f.options.verifyInstalled = async context => {
+    events.push("verify");
+    const journal = JSON.parse(await readFile(context.transactionPath, "utf8"));
+    expect(journal).toMatchObject({ state: "awaiting-verification", id: context.transactionId, startedAt: context.startedAt,
+      target: f.target, candidateSha256: f.options.expectedCandidateSha256, previousSha256: f.previous });
+    expect(Number.isFinite(Date.parse(context.startedAt))).toBe(true);
+    expect(await candidateDigest(f.target)).toBe(f.options.expectedCandidateSha256);
+  };
+  const result = await installNativeBundleTransaction(f.options);
+  expect(events.indexOf("register")).toBeLessThan(events.indexOf("verify"));
+  expect(events.at(-1)).toBe("process-check");
+  expect(JSON.parse(await readFile(result.transactionPath, "utf8")).state).toBe("committed");
+});
+it("restores the previous bundle if fixture verification fails", async () => {
+  const f = await fixture();
+  f.options.verifyInstalled = async () => { throw Error("fixture verification failed"); };
+  await expect(installNativeBundleTransaction(f.options)).rejects.toThrow(/fixture verification failed.*recovery journal/);
+  const journal = await journalFor(f);
+  expect(await candidateDigest(f.target)).toBe(f.previous);
+  expect(JSON.parse(await readFile(journal, "utf8")).state).toBe("rolled-back");
+  expect(await candidateDigest(join(dirname(journal), "candidate", "Kestrel.app"))).toBe(f.options.expectedCandidateSha256);
+});
+it.each(["after-verifier", "final-process-check", "commit-journal-write"])("rolls back an interruption at %s without committing retirement", async point => {
+  const f = await fixture(), controller = new AbortController(); let verified = false;
+  f.options.signal = controller.signal;
+  f.options.verifyInstalled = async () => { verified = true; if (point === "after-verifier") controller.abort(Error("fixture interruption")); };
+  f.options.beforeReplace = async () => { if (verified && point === "final-process-check") controller.abort(Error("fixture interruption")); };
+  if (point === "commit-journal-write") f.options.ops = { open: async (...args) => {
+    const handle = await import("node:fs/promises").then(fs => fs.open(...args));
+    const write = handle.writeFile.bind(handle);
+    handle.writeFile = async value => { await write(value); if (typeof value === "string" && value.includes('"state":"committed"')) controller.abort(Error("fixture interruption")); };
+    return handle;
+  } };
+  await expect(installNativeBundleTransaction(f.options)).rejects.toThrow(/fixture interruption/);
+  expect(await candidateDigest(f.target)).toBe(f.previous);
+  expect(JSON.parse(await readFile(await journalFor(f), "utf8")).state).toBe("rolled-back");
+});
+it("does not replace a still-running candidate after verification or during recovery", async () => {
+  const f = await fixture(); let verifying = false;
+  f.options.verifyInstalled = async () => { verifying = true; };
+  f.options.beforeReplace = async () => { if (verifying) throw Error("candidate still running"); };
+  await expect(installNativeBundleTransaction(f.options)).rejects.toThrow(/candidate still running; recovery incomplete/);
+  const journal = await journalFor(f);
+  expect(JSON.parse(await readFile(journal, "utf8")).state).toBe("restoring");
+  expect(await candidateDigest(f.target)).toBe(f.options.expectedCandidateSha256);
+  expect(await candidateDigest(join(dirname(journal), "previous", "Kestrel.app"))).toBe(f.previous);
+  await rollbackNativeBundleTransaction(await recoveryOptions(f, { transactionPath: journal }));
+  expect(await candidateDigest(f.target)).toBe(f.previous);
+});
+it("keeps recovery pending when commit-write interruption meets a still-running candidate", async () => {
+  const f = await fixture(), controller = new AbortController();
+  f.options.signal = controller.signal;
+  f.options.beforeReplace = async () => { if (controller.signal.aborted) throw Error("candidate still running"); };
+  f.options.ops = { open: async (...args) => {
+    const handle = await import("node:fs/promises").then(fs => fs.open(...args));
+    const write = handle.writeFile.bind(handle);
+    handle.writeFile = async value => { await write(value); if (typeof value === "string" && value.includes('"state":"committed"')) controller.abort(Error("fixture interruption")); };
+    return handle;
+  } };
+  await expect(installNativeBundleTransaction(f.options)).rejects.toThrow(/recovery incomplete/);
+  const transactionPath = await journalFor(f);
+  expect(JSON.parse(await readFile(transactionPath, "utf8")).state).toBe("restoring");
+  await expect(withNativeInstallLock(f.target, async () => {})).rejects.toThrow(/Pending native cutover/);
+  await rollbackNativeBundleTransaction(await recoveryOptions(f, { transactionPath }));
+  expect(await candidateDigest(f.target)).toBe(f.previous);
+});
+it("does not commit when verification changes the installed candidate or backup", async () => {
+  for (const which of ["candidate", "backup"]) {
+    const f = await fixture();
+    f.options.verifyInstalled = async ({ transactionPath }) => change(which === "candidate" ? f.target : join(dirname(transactionPath), "previous", "Kestrel.app"));
+    await expect(installNativeBundleTransaction(f.options)).rejects.toThrow(/changed or is missing.*recovery incomplete/);
+    const journal = await journalFor(f);
+    expect(JSON.parse(await readFile(journal, "utf8")).state).not.toBe("committed");
+  }
 });
 it.each(["adoption", "installed-validation", "register"])("recovers the exact previous bundle after %s fails, retaining the candidate", async mode => {
   const f = await fixture();
@@ -150,7 +232,7 @@ it("recovers after its actual installer is SIGKILLed following the previous bund
     const source = ${JSON.stringify(f.source)}, target = ${JSON.stringify(f.target)};
     setInterval(() => {}, 1000);
     await installNativeBundleTransaction({ source, target, expectedCandidateSha256: ${JSON.stringify(f.options.expectedCandidateSha256)},
-      copy: (a,b) => cp(a,b,{recursive:true,verbatimSymlinks:true}), validate: async()=>{}, beforeReplace: async()=>{}, register: async()=>{},
+      copy: (a,b) => cp(a,b,{recursive:true,verbatimSymlinks:true}), validate: async()=>{}, beforeReplace: async()=>{}, register: async()=>{}, verifyInstalled: async()=>{},
       ops: { rename: async(a,b) => { await rename(a,b); if (a === target) { process.send({ moved: true }); await new Promise(() => {}); } } } });
   `;
   const child = spawn(process.execPath, ["--input-type=module", "-e", script], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
@@ -169,6 +251,27 @@ it("recovers after its actual installer is SIGKILLed following the previous bund
     expect(await candidateDigest(f.target)).toBe(f.previous);
     expect(await candidateDigest(join(dirname(transactionPath), "stage", "Kestrel.app"))).toBe(f.options.expectedCandidateSha256);
     } finally { if (child.exitCode === null && child.signalCode === null) { const exited = once(child, "exit"); child.kill("SIGKILL"); await exited; } }
+});
+it("blocks new installs after a crash during verification until explicit recovery", async () => {
+  const f = await fixture(), moduleUrl = pathToFileURL(resolve("scripts/native-install-transaction.mjs")).href;
+  const script = `
+    import { cp } from "node:fs/promises";
+    import { installNativeBundleTransaction } from ${JSON.stringify(moduleUrl)};
+    setInterval(() => {}, 1000);
+    await installNativeBundleTransaction({ source: ${JSON.stringify(f.source)}, target: ${JSON.stringify(f.target)}, expectedCandidateSha256: ${JSON.stringify(f.options.expectedCandidateSha256)},
+      copy: (a,b)=>cp(a,b,{recursive:true,verbatimSymlinks:true}), validate: async()=>{}, beforeReplace: async()=>{}, register: async()=>{},
+      verifyInstalled: async(context)=>{ process.send(context); await new Promise(()=>{}); } });`;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", script], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
+  let errors = ""; child.stderr.on("data", value => { errors += value; });
+  try {
+    const [context] = await Promise.race([once(child, "message"), once(child, "exit").then(() => { throw Error(`Child exited before verifier: ${errors}`); })]);
+    expect(JSON.parse(await readFile(context.transactionPath, "utf8")).state).toBe("awaiting-verification");
+    const exited = once(child, "exit"); child.kill("SIGKILL"); await exited;
+    await expect(installNativeBundleTransaction(f.options)).rejects.toThrow(/Pending native cutover/);
+    await expect(withNativeInstallLock(f.target, async () => {})).rejects.toThrow(/Pending native cutover/);
+    await rollbackNativeBundleTransaction(await recoveryOptions(f, context));
+    expect(await candidateDigest(f.target)).toBe(f.previous);
+  } finally { if (child.exitCode === null && child.signalCode === null) { const exited = once(child, "exit"); child.kill("SIGKILL"); await exited; } }
 });
 it("shares exclusive guarding with the legacy installer, including a missing target", async () => {
   const f = await fixture(), missing = join(f.root, "fresh", "Kestrel.app");
@@ -317,7 +420,7 @@ it("preserves an actual SIGKILLed initial journal temporary and allows a fresh i
     import { basename } from "node:path";
     import { installNativeBundleTransaction } from ${JSON.stringify(moduleUrl)};
     await installNativeBundleTransaction({ source: ${JSON.stringify(f.source)}, target: ${JSON.stringify(f.target)}, expectedCandidateSha256: ${JSON.stringify(f.options.expectedCandidateSha256)},
-      copy: (a,b)=>cp(a,b,{recursive:true}), validate: async()=>{}, beforeReplace: async()=>{}, register: async()=>{},
+      copy: (a,b)=>cp(a,b,{recursive:true}), validate: async()=>{}, beforeReplace: async()=>{}, register: async()=>{}, verifyInstalled: async()=>{},
       ops: { open: async(path,...args) => { const handle = await open(path,...args); if (basename(path).startsWith(".journal-")) { process.send({ temporary: path }); await new Promise(()=>{}); } return handle; } } });`;
   const child = spawn(process.execPath, ["--input-type=module", "-e", script], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
   let errors = ""; child.stderr.on("data", value => { errors += value; });

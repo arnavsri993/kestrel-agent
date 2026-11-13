@@ -7,7 +7,7 @@ import { candidateDigest } from "./native-retirement-evidence.mjs";
 
 const SHA = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const STATES = new Set(["prepared", "staged", "moving-previous", "previous-moved", "candidate-installed", "committed", "restoring", "candidate-retained", "rolled-back"]);
+const STATES = new Set(["prepared", "staged", "moving-previous", "previous-moved", "candidate-installed", "awaiting-verification", "committed", "restoring", "candidate-retained", "rolled-back"]);
 const absent = error => error.code === "ENOENT";
 function requireCallbacks(options, names) {
   for (const name of names) if (typeof options[name] !== "function") throw new Error(`Trusted ${name} callback is required.`);
@@ -119,6 +119,7 @@ function locations(target, id) {
 async function readTransaction(paths, target, id) {
   const { value: journal } = await readPrivateJson(paths.transactionPath);
   if (journal?.version !== 1 || journal.id !== id || journal.target !== target || !isAbsolute(journal.source ?? "") || resolve(journal.source) !== journal.source || !SHA.test(journal.candidateSha256 ?? "") || !SHA.test(journal.previousSha256 ?? "") || !STATES.has(journal.state)) throw new Error("Invalid or mismatched recovery journal.");
+  if (journal.state === "awaiting-verification" && (typeof journal.startedAt !== "string" || !Number.isFinite(Date.parse(journal.startedAt)))) throw new Error("Invalid pending verification journal.");
   return journal;
 }
 async function indexingMarker(path) {
@@ -177,6 +178,10 @@ async function assertHash(path, expected, label) {
 }
 async function restore(journal, paths, callbacks, ops) {
   const target = journal.target;
+  // Record recovery intent before any process/path check can refuse it. In
+  // particular, an interruption after a commit write must not leave a terminal
+  // journal that lets a later installer overlook incomplete restoration.
+  journal.state = "restoring"; await writeJournal(paths.transactionPath, journal, ops);
   await callbacks.beforeReplace(target);
   const current = await hashAt(target);
   if (current === journal.previousSha256) {
@@ -220,15 +225,17 @@ export async function withNativeInstallLock(target, action) {
 
 /** Callers supply static evidence/signature validation and running-app checks. */
 export async function installNativeBundleTransaction(options) {
-  requireCallbacks(options, ["copy", "validate", "beforeReplace", "register"]);
+  requireCallbacks(options, ["copy", "validate", "beforeReplace", "register", "verifyInstalled"]);
   const { source, target, expectedCandidateSha256 } = options;
   if (options.onPrepared !== undefined && typeof options.onPrepared !== "function") throw new Error("onPrepared must be a trusted callback.");
   const ops = { ...fs, ...options.ops };
+  const checkCancellation = () => options.signal?.throwIfAborted();
   if (basename(target ?? "") !== "Kestrel.app" || basename(source ?? "") !== "Kestrel.app" || !SHA.test(expectedCandidateSha256 ?? "")) throw new Error("Canonical Kestrel.app paths and candidate SHA-256 are required.");
   await safeDirectory(source); await safeDirectory(target);
   if (source === target || source.startsWith(`${target}${sep}`) || target.startsWith(`${source}${sep}`)) throw new Error("Source and target must be separate bundles.");
   const id = randomUUID(), paths = locations(target, id);
   return withLock(target, async () => {
+    checkCancellation();
     await assertNoPendingTransaction(target, ops);
     const candidateSha256 = await candidateDigest(source), previousSha256 = await candidateDigest(target);
     if (candidateSha256 !== expectedCandidateSha256) throw new Error("Source candidate does not match expected SHA-256.");
@@ -266,7 +273,17 @@ export async function installNativeBundleTransaction(options) {
       await assertHash(target, candidateSha256, "Installed candidate");
       await options.register(target);
       await assertHash(target, candidateSha256, "Registered candidate");
+      journal.startedAt = new Date().toISOString();
+      journal.state = "awaiting-verification"; await writeJournal(paths.transactionPath, journal, ops);
+      await options.verifyInstalled({ target, candidateSha256, previousSha256, transactionPath: paths.transactionPath, transactionId: id, startedAt: journal.startedAt });
+      checkCancellation();
+      await options.beforeReplace(target);
+      await assertHash(source, candidateSha256, "Source candidate");
+      await assertHash(target, candidateSha256, "Verified candidate");
+      await assertHash(paths.backupPath, previousSha256, "Previous backup");
+      checkCancellation();
       journal.state = "committed"; await writeJournal(paths.transactionPath, journal, ops);
+      checkCancellation();
       return { destination: target, candidateSha256, previousSha256, backupPath: paths.backupPath, transactionPath: paths.transactionPath };
     } catch (error) {
       let recoveryError;

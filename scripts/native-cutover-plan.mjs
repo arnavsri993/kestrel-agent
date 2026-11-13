@@ -3,7 +3,7 @@
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { candidateDigest, validateNativeExtensionParityEvidence, validateRetirementEvidence } from "./native-retirement-evidence.mjs";
+import { candidateDigest, validateNativeExtensionParityEvidence, validateNativePreCutoverEvidence, validateRetirementEvidence } from "./native-retirement-evidence.mjs";
 
 const POST_GATE = "canonical-dock-app-on-screen";
 
@@ -21,7 +21,8 @@ export async function createNativeCutoverPlan({ candidate, target, manifestPath 
   ]);
   if (candidateSha256 !== evidence.candidateSha256) throw new Error("Candidate changed while preparing the plan.");
   const parity = await validateNativeExtensionParityEvidence(candidatePath, manifestPath, candidateSha256);
-  const preCutoverProblems = [...evidence.problems, ...parity.problems];
+  const prerequisites = await validateNativePreCutoverEvidence(candidatePath, manifestPath);
+  const preCutoverProblems = [...prerequisites.problems, ...parity.problems];
   const postCutoverEvidenceProblems = evidence.problems.filter(problem => problem.startsWith(`${POST_GATE}:`));
   const backup = join(dirname(targetPath), ".Kestrel-cutover-backups");
   let backupExists = false;
@@ -46,7 +47,7 @@ export async function createNativeCutoverPlan({ candidate, target, manifestPath 
         "Review every pre-cutover receipt and supporting artifact; hashes and status fields are attestations, not proof of behavior.",
         "Pass live signing and notarization checks and exact-candidate extension parity; confirm explicit retirement and cutover acceptance.",
         "Complete an explicitly approved, tested profile transfer and rollback; preserve existing profiles, credentials, and provider logins.",
-        "Pass every existing retirement gate, including candidate-bound canonical on-screen evidence; the installer does not waive a gate during staging.",
+        "Pass every pre-cutover gate. Only absent canonical on-screen evidence stays pending until the candidate is installed within the recoverable transaction.",
         "Recheck candidate and installed target, then allocate a new private recovery transaction without overwriting an existing backup.",
         "Use an owned, private backup directory on the target volume; never overwrite an existing backup, unrelated app, or profile.",
         "Stage and validate the signed candidate, preserve the exact previous app in that backup, then atomically replace the canonical app with recoverable failure handling.",
@@ -57,6 +58,7 @@ export async function createNativeCutoverPlan({ candidate, target, manifestPath 
       evidenceProblems: postCutoverEvidenceProblems,
       required: [
         "Verify installed bundle identity and signing against the candidate, then open the canonical Dock app and visibly exercise its real Kestrel workflow.",
+        "Record fresh on-screen observations bound to this transaction, close only the test-owned app, and pass the full retirement validator before committing installation.",
         "Record candidate-bound on-screen evidence only after the installed app passes; retain the previous app backup until verification and explicit recovery decision.",
         "If install or verification fails, stop and restore the exact prior app from the owned backup; do not overwrite user profiles or credentials.",
         "Verify the restored app and its bundle fingerprint; report any incomplete rollback rather than claiming success.",
@@ -64,7 +66,7 @@ export async function createNativeCutoverPlan({ candidate, target, manifestPath 
     },
     limitations: [
       "This plan performs no mutation and does not certify evidence, signing, live tests, free space, permissions, or rollback readiness.",
-      "The installer still requires the complete retirement manifest before replacement. Local canonical workflow acceptance after installation is separate from directory/signature validation.",
+      "The installer requires all other retirement gates before replacement, then waits for transaction-bound canonical evidence and the complete retirement check before committing. Static validation alone cannot commit.",
       "The installer retains the previous bundle and a recovery journal; explicit rollback requires its private transaction.json path and KESTREL_ROLLBACK_NATIVE_CANONICAL=1.",
       "The shared loopback guard coordinates participating installers only. Process and path checks are snapshots; independent launches or filesystem writers are not atomically excluded.",
       "Bundle fingerprints cover paths, types, modes, file bytes and link targets; they do not attest ACLs, extended attributes, ownership or timestamps.",
