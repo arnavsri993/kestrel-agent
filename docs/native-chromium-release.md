@@ -213,7 +213,7 @@ restart check and destination B's session setup pass on rebuilt candidate
 `7be6f04e...`. That run ended with an operator timeout while the Mac stayed
 locked; its four stops were clean, its complete bundle hash matched, and the
 generated profiles are retained. It did not reach native transfer review.
-The full transfer/rollback flow is not yet accepted.
+That locked run did not establish transfer or rollback acceptance.
 
 The failed UI run also exposed a synchronous error modal blocking the
 main-queue SIGTERM handler. The revised Quit path bridges from a separate signal
@@ -229,16 +229,57 @@ Four native suites pass **123 tests**, with two root-only ownership skips.
 Generated cases exercise nested default/modal/event-tracking dispatch, blocked
 reads and backpressured writes, worker reaping, bounded waits, retained source
 guards after worker stop, immediate cross-process fence release after confirmed
-shutdown, and retention after uncertain shutdown. These are component fixtures,
-not a live Cocoa modal acceptance claim. Private candidate
+shutdown, and retention after uncertain shutdown. These component fixtures are
+separate from the live Cocoa checks below. Private candidate
 `91eab4bb80a7d9b9a774e1ee28027f882f988e946656048bc1b5db97160ea41a`
-built successfully and passed source A's real encrypted-message restart and
-destination B's session setup with normal clean SIGTERM stops. Its actual
-native error-modal Quit and transfer/rollback stages still await unlock under
-`.tmp/native-vault-clean-quit-ui/`. Use
-`KESTREL_TEST_NATIVE_TRANSFER_MODAL_QUIT=1` to include that native-modal test;
-modal presence is explicitly an operator observation, followed by independent
-process-exit and Core restart assertions.
+built successfully. Its first run under `.tmp/native-vault-clean-quit-ui/`
+timed out while locked and remains a failed run with preserved profiles.
+
+The unlocked run passed all **nine production-vault transfer phases**, with
+**15 clean starts/stops** and the same complete bundle hash before/after.
+Actual native dialogs reviewed and applied source A into B, then B's exact
+active imported child into C. A conversation and message added only to that
+child survived the second transfer and restart; dormant B and C original
+conversations were excluded. Both native previous-profile actions restored
+their original conversations after restart. During each transfer, source
+database, vault and selection witnesses stayed preserved, allowing only the
+disclosed empty active-child coordination file. The test also left an actual native
+"Profile unavailable" error alert open before SIGTERM; the app stopped cleanly
+and B's Core conversation survived restart. Alert presence is an operator
+observation, followed by independent process-exit and Core readback assertions.
+Use `KESTREL_TEST_NATIVE_TRANSFER_MODAL_QUIT=1` to include that modal check.
+
+Receipt `.tmp/native-vault-clean-quit-ui-unlocked/receipt.json` has SHA256
+`c334f33e97687e3ef3f209ecdb27d8f38e6edd741592496fed16abc7c04b27c0`;
+its independently checked summary is `verified-summary.json` beside it.
+All exact candidate processes were absent before successful generated-profile
+cleanup. This is generated native-profile transfer and rollback acceptance;
+it does not establish interrupted-transfer crash recovery, migration of a real
+retired Electron profile, Store parity, signing or canonical installation.
+
+The same `91eab4bb...` candidate then passed the seven-phase production browser
+vault canary with three clean starts/stops and unchanged bundle hashes.
+Encrypted cookie/password and Core restart readback, generated native password
+autofill and authenticated-cookie corruption rejection all passed. Receipt:
+`.tmp/native-browser-local-vault-1794591177833-149b9e8c-3789-4fd7-902a-8276c8897474/receipt.json`.
+Its generated Core and browser vault artifacts validate against the exact
+candidate; `retirement-validation.json` beside it still reports the other 25
+gates missing from that deliberately bounded manifest.
+
+That exact candidate also completed **17 desktop/Store compatibility phases**
+using actual native permission sheets and official JSON Formatter `0.10.2` and
+uBlock Origin Lite `2026.1110.1816`. Content injection, extension-created tabs,
+isolated toolbar popup, Chrome manager disable/re-enable, same-window
+Home/Settings/Store, Core recovery and extension persistence after restart
+passed. Receipt `.tmp/native-clean-quit-production-store/receipt.json` has
+SHA256 `bd046cd46eadad8a21202dc9635ca83d7d7fcb86e7ecc4766b2e287a54b502fd`;
+its complete bundle hash stayed unchanged. The production-vault profile and
+`store-update-checkpoint.json` are retained and independently load-validated.
+The update callback returned `no_update`; the two aggregate extension-parity
+phases correctly remain incomplete because `storeVersionUpgrade` is false.
+This is current-candidate installation/compatibility evidence, not a published
+version transition or complete extension parity. No forced version edits or
+repeat update-resume request were used.
 
 An earlier run of this same flow completed the functionality checks but failed
 checkpoint retention after the computer tool reopened the test binary while
@@ -262,6 +303,16 @@ verified summary is `.tmp/ci-c6ea726c-evidence/verified-summary.json`: eight
 candidate-bound receipts contributed 93 passing phases; two unbound receipts
 were excluded. This workflow uses stock/mock generated fixtures and does **not**
 verify the custom engine or production vault.
+
+Head `c05611d8b4688588692bc1fccd7f68d9878ec003` also passed both jobs in
+[CI 43375143068](https://github.com/arnavsri993/kestrel-agent/actions/runs/43375143068).
+Artifact `14014872845` matched SHA256
+`455f8223a6f06868f181141d9b8b467ffa89e7be0dd720a200be352e89a4682f`.
+The bounded archive and all eight candidate-bound receipts were independently
+checked: 93 phases passed with unchanged complete-bundle hash pairs; two
+unbound receipts were excluded. The summary is
+`.tmp/ci-c05611d8-evidence/verified-summary.json`. This remains stock/mock CI,
+separate from the private custom-engine production-vault UI runs.
 
 The new Store fixture storage/checkpoint/continuation support and existing
 candidate metadata/profile checks pass **92 tests across five files** locally.
