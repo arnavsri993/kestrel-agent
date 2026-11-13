@@ -7,11 +7,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "@playwright/test";
 import { candidateDigest } from "./native-retirement-evidence.mjs";
 import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
+import { assertNativeBrowserFixtureStopped, captureNativeBrowserFixtureStorage, nativeBrowserFixtureStorageArgs,
+  nativeBrowserFixtureStorageEnv, prepareNativeBrowserFixtureProfile, selectNativeBrowserFixtureStorage } from "./native-browser-fixture-storage.mjs";
 
 // A separate bounded lifetime canary. The operator observes real Cocoa panels
 // and acknowledges the stages in live-state.json; no panel is mocked.
 assert(process.env.KESTREL_NATIVE_TEST_APP, "Set the exact disposable native candidate.");
 const app = await realpath(resolve(process.env.KESTREL_NATIVE_TEST_APP));
+const storage = await selectNativeBrowserFixtureStorage({ candidate: app, root: process.cwd() });
 assert.notEqual(app, await realpath("/Applications/Kestrel.app").catch(() => "/Applications/Kestrel.app"));
 assert(app.endsWith(".app"), "Candidate must be an app bundle.");
 const executable = await realpath(join(app, "Contents/MacOS/Kestrel"));
@@ -28,9 +31,12 @@ const evidence = resolve(process.env.KESTREL_NATIVE_BACKUP_UI_EVIDENCE || `.tmp/
 await mkdir(evidence, { recursive: true, mode: 0o700 });
 assert.equal((await readdir(evidence)).length, 0, "Use an empty evidence directory.");
 const temporary = await realpath(await mkdtemp(join(tmpdir(), "kestrel-backup-ui-")));
-const profile = join(temporary, "browser");
-await mkdir(profile, { mode: 0o700 }); await markDisposableNativeTestProfile(profile);
-const receipt = { version: 1, startedAt: new Date().toISOString(), candidate: app, candidateSha256: await candidateDigest(app), scope: "Generated disposable profile/key and actual Cocoa backup folder panels. No real profile, Keychain, microphone or desktop-control access.", phases: [] };
+const profile = storage.mode === "production-vault"
+  ? await prepareNativeBrowserFixtureProfile({ profile: await mkdtemp(join(tmpdir(), "kestrel-chromium-desktop-canary-")), storage })
+  : join(temporary, "browser");
+if (storage.mode === "test-key") { await mkdir(profile, { mode: 0o700 }); await markDisposableNativeTestProfile(profile); }
+const receipt = { version: 1, startedAt: new Date().toISOString(), candidate: app, candidateSha256: storage.candidateSha256, fixtureStorageMode: storage.mode,
+  scope: `Generated ${storage.mode} profile and actual Cocoa backup folder panels. No real profile, Keychain password items, microphone or desktop-control access.`, phases: [] };
 let running, browser, endpoint, home, readiness, interrupted = false;
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => {
   interrupted = true;
@@ -55,7 +61,8 @@ async function request(input) {
 async function start() {
   await assertCandidateStopped();
   const state = { output: "" };
-  state.child = spawn(executable, ["--kestrel-chromium-desktop", "--kestrel-cache-path", profile, "--kestrel-durable-profile", "--kestrel-test-profile-key", "--remote-debugging-port=0"], { stdio: ["ignore", "pipe", "pipe"] });
+  state.child = spawn(executable, ["--kestrel-chromium-desktop", "--kestrel-cache-path", profile, "--kestrel-durable-profile", ...nativeBrowserFixtureStorageArgs(storage), "--remote-debugging-port=0"],
+    { env: nativeBrowserFixtureStorageEnv(storage), stdio: ["ignore", "pipe", "pipe"] });
   state.exited = new Promise(resolveExit => state.child.once("exit", (code, signal) => resolveExit({ code, signal })));
   for (const stream of [state.child.stdout, state.child.stderr]) stream.on("data", bytes => { state.output += bytes; });
   running = state;
@@ -75,10 +82,20 @@ async function start() {
 }
 async function stop() {
   if (!running) return;
-  const current = running; running = undefined;
+  const current = running;
   if (current.child.exitCode === null && current.child.signalCode === null) current.child.kill("SIGTERM");
-  assert.deepEqual(await Promise.race([current.exited, delay(15000, undefined, { ref: false }).then(() => { current.child.kill("SIGKILL"); throw Error("Owned native shutdown timed out."); })]), { code: 0, signal: null });
+  async function wait(milliseconds) { let timer; try { return await Promise.race([current.exited, new Promise(done => { timer = setTimeout(() => done(null), milliseconds); })]); } finally { clearTimeout(timer); } }
+  let forced = false, outcome = await wait(15000);
+  if (!outcome) { forced = true; current.child.kill("SIGKILL"); outcome = await wait(5000); }
+  assert(outcome, "Owned native shutdown timed out."); running = undefined;
+  assert.deepEqual(outcome, { code: 0, signal: null }); assert.equal(forced, false);
+  await waitForCandidateStop();
+  (receipt.stops ??= []).push({ pid: current.child.pid, exitCode: outcome.code, signal: outcome.signal, forced, candidateProcessesStopped: true });
   await browser?.close().catch(() => {}); browser = undefined;
+}
+async function waitForCandidateStop() {
+  const deadline = Date.now() + 10000;
+  for (;;) { try { assertNativeBrowserFixtureStopped(storage); return; } catch (error) { if (Date.now() >= deadline) throw error; } await delay(100); }
 }
 
 async function openReadiness() {
@@ -165,7 +182,13 @@ try {
 } catch (error) { receipt.result = "failed"; receipt.error = interrupted ? "UI_CANARY_INTERRUPTED" : error.message; process.exitCode = 1; }
 finally {
   await stop().catch(error => { receipt.result = "failed"; receipt.shutdownError = error.message; process.exitCode = 1; });
-  await rm(temporary, { recursive: true, force: true });
+  try {
+    await waitForCandidateStop();
+    if (storage.mode === "production-vault") receipt.fixtureStorage = await captureNativeBrowserFixtureStorage({ profile, storage });
+    await rm(temporary, { recursive: true, force: true });
+    if (storage.mode === "production-vault") await rm(profile, { recursive: true, force: true });
+    receipt.profileCleanup = "generated profile and backup fixtures removed";
+  } catch (error) { receipt.result = "failed"; receipt.cleanupError = error.message; process.exitCode = 1; }
   receipt.candidateSha256After = await candidateDigest(app);
   if (receipt.candidateSha256After !== receipt.candidateSha256) { receipt.result = "failed"; receipt.candidateChanged = true; process.exitCode = 1; }
   receipt.finishedAt = new Date().toISOString();

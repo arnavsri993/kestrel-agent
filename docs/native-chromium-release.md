@@ -96,6 +96,18 @@ because a newer published version was not observed. Installation/functionality/
 persistence are verified for this candidate; the strict Store version-upgrade
 gate remains open. No version was edited or relabeled to manufacture an update.
 
+The real native backup UI also passed **five phases** in a fresh production-vault
+profile on this same unchanged candidate. Actual Cocoa picker cancellation made
+no files; selecting the generated destination produced hash-verified private
+encrypted Core backup files and a visible receipt; Finder selected that exact
+backup; closing the requesting page canceled its pending native panel; and the
+generated session plus backup survived a full native restart. Both app stops
+were clean, then the generated profile and backup fixtures were removed.
+Receipt: `.tmp/native-production-backup-ui/receipt.json`. The visible backup
+disclosure correctly described the original local-vault dependency. This proves
+creation/persistence and native panel behavior, not restoration after vault loss
+or migration to another Mac.
+
 An earlier run of this same flow completed the functionality checks but failed
 checkpoint retention after the computer tool reopened the test binary while
 reconnecting. That extra instance was stopped. The failed receipt remains at
