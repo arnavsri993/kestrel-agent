@@ -29,6 +29,9 @@ export type NativeVaultProvisionedProfile = {
 	key: Buffer;
 	vaultSha256: string;
 };
+export class NativeVaultProvisioningCleanupError extends Error {
+	constructor() { super("The native vault helper could not be reaped; preserve the generated output."); this.name = "NativeVaultProvisioningCleanupError"; }
+}
 
 function fail(message = "Native vault provisioning failed; preserve the generated output for review."): never {
 	throw new Error(message);
@@ -69,6 +72,34 @@ async function stopAndReap(child: ReturnType<typeof spawn>, closed: Promise<{ co
 	}
 	child.kill("SIGKILL");
 	await Promise.race([closed, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("reap-timeout")), REAP_TIMEOUT_MS))]);
+}
+
+function groupExists(pid: number): boolean {
+	try { process.kill(-pid, 0); return true; }
+	catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
+}
+async function groupStopped(pid: number, timeoutMs: number): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	while (groupExists(pid)) {
+		if (Date.now() >= deadline) return false;
+		await new Promise<void>(resolve => setTimeout(resolve, 10));
+	}
+	return true;
+}
+async function stopProvisionerGroup(child: ReturnType<typeof spawn>, closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }>): Promise<void> {
+	if (!child.pid) { await stopAndReap(child, closed); return; }
+	// detached:true gives this one-shot provisioner its own process group. Its
+	// isolated crypto child inherits that group, so cancellation owns both.
+	const signalGroup = (signal: NodeJS.Signals) => {
+		try { process.kill(-child.pid!, signal); }
+		catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+	};
+	signalGroup("SIGTERM");
+	if (!await groupStopped(child.pid, GRACEFUL_STOP_MS)) {
+		signalGroup("SIGKILL");
+		if (!await groupStopped(child.pid, REAP_TIMEOUT_MS)) throw new Error("The native vault helper group could not be reaped.");
+	}
+	await closed;
 }
 
 function safePath(value: string, label: string): void {
@@ -299,7 +330,7 @@ export async function withProvisionedNativeVault<T>(request: NativeVaultProvisio
 	const parent = await verifyParent(request.parent);
 	const nonce = randomBytes(16);
 	let frame: Buffer | undefined, responseBytes: Buffer | undefined, child: ReturnType<typeof spawn> | undefined;
-	let channel: Duplex | undefined, key: Buffer | undefined, childExited = false, cleanupError: Error | undefined, releasing = false;
+	let channel: Duplex | undefined, key: Buffer | undefined, groupReleased = false, cleanupError: Error | undefined, releasing = false;
 	let closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }> | undefined;
 	try {
 		assertActive(request.signal, deadline);
@@ -307,9 +338,10 @@ export async function withProvisionedNativeVault<T>(request: NativeVaultProvisio
 		child = spawn(request.executable, [], {
 			cwd: request.parent,
 			env: MINIMAL_ENV,
+			detached: true,
 			stdio: ["ignore", "ignore", "ignore", "pipe", parent.handle.fd],
 		});
-		closed = processClose(child).then(result => { childExited = true; return result; }, error => { childExited = true; throw error; });
+		closed = processClose(child);
 		channel = child.stdio[3] as Duplex | undefined;
 		if (!channel || typeof channel.end !== "function") fail("The native vault helper channel was unavailable.");
 		const responsePromise = readResponse(channel, request.signal, deadline).then(bytes => {
@@ -320,6 +352,10 @@ export async function withProvisionedNativeVault<T>(request: NativeVaultProvisio
 		channel.end(frame);
 		const [, exit] = await Promise.all([responsePromise, controlled(closed, request.signal, deadline)]);
 		if (exit.code !== 0 || exit.signal !== null) fail("The native vault helper did not exit cleanly.");
+		if (child.pid && !await groupStopped(child.pid, GRACEFUL_STOP_MS)) fail("The native vault helper left a running descendant.");
+		// Release the PID before a potentially long UI review. Never signal an
+		// old process-group identifier after the owned group has disappeared.
+		groupReleased = true;
 		for (const witness of executableWitness) {
 			if (await realpath(witness.path) !== witness.path || !sameIdentity(witness.identity, identity(await lstat(witness.path, { bigint: true }))))
 				fail("A native vault helper changed during provisioning.");
@@ -335,8 +371,8 @@ export async function withProvisionedNativeVault<T>(request: NativeVaultProvisio
 		return result;
 	} finally {
 		releasing = true;
-		if (child && !childExited) {
-			try { await stopAndReap(child, closed ?? processClose(child)); } catch { cleanupError = new Error("The native vault helper could not be reaped; preserve the generated output."); }
+		if (child && !groupReleased) {
+			try { await stopProvisionerGroup(child, closed ?? processClose(child)); } catch { cleanupError = new NativeVaultProvisioningCleanupError(); }
 		}
 		try {
 			channel?.destroy();

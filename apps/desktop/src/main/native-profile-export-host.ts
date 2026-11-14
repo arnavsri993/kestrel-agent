@@ -4,7 +4,7 @@ import { lstat, mkdir, mkdtemp, open, realpath, writeFile } from "node:fs/promis
 import { join } from "node:path";
 import type { CredentialBroker } from "./credential-broker";
 import type { CoreSupervisor } from "./core-supervisor";
-import { withProvisionedNativeVault } from "./native-vault-provisioner";
+import { withProvisionedNativeVault, NativeVaultProvisioningCleanupError } from "./native-vault-provisioner";
 import { NativeProfileExportWorker } from "./native-profile-export-worker";
 
 export type NativeProfileExportPreview = {
@@ -38,6 +38,16 @@ export interface NativeProfileExportHostOptions {
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const sha = /^[0-9a-f]{64}$/;
 function check(signal: AbortSignal) { if (signal.aborted) throw new Error("Transfer preparation was cancelled."); }
+async function interruptible<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+	let abort!: () => void;
+	try {
+		return await Promise.race([operation, new Promise<never>((_resolve, reject) => {
+			abort = () => reject(new Error("Transfer preparation was cancelled."));
+			signal.addEventListener("abort", abort, { once: true });
+			if (signal.aborted) abort();
+		})]);
+	} finally { signal.removeEventListener("abort", abort); }
+}
 async function publishProfileSelection(profile: string, handoffId: string): Promise<void> {
 	for (const [name, text] of [
 		["native-core-profile.json", JSON.stringify({ version: 2, active: "", previous: "", handoffs: { "": handoffId } })],
@@ -71,6 +81,7 @@ function preview(value: any, sourceRoot: string, coreRoot: string, handoffId: st
  * Native Kestrel selects/imports the exported profile in a separate flow. */
 export class NativeProfileExportHost {
 	private controller: AbortController | undefined;
+	private activeOperation: Promise<void> | undefined;
 	private worker: NativeProfileExportWorker | undefined;
 	private closed = false;
 	private requiresRestart = false;
@@ -80,25 +91,38 @@ export class NativeProfileExportHost {
 	get restartRequired(): boolean { return this.requiresRestart; }
 	constructor(private readonly options: NativeProfileExportHostOptions) {}
 	async close(): Promise<void> {
-		this.closed = true; this.controller?.abort();
+		this.closed = true;
+		const settled = this.activeOperation;
+		this.controller?.abort();
+		// Share and expedite an existing maintenance stop. A picker still open
+		// before maintenance leaves the ordinary app shutdown in charge of Core.
+		if (settled && this.options.core.hasProcess && !this.options.core.isReady) {
+			await this.options.core.stop({ gracefulTimeoutMs: 0 }).catch(() => { this.requiresRestart = true; });
+		}
 		if (this.worker) {
 			const stopped = await this.worker.close();
 			if (!stopped.confirmed) this.requiresRestart = true;
 		}
+		// Provisioning owns its own native child. Wait for execute's abort/reap
+		// finally blocks rather than detaching that child when Electron exits.
+		await settled;
 	}
 	async execute(): Promise<Result> {
 		if (this.closed || this.controller || this.requiresRestart || !this.options.core.isReady || this.options.isBusy())
 			throw new Error("Wait for active work to finish before preparing a Chromium transfer.");
 		const controller = this.controller = new AbortController(), signal = controller.signal;
-		this.output = undefined; this.options.changed?.();
+		let finish!: () => void;
+		this.activeOperation = new Promise<void>(resolve => { finish = resolve; });
+		this.output = undefined;
 		let coreStopped = false;
 		let step: ExportStep = "cached-key";
 		try {
+			this.options.changed?.();
 			return await this.options.broker.withCachedDatabaseKey(async sourceKey => {
 				step = "source";
 				check(signal);
 				if (await realpath(this.options.sourceRoot) !== this.options.sourceRoot) throw new Error();
-				const selected = await this.options.chooseParent(signal); check(signal);
+				const selected = await interruptible(this.options.chooseParent(signal), signal); check(signal);
 				if (!selected) return { state: "cancelled" as const };
 				step = "destination";
 				const parent = await realpath(selected), info = await lstat(parent);
@@ -123,7 +147,7 @@ export class NativeProfileExportHost {
 					if (!planned.ok || !uuid.test(planned.planId)) throw new Error();
 					const reviewed = preview(planned.preview, this.options.sourceRoot, coreRoot, handoffId);
 					step = "review";
-					if (!await this.options.approve(reviewed, signal)) { check(signal); return { state: "cancelled" as const, outputFolder: this.output! }; }
+					if (!await interruptible(this.options.approve(reviewed, signal), signal)) { check(signal); return { state: "cancelled" as const, outputFolder: this.output! }; }
 					check(signal);
 					step = "apply";
 					const applied = await this.worker.request("apply-profile", { planId: planned.planId, acceptedPlanSha256: planned.preview.planSha256, approved: true, destinationKeyBase64: key.toString("base64") }, signal);
@@ -151,7 +175,8 @@ export class NativeProfileExportHost {
 				await writeFile(join(this.output, "transfer-status.json"), JSON.stringify({ version: 1, state: result.state, ...(result.state === "prepared" ? { profile: result.profile, preview: result.preview, activationPerformed: false } : {}), deviceBound: true }, null, 2), { mode: 0o600, flag: "wx" });
 				return result;
 			});
-		} catch {
+		} catch (error) {
+			if (error instanceof NativeVaultProvisioningCleanupError) this.requiresRestart = true;
 			throw new NativeProfileExportError(step);
 		} finally {
 			try {
@@ -163,7 +188,7 @@ export class NativeProfileExportHost {
 					try { await this.options.core.resumeLastConfiguration(); }
 					catch { this.requiresRestart = true; throw new Error("Restart Kestrel before running another task. The source profile and generated transfer folder were preserved."); }
 				}
-			} finally { this.controller = undefined; this.options.changed?.(); }
+			} finally { this.controller = undefined; this.activeOperation = undefined; finish(); this.options.changed?.(); }
 		}
 	}
 }

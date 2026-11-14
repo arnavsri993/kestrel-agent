@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const seam = vi.hoisted(() => ({ provision: vi.fn(), open: vi.fn() }));
-vi.mock("./native-vault-provisioner", () => ({ withProvisionedNativeVault: seam.provision }));
+vi.mock("./native-vault-provisioner", () => ({ withProvisionedNativeVault: seam.provision, NativeVaultProvisioningCleanupError: class extends Error {} }));
 vi.mock("./native-profile-export-worker", () => ({ NativeProfileExportWorker: { open: seam.open } }));
 import { NativeProfileExportHost, type NativeProfileExportHostOptions } from "./native-profile-export-host";
+import { NativeVaultProvisioningCleanupError } from "./native-vault-provisioner";
 
 const roots: string[] = [];
 beforeEach(() => { vi.resetAllMocks(); });
@@ -134,5 +135,42 @@ describe("source-host Chromium transfer", () => {
 		const f = fixture(); f.resume.mockRejectedValueOnce(new Error("failed startup"));
 		await expect(f.host.execute()).rejects.toThrow("Restart Kestrel"); expect(f.host.restartRequired).toBe(true);
 		expect(existsSync(join(f.profile, ".kestrel-desktop.lock"))).toBe(true);
+	});
+	it("settles cancellation even if a native picker or review promise ignores the abort signal", async () => {
+		for (const stage of ["picker", "review"]) {
+			const f = fixture();
+			if (stage === "picker") vi.mocked(f.options.chooseParent).mockImplementationOnce(() => new Promise(() => {}));
+			else vi.mocked(f.options.approve).mockImplementationOnce(() => new Promise(() => {}));
+			const pending = f.host.execute(), rejected = expect(pending).rejects.toThrow();
+			await vi.waitFor(() => expect(stage === "picker" ? f.options.chooseParent : f.options.approve).toHaveBeenCalled());
+			await f.host.close(); await rejected;
+			expect(f.host.busy).toBe(false); expect(f.resume).not.toHaveBeenCalled();
+		}
+	});
+	it("expedites the same in-flight maintenance stop on Quit and never starts an export", async () => {
+		const f = fixture(); let stopping = false, running = true, refuse!: (error: Error) => void;
+		Object.defineProperties(f.options.core, { isReady: { get: () => !stopping }, hasProcess: { get: () => running } });
+		f.stop.mockImplementationOnce(async () => { stopping = true; return new Promise((_resolve, reject) => { refuse = reject; }); });
+		f.stop.mockImplementationOnce(async () => { running = false; refuse(new Error("forced maintenance stop")); });
+		const pending = f.host.execute(), rejected = expect(pending).rejects.toThrow();
+		await vi.waitFor(() => expect(f.stop).toHaveBeenCalledOnce());
+		await f.host.close(); await rejected;
+		expect(f.stop).toHaveBeenLastCalledWith({ gracefulTimeoutMs: 0 }); expect(seam.provision).not.toHaveBeenCalled(); expect(f.resume).not.toHaveBeenCalled();
+	});
+	it("waits for the provisioner's abort cleanup before allowing the host to exit", async () => {
+		const f = fixture(); let finishCleanup!: () => void, reaped = false, closed = false;
+		seam.provision.mockImplementationOnce(async (request) => new Promise((_resolve, reject) => {
+			request.signal.addEventListener("abort", () => { finishCleanup = () => { reaped = true; reject(new Error("cancelled after owned-child exit")); }; }, { once: true });
+		}));
+		const pending = f.host.execute(), rejected = expect(pending).rejects.toThrow();
+		await vi.waitFor(() => expect(seam.provision).toHaveBeenCalled());
+		const close = f.host.close().then(() => { closed = true; });
+		await Promise.resolve(); expect(closed).toBe(false); expect(reaped).toBe(false);
+		finishCleanup(); await close; await rejected;
+		expect(reaped).toBe(true); expect(f.host.busy).toBe(false); expect(f.resume).not.toHaveBeenCalled();
+	});
+	it("requires restart without resuming the source when provisioner cleanup is unconfirmed", async () => {
+		const f = fixture(); seam.provision.mockRejectedValueOnce(new NativeVaultProvisioningCleanupError());
+		await expect(f.host.execute()).rejects.toThrow(); expect(f.host.restartRequired).toBe(true); expect(f.resume).not.toHaveBeenCalled();
 	});
 });

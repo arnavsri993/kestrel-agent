@@ -26,7 +26,11 @@ authenticates the source, approved plan, destination and project handoff before
 publishing the native profile descriptor and ownership lock. The source then
 resumes using its retained supervisor configuration. An uncertain worker exit
 keeps it stopped and requires restart. Quit cancels preparation without resuming
-Core.
+Core. Quit also interrupts a non-cooperative picker/review promise, expedites
+the existing maintenance stop, and waits for export cleanup. The provisioner
+owns a separate process group; cancellation terminates and confirms both it and
+its isolated crypto descendant before returning. A released group identifier
+is never signalled after the potentially long review.
 
 This copies supported conversations, memory, task history and project details.
 Credentials and browser data are excluded, and imported project paths remain
@@ -35,7 +39,8 @@ its original path on this Mac. Preparing it neither selects a profile nor
 replaces the installed app; native transfer/selection is a separate action.
 
 The focused supervisor, broker, host, worker, client and native protocol suites
-pass **87 tests**. `scripts/smoke-native-source-export.mjs` also passed all six
+pass **92 tests**, including a real signed process-group fixture whose parent
+and descendant both ignore TERM. `scripts/smoke-native-source-export.mjs` also passed all six
 phases using an actual live packaged Core, cached runtime-only generated source
 key, signed production Secure Enclave provisioner and packaged transfer worker.
 Chooser and consent replies were simulated in this canary. The source resumed
