@@ -37,8 +37,17 @@ afterAll(async () => {
 	await vi.waitFor(() => assert(!processes().some(item => [executable, companion].includes(item.command))), { timeout: 5000 });
 	await rm(root, { recursive: true, force: true });
 });
-nativeIt("cancels and confirms the entire owned provisioner group, including a TERM-resistant descendant", async () => {
+nativeIt.each([false, true])("confirms a TERM-resistant provisioner and descendant exit (transient probe EPERM: %s)", async transientProbe => {
 	const controller = new AbortController(); let called = false;
+	ownedGroup = undefined;
+	const originalKill = process.kill.bind(process); let killed = false, injected = false;
+	const spy = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+		if (pid === -ownedGroup && signal === "SIGKILL") killed = true;
+		if (transientProbe && killed && !injected && pid === -ownedGroup && signal === 0) {
+			injected = true; throw Object.assign(new Error("Generated transient process-group probe failure"), { code: "EPERM" });
+		}
+		return originalKill(pid, signal);
+	});
 	const pending = withProvisionedNativeVault({ parent, executable, signal: controller.signal }, () => { called = true; });
 	const outcome = pending.then(() => { throw new Error("A stalled fixture unexpectedly provisioned a vault."); }, error => error);
 	try { await vi.waitFor(() => {
@@ -47,7 +56,10 @@ nativeIt("cancels and confirms the entire owned provisioner group, including a T
 		assert(direct && direct.group === direct.pid && rows.some(item => item.ppid === direct.pid && item.group === direct.pid));
 		ownedGroup = direct.pid;
 	}, { timeout: 5000 }); }
-	finally { controller.abort(); await outcome; }
-	expect((await outcome).message).toContain("cancelled");
+	finally { controller.abort(); await outcome; spy.mockRestore(); }
+	const result = await outcome;
+	assert.notEqual(result.name, "NativeVaultProvisioningCleanupError", `Unconfirmed fixture cleanup code: ${result.cleanupCode}`);
+	expect(result.message).toContain("cancelled");
+	assert.equal(injected, transientProbe);
 	assert.equal(called, false); assert(!processes().some(item => item.group === ownedGroup));
 }, 15000);

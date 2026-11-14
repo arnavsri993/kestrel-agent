@@ -39,7 +39,7 @@ its original path on this Mac. Preparing it neither selects a profile nor
 replaces the installed app; native transfer/selection is a separate action.
 
 The focused supervisor, broker, host, worker, client and native protocol suites
-pass **92 tests**, including a real signed process-group fixture whose parent
+pass **93 tests**, including a real signed process-group fixture whose parent
 and descendant both ignore TERM. `scripts/smoke-native-source-export.mjs` also passed all six
 phases using an actual live packaged Core, cached runtime-only generated source
 key, signed production Secure Enclave provisioner and packaged transfer worker.
@@ -580,7 +580,10 @@ CryptoKit can abort on a deliberately crafted opaque key representation. A
 separately signed `Kestrel Vault` executable contains that parsing behind a
 bounded private socket, empty environment, closed standard streams and a
 10-second deadline. Its abnormal exit is an unlock failure in the parent.
-Secret keys never enter command arguments, environment, JavaScript or logs.
+Unwrapped vault master keys stay in the native crypto path. Purpose-derived
+Core keys travel through private host/Core channels, including the source
+export's host-only Node callback; renderer IPC never exposes them. Keys never
+enter command arguments, environment or logs.
 The checksum detects accidental representation damage; authenticated encryption
 protects the envelope. This is device-bound storage, not a portable backup:
 recovery after losing/replacing this Mac remains unfinished. Swift/Data runtime

@@ -30,7 +30,12 @@ export type NativeVaultProvisionedProfile = {
 	vaultSha256: string;
 };
 export class NativeVaultProvisioningCleanupError extends Error {
-	constructor() { super("The native vault helper could not be reaped; preserve the generated output."); this.name = "NativeVaultProvisioningCleanupError"; }
+	readonly cleanupCode: string;
+	constructor(reason?: unknown) {
+		super("The native vault helper could not be reaped; preserve the generated output."); this.name = "NativeVaultProvisioningCleanupError";
+		const code = reason && typeof reason === "object" && "code" in reason ? reason.code : undefined;
+		this.cleanupCode = typeof code === "string" && /^E[A-Z0-9_]{1,63}$/.test(code) ? code : "UNCONFIRMED_EXIT";
+	}
 }
 
 function fail(message = "Native vault provisioning failed; preserve the generated output for review."): never {
@@ -76,7 +81,13 @@ async function stopAndReap(child: ReturnType<typeof spawn>, closed: Promise<{ co
 
 function groupExists(pid: number): boolean {
 	try { process.kill(-pid, 0); return true; }
-	catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
+	catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+		// EPERM establishes neither absence nor successful cleanup. Keep the
+		// group present and wait within the existing deadline for ESRCH.
+		if ((error as NodeJS.ErrnoException).code === "EPERM") return true;
+		throw error;
+	}
 }
 async function groupStopped(pid: number, timeoutMs: number): Promise<boolean> {
 	const deadline = Date.now() + timeoutMs;
@@ -372,7 +383,7 @@ export async function withProvisionedNativeVault<T>(request: NativeVaultProvisio
 	} finally {
 		releasing = true;
 		if (child && !groupReleased) {
-			try { await stopProvisionerGroup(child, closed ?? processClose(child)); } catch { cleanupError = new NativeVaultProvisioningCleanupError(); }
+			try { await stopProvisionerGroup(child, closed ?? processClose(child)); } catch (error) { cleanupError = new NativeVaultProvisioningCleanupError(error); }
 		}
 		try {
 			channel?.destroy();
