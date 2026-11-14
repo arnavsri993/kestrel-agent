@@ -4,7 +4,8 @@ import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { manifest } from "./prepare-native-vault-cef.mjs";
-import { assertNoExactExecutableRunning, validateRealKeychainCandidate as validateDisposableCandidate } from "./native-real-keychain-candidate.mjs";
+import { validateChromiumSigningClones } from "./native-code-sign-clone.mjs";
+import { assertNoExactExecutableRunning, validateChromiumVaultCandidatePath } from "./native-real-keychain-candidate.mjs";
 
 const sha256 = /^[a-f0-9]{64}$/;
 export function validatePackagedVaultMetadata(value) {
@@ -38,7 +39,7 @@ async function privateBundleFile(path, maximum) {
 }
 
 export async function validateVaultCanaryCandidate(supplied, { root } = {}) {
- const selected = await validateDisposableCandidate(supplied, { root });
+ const selected = await validateChromiumVaultCandidatePath(supplied, { root });
  const { candidate, executable } = selected;
  assertNoExactExecutableRunning(executable);
  const recordPath = join(candidate, "Contents/Resources/native-vault-engine.json");
@@ -48,7 +49,7 @@ export async function validateVaultCanaryCandidate(supplied, { root } = {}) {
  const helper = join(candidate, "Contents/MacOS/Kestrel Vault");
  for (const path of [executable, helper]) {
   const info = await lstat(path);
-  if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid() || info.nlink !== 1 ||
+  if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid() || info.nlink !== (path === executable ? selected.signingClones.aliases.length + 1 : 1) ||
       (info.mode & 0o022) !== 0 || !(info.mode & 0o111) || await realpath(path) !== path)
    throw Error("Candidate native executable is unsafe.");
   const imports = execFileSync("/usr/bin/nm", ["-u", path], { encoding: "utf8", timeout: 20000, maxBuffer: 8 * 1024 * 1024 });
@@ -77,5 +78,6 @@ export async function validateVaultCanaryCandidate(supplied, { root } = {}) {
  for (const name of ["_cef_kestrel_vault_api_version", "_cef_kestrel_vault_configure"])
   if (!exports.has(name)) throw Error("Candidate is missing an actual vault-engine API export.");
  execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", candidate], { stdio: "pipe", timeout: 30000 });
+ if (JSON.stringify(await validateChromiumSigningClones(candidate)) !== JSON.stringify(selected.signingClones)) throw Error("Candidate executable aliases changed during validation.");
  return { ...selected, metadata, frameworkSha256, noDirectKeychainItemImports: true };
 }

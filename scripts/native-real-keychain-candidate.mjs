@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
+import { validateChromiumSigningClones } from "./native-code-sign-clone.mjs";
 
 const BUILD_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const RESERVED_BUILD = "native-chromium-host";
@@ -9,7 +10,7 @@ function ownedPrivateDirectory(info, uid) {
 	return info.isDirectory() && !info.isSymbolicLink() && info.uid === uid && (info.mode & 0o022) === 0;
 }
 
-export async function validateRealKeychainCandidate(supplied, { root, uid = process.getuid() } = {}) {
+async function validateCandidate(supplied, { root, uid = process.getuid() } = {}, allowChromiumSigningClones = false) {
 	if (!supplied || !root) throw new Error("A candidate path and repository root are required.");
 	const repository = await realpath(resolve(root));
 	const tempRoot = join(repository, ".tmp");
@@ -37,12 +38,18 @@ export async function validateRealKeychainCandidate(supplied, { root, uid = proc
 		if (await realpath(path) !== path) throw new Error("Candidate path contains a symlink or alias.");
 	}
 	const executableInfo = await lstat(executable);
-	if (!executableInfo.isFile() || executableInfo.isSymbolicLink() || executableInfo.uid !== uid || executableInfo.nlink !== 1 ||
+	if (!executableInfo.isFile() || executableInfo.isSymbolicLink() || executableInfo.uid !== uid || (!allowChromiumSigningClones && executableInfo.nlink !== 1) ||
 		(executableInfo.mode & 0o111) === 0 || (executableInfo.mode & 0o022) !== 0)
 		throw new Error("Candidate executable must be owned, executable, non-writable, and single-link regular file.");
 	if (await realpath(executable) !== executable) throw new Error("Candidate executable resolves through an alias.");
-	return { candidate: app, executable, buildName: relativeParts[0] };
+	const signingClones = allowChromiumSigningClones ? await validateChromiumSigningClones(app, { uid }) : undefined;
+	return { candidate: app, executable, buildName: relativeParts[0], ...(signingClones ? { signingClones } : {}) };
 }
+
+export const validateRealKeychainCandidate = (supplied, options) => validateCandidate(supplied, options);
+// Only the custom Chromium vault preflight uses signing-clone accounting.
+// The generic/legacy validator has no caller-selectable alias exception.
+export const validateChromiumVaultCandidatePath = (supplied, options) => validateCandidate(supplied, options, true);
 
 export function assertNoExactExecutableRunning(executable, { ps = execFileSync } = {}) {
 	const output = ps("/bin/ps", ["-axo", "pid=,comm="], { encoding: "utf8" });

@@ -357,6 +357,61 @@ Store tests pass **121 tests across seven files**. Syntax, whitespace and the
 production-secret scan also pass. No native product binary was changed by
 these harness-only changes.
 
+### Signing-clone diagnosis and repeated project transfers
+
+The executable alias is now accounted for. A volume inode lookup found its
+second directory entry under this user's `X/<bundle-id>.code_sign_clone`
+namespace. The clone's complete bundle digest equals `91eab4bb...`. The pinned
+Chromium `chrome/browser/mac/code_sign_clone_manager.mm` explicitly hard-links
+the main executable into that clone and schedules cleanup from its destructor.
+An owned-parent SIGKILL prevents that normal destructor cleanup. No clone was
+deleted and the Chromium update-safety feature was not disabled.
+
+The production-vault fixture validator now accounts for every main-executable
+link in that exact canonical, owned, non-writable namespace. Each matching
+clone must have the same inode and complete-bundle digest; candidate and clone
+processes must be absent. Bounded inventory and final identity/link checks
+reject unknown aliases and substitutions. Generic legacy candidate checks,
+vault files, helpers and framework binaries retain their single-link checks.
+The clone/candidate tests pass **41 checks across three files**.
+
+The same-path production recovery run at
+`.tmp/native-vault-published-recovery-accounted/receipt.json` passed seven phases:
+genuine publication-before-selection parent SIGKILL, unchanged source/selection,
+same-path restart, actual native authenticated recovery, Keep Current Profile
+and restart, repeated verification, and explicit recovered selection with
+message readback. Its final rollback operator wait expired while macOS was
+locked, so that receipt remains **failed**, unchanged. A separate retained-fixture
+continuation then passed actual native rollback and original-session readback
+after restart, with two clean stops and the same bundle hash. Its receipt is
+`.tmp/native-vault-accounted-final-rollback/receipt.json`, SHA256
+`ca511c1198dc3734c51c9b907740a1653d22ff707cf01ae65049fb8d8039f2b3`.
+Neither run copied the app or exported keys. These observations cover this
+published-transfer boundary; they do not establish mid-stage or power-loss
+recovery, real-profile transfer or canonical installation.
+
+Source review also found that transferring an already-imported profile could
+drop pending project names and instructions: only its current workspace grants
+were read. The transfer worker now authenticates the source's encrypted pending
+handoff against its key and root identity, holds and rechecks its file witness,
+and carries pending metadata forward. Current explicit grants preserve later
+edits; removed identities remain retired. Unknown, changed, conflicting or
+unfinished handoffs refuse without granting paths or mutating the source.
+Four focused transfer suites pass **48 tests**, including second/third hops,
+removal, source preservation and generated recovery. Core typecheck and the
+custom-engine package build pass. The new candidate is
+`.tmp/native-project-two-hop-host/Kestrel.app`, complete SHA256
+`6b1caf7afec07105f6cd17eb017c23c557b6e064a210c6d5d0d5500f2267f9ed`.
+The older `91eab4bb...` runtime receipts are not acceptance for this new bundle.
+
+Published source head `7ca43a8813cf06faa7ee8890511826eab3405d0a` passed both
+CI jobs and CodeQL. [CI 43520422173](https://github.com/arnavsri993/kestrel-agent/actions/runs/43520422173)
+artifact `14084477442` matches SHA256
+`7a4ad7295e07c674c15c9db85973eb00bb0e3b38ffd269834c4f222ae4141f31`.
+Independent bounded ZIP/receipt checks confirmed eight matching bundle hash
+pairs and **94 passed phases**, excluding unbound evidence. This remains
+stock/mock CI, not custom-engine, real-profile or Store-upgrade acceptance.
+
 An earlier run of this same flow completed the functionality checks but failed
 checkpoint retention after the computer tool reopened the test binary while
 reconnecting. That extra instance was stopped. The failed receipt remains at

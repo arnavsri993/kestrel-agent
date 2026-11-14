@@ -15,6 +15,9 @@ export function nativeDesktopProbePlan(name, { env = process.env, root = reposit
  // Each command has one bounded scope; optional provider/Store/workspace tests
  // are available through their own supported entry points.
  for (const key of Object.keys(childEnv)) if (key.startsWith("KESTREL_TEST_")) childEnv[key] = "0";
+ for (const key of ["KESTREL_TEST_REAL_CODEX", "KESTREL_TEST_REAL_CHROME_WEB_STORE", "KESTREL_TEST_REQUIRE_CHROMIUM_EXTENSION_PARITY",
+  "KESTREL_TEST_KEEP_STORE_UPDATE_PROFILE", "KESTREL_TEST_NATIVE_PROVIDERS", "KESTREL_TEST_NATIVE_WINDOW_LIFECYCLE",
+  "KESTREL_TEST_NATIVE_WORKSPACE", "KESTREL_TEST_NATIVE_WORKSPACE_FIXTURE"]) childEnv[key] = "0";
  childEnv.KESTREL_TEST_NATIVE_LOCAL_VAULT = env.KESTREL_TEST_NATIVE_LOCAL_VAULT === "1" ? "1" : "0";
  childEnv.KESTREL_TEST_NATIVE_ISOLATED_AUTOMATION = name === "isolated-automation" ? "1" : "0";
  childEnv.KESTREL_TEST_NATIVE_ISOLATED_DOWNLOADS = name === "download-capture" ? "1" : "0";
@@ -33,10 +36,23 @@ export async function runNativeDesktopProbe(name) {
  const forwardInt = () => { child.kill("SIGINT"); };
  const forwardTerm = () => { child.kill("SIGTERM"); };
  process.once("SIGINT", forwardInt); process.once("SIGTERM", forwardTerm);
+ let outcome;
  try {
-  const outcome = await new Promise((done, reject) => {
+  outcome = await new Promise((done, reject) => {
    child.once("error", reject); child.once("exit", (code, signal) => done({ code, signal }));
   });
-  assert.deepEqual(outcome, { code: 0, signal: null }, `Native desktop probe failed; evidence kept at ${plan.evidence}`);
+ } catch (error) {
+  console.error(`Native desktop probe could not start: ${error.message}; evidence kept at ${plan.evidence}`);
+  process.exitCode = 1;
+  return;
  } finally { process.removeListener("SIGINT", forwardInt); process.removeListener("SIGTERM", forwardTerm); }
+ if (outcome.signal) {
+  // Preserve the child’s termination semantics at the package-command boundary.
+  process.kill(process.pid, outcome.signal);
+  return;
+ }
+ if (outcome.code !== 0) {
+  console.error(`Native desktop probe exited ${outcome.code}; evidence kept at ${plan.evidence}`);
+  process.exitCode = outcome.code ?? 1;
+ }
 }

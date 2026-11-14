@@ -2,7 +2,7 @@
 // candidate. Folder picker replies are simulated over the real Core pipe; this
 // does not exercise Cocoa UI or prove Keychain/canonical installation behavior.
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { spawn } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
@@ -36,15 +36,18 @@ await chmod(fixture, 0o700);
 const sourceRoot = join(fixture, "source-profile"), profileRoot = join(fixture, "destination-profile");
 const coreRoot = join(profileRoot, "native-core"), sourceDatabase = join(sourceRoot, "database/kestrel.sqlite");
 const destinationDatabase = join(coreRoot, "database/kestrel.sqlite");
+const secondProfileRoot = join(fixture, "second-destination-profile"), secondCoreRoot = join(secondProfileRoot, "native-core");
+const secondBrowserRoot = join(fixture, "second-browser-profile");
 const importedHint = join(fixture, "old-imported-folder"), selectedFolder = join(fixture, "trusted-new-folder");
 const browserRoot = join(fixture, "browser-profile");
-for (const directory of [sourceRoot, join(sourceRoot, "database"), profileRoot, coreRoot, join(coreRoot, "database"), importedHint, selectedFolder, browserRoot]) {
+for (const directory of [sourceRoot, join(sourceRoot, "database"), profileRoot, coreRoot, join(coreRoot, "database"), secondProfileRoot, secondCoreRoot,
+	join(secondCoreRoot, "database"), secondBrowserRoot, importedHint, selectedFolder, browserRoot]) {
 	await mkdir(directory, { recursive: true, mode: 0o700 });
 	await chmod(directory, 0o700);
 }
 
-const sourceKey = randomBytes(32), destinationKey = randomBytes(32);
-const handoffId = randomUUID();
+const sourceKey = randomBytes(32), destinationKey = randomBytes(32), secondDestinationKey = randomBytes(32);
+const handoffId = randomUUID(), secondHandoffId = randomUUID();
 const timestamp = "2026-11-06T14:00:00.000Z";
 const instructions = "Generated private project instructions; preserve line one.\nPreserve line two.";
 const projects = [
@@ -65,6 +68,8 @@ const stageNames = [
 	"trusted-folder-reconnect-preserves-project-identity-metadata-and-time",
 	"Core-restart-retains-reconnected-and-pending-identities",
 	"remove-pending-project-does-not-resurrect-after-restart",
+	"actual-bundled-second-hop-plan-apply-verify-profile",
+	"second-Core-retains-exact-pending-metadata-without-workspace-authority",
 ];
 let stage = stageNames[0], transfer, owner, finalHandoffState;
 const ownedChildren = new Set();
@@ -76,6 +81,22 @@ function within(promise, timeoutMs, message) {
 		promise.then(value => { clearTimeout(timer); resolveValue(value); }, error => { clearTimeout(timer); rejectValue(error); });
 	});
 }
+async function snapshotTree(root) {
+	const snapshot = {};
+	async function visit(directory) {
+		for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+			const path = join(directory, entry.name), relative = path.slice(root.length + 1), info = await stat(path);
+			if (entry.isDirectory()) await visit(path);
+			else {
+				assert(entry.isFile(), `Unexpected non-file in generated profile snapshot: ${relative}`);
+				const bytes = await readFile(path);
+				snapshot[relative] = { sha256: createHash("sha256").update(bytes).digest("hex"), size: info.size, mode: info.mode & 0o777 };
+			}
+		}
+	}
+	await visit(root);
+	return snapshot;
+}
 const { KestrelDatabase } = await tsImport("../packages/database/src/index.ts", import.meta.url);
 const C = await tsImport("../packages/shared-types/src/index.ts", import.meta.url);
 const { launchCoreTransferFixture } = await tsImport("./native-core-transfer-crash-fixture.ts", import.meta.url);
@@ -84,7 +105,7 @@ const safeInspect = operation => {
 	try { return operation(database); } finally { database.close(); }
 };
 
-function createOwner({ selectedProfile = profileRoot, selectedBrowser = browserRoot, selectedHandoff = handoffId, useHandoff = true } = {}) {
+function createOwner({ selectedProfile = profileRoot, selectedBrowser = browserRoot, selectedHandoff = handoffId, profileKey = destinationKey, useHandoff = true } = {}) {
 	const args = [coreEntry, "--durable-profile", "--profile-root", selectedProfile, "--browser-profile-root", selectedBrowser,
 		...(useHandoff ? ["--project-handoff-id", selectedHandoff] : [])];
 	const child = own(spawn(node, args, {
@@ -98,7 +119,7 @@ function createOwner({ selectedProfile = profileRoot, selectedBrowser = browserR
 	const dispatch = message => {
 		if (message?.type === "ready") readySeen = true;
 		if (message?.kind === "native-core-profile-key-request") {
-			child.stdin.write(`${JSON.stringify({ kind: "native-core-profile-key-response", requestId: message.requestId, ok: true, keyBase64: destinationKey.toString("base64"), testProfile: true })}\n`);
+			child.stdin.write(`${JSON.stringify({ kind: "native-core-profile-key-response", requestId: message.requestId, ok: true, keyBase64: profileKey.toString("base64"), testProfile: true })}\n`);
 			return;
 		}
 		if (message?.type === "response" && typeof message.id === "string") {
@@ -237,6 +258,53 @@ try {
 	const denied = await owner.request({ type: "runtime-call-tool", sessionId: "generated-session-connected", toolName: "workspace.read", input: { path: "README.md" } }).promise;
 	assert.equal(denied.ok, false);
 	mark("initial-Core-pending-metadata-and-no-old-authority");
+
+	// Transfer the still-pending imported profile into a second generated profile
+	// before reconnect/removal changes its identity state. This exercises the
+	// actual bundled worker twice and ensures pending metadata remains data only.
+	await owner.stop(); owner = undefined;
+	const firstDestinationSnapshot = await snapshotTree(coreRoot);
+	transfer = launchCoreTransferFixture({ executable: node, entry: transferEntry, home: fixture, requestTimeoutMs: 60_000 });
+	ownedChildren.add(transfer.child); transfer.child.once("exit", () => ownedChildren.delete(transfer.child));
+	const secondPlan = await transfer.request("plan-profile", { sourceProfileRoot: coreRoot, destinationCoreRoot: secondCoreRoot,
+		handoffId: secondHandoffId, sourceKeyBase64: destinationKey.toString("base64") });
+	assert.equal(secondPlan.ok, true);
+	assert.equal(secondPlan.preview.projectHandoff.projects, 2);
+	assert.equal(secondPlan.preview.projectHandoff.pendingIdentities, 2);
+	const secondApplied = await transfer.request("apply-profile", { planId: secondPlan.planId,
+		acceptedPlanSha256: secondPlan.preview.planSha256, approved: true, destinationKeyBase64: secondDestinationKey.toString("base64") });
+	assert.equal(secondApplied.ok, true); assert.equal(secondApplied.receipt.activationPerformed, false);
+	const secondVerified = await transfer.request("verify-profile", { recoveryId: secondApplied.recoveryId });
+	assert.equal(secondVerified.ok, true); assert.equal(secondVerified.recovery.originalReadable, true); assert.equal(secondVerified.recovery.destinationReadable, true);
+	assert.deepEqual(await transfer.stop(), { code: 0, signal: null });
+	assert.equal(transfer.errors(), "");
+	for (const secret of [destinationKey.toString("base64"), secondDestinationKey.toString("base64"), instructions])
+		assert(!transfer.output().includes(secret) && !transfer.errors().includes(secret));
+	transfer = undefined;
+	assert.deepEqual(await snapshotTree(coreRoot), firstDestinationSnapshot, "the first destination source snapshot changed during the second hop");
+	mark("actual-bundled-second-hop-plan-apply-verify-profile");
+
+	owner = createOwner({ selectedProfile: secondProfileRoot, selectedBrowser: secondBrowserRoot, selectedHandoff: secondHandoffId, profileKey: secondDestinationKey });
+	await owner.take(message => message.type === "ready", 60_000);
+	const secondGrants = await owner.request({ type: "get-workspace-grants" }, true).promise;
+	assert.equal(secondGrants.ok, true);
+	assert.deepEqual(secondGrants.projects, []); assert.deepEqual(secondGrants.workspaceGrants, []);
+	assert.deepEqual(secondGrants.pendingWorkspaceProjects, projects.map(({ id, name }) => ({ id, name })));
+	const { NativeProjectHandoffFile: SecondHandoffFile } = await tsImport("../apps/desktop/src/main/native-project-handoff-file.ts", import.meta.url);
+	const { parseNativeProjectHandoffState: parseSecondHandoff } = await tsImport("../apps/desktop/src/main/native-project-handoff-state.ts", import.meta.url);
+	const secondFile = new SecondHandoffFile({ root: secondCoreRoot, key: secondDestinationKey });
+	try {
+		const secondState = parseSecondHandoff((await secondFile.read(secondHandoffId)).value, secondHandoffId);
+		assert.deepEqual(secondState.pendingProjectIds, projects.map(({ id }) => id));
+		assert.deepEqual(secondState.projects.map(({ id, pathHint, name, instructions, createdAt, updatedAt }) => ({ id, path: pathHint, name, instructions, createdAt, updatedAt })),
+			projects.map(({ id, path, name, instructions, createdAt, updatedAt }) => ({ id, path, name, instructions, createdAt, updatedAt })));
+	} finally { secondFile.close(); }
+	await owner.stop(); owner = undefined;
+	secondDestinationKey.fill(0);
+	mark("second-Core-retains-exact-pending-metadata-without-workspace-authority");
+
+	// Resume the first destination's existing reconnect/cancel/removal checks.
+	owner = createOwner(); await owner.take(message => message.type === "ready", 60_000);
 
 	stage = stageNames[3];
 	const first = owner.request({ type: "reconnect-workspace-project", projectId: projects[0].id }, true);
@@ -410,7 +478,12 @@ try {
 	if (receipt.ownedProcessesRemaining) { receipt.result = "failed"; process.exitCode = 1; }
 	if (receipt.candidateSha256After !== receipt.candidateSha256) { receipt.result = "failed"; process.exitCode = 1; }
 	receipt.finishedAt = new Date().toISOString();
+	sourceKey.fill(0); destinationKey.fill(0); secondDestinationKey.fill(0);
 	await writeFile(join(evidence, "receipt.json"), JSON.stringify(receipt, null, 2), { mode: 0o600 });
-	sourceKey.fill(0); destinationKey.fill(0);
-	if (!owner && !transfer && !ownedChildren.size) await rm(fixture, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+	if (receipt.result === "passed" && !owner && !transfer && !ownedChildren.size) {
+		await rm(fixture, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+	} else {
+		receipt.generatedFixturePath = fixture;
+		await writeFile(join(evidence, "receipt.json"), JSON.stringify(receipt, null, 2), { mode: 0o600 });
+	}
 }

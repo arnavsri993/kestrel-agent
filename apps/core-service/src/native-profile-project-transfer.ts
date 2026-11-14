@@ -35,10 +35,18 @@ function path(value: unknown): string {
 function fields(request: Record<string, unknown>, names: string[]) {
 	if (Object.keys(request).some(name => !["requestId", "method", ...names].includes(name))) throw invalid();
 }
+function projectIdentities(reader: Source, referenced: string[]) {
+ return [...new Set([...referenced, ...reader.projects.map(item => item.id), ...reader.pendingProjectIds, ...reader.retiredProjectIds])].sort();
+}
+function transferredProjects(reader: Source, projectIds: string[]) {
+ const retired = new Set(reader.retiredProjectIds);
+ return { reviewedProjectIds: projectIds, pendingProjectIds: projectIds.filter(id => !retired.has(id)),
+  projects: structuredClone(reader.projects), settledProjectIds: [...retired].sort().map(id => ({ id, disposition: "removed" as const })) };
+}
 function preview(p: Pending) {
 	return { sourceDatabasePath: p.plan.source.path, destinationDatabasePath: p.plan.destination.path, counts: p.plan.summary.counts, excluded: p.plan.summary.excluded,
 		...(p.plan.summary.legacy ? { legacy: p.plan.summary.legacy } : {}), authenticatedEnvelopes: p.plan.authenticatedEnvelopes, planSha256: p.reviewSha256,
-		projectHandoff: { id: p.handoffId, projects: p.reader.projects.length, pendingIdentities: p.projectIds.length, instructions: p.reader.projects.filter(item => item.instructions !== undefined).length, registryPresent: p.reader.witness.presence === "present" } };
+		projectHandoff: { id: p.handoffId, projects: p.reader.projects.length, pendingIdentities: transferredProjects(p.reader, p.projectIds).pendingProjectIds.length, instructions: p.reader.projects.filter(item => item.instructions !== undefined).length, registryPresent: p.reader.witness.presence === "present" } };
 }
 
 /** Host-private wrapper; the version-1 database transfer formats stay intact. */
@@ -75,10 +83,10 @@ export class NativeProfileProjectTransfer {
 					if (typeof handoffId !== "string" || !PROJECT_HANDOFF_ID.test(handoffId)) throw invalid();
 					if (sourceRoot === coreRoot || sourceRoot.startsWith(`${coreRoot}/`) || coreRoot.startsWith(`${sourceRoot}/`)) throw new HostProfileFileTransferError("UNSAFE_PATH", "Choose separate source and destination profiles. Existing data was preserved.");
 					if (await manifestPresent(coreRoot)) throw new HostProfileFileTransferError("PROJECT_HANDOFF_RECOVERY_REQUIRED", "A prepared project handoff already exists. Preserve it and review recovery before retrying.");
-					reader = await readProjectHandoffSource(sourceRoot); this.check();
+					reader = await readProjectHandoffSource(sourceRoot, sourceKey); this.check();
 					const plan = planHostProfileFileTransfer({ sourceDatabasePath: join(sourceRoot, "database/kestrel.sqlite"), sourceKey, destinationDatabasePath: join(coreRoot, "database/kestrel.sqlite") });
 					const refs = reviewHostProfileProjectReferences({ plan, sourceKey });
-					const projectIds = [...new Set([...refs.projectIds, ...reader.projects.map(item => item.id)])].sort();
+					const projectIds = projectIdentities(reader, refs.projectIds);
 					if (projectIds.length > 500) throw new HostProfileFileTransferError("PROJECT_HANDOFF_LIMIT", "The selected profile exceeds the supported pending-project limit. Existing data was preserved.");
 					await reader.verify(); this.check();
 					const reviewSha256 = hash({ domain: "kestrel-native-project-transfer-v1", handoffId, coreRoot, planSha256: plan.planSha256, sourceRoot, sourceWitness: reader.witness, projectIds, projects: reader.projects });
@@ -100,10 +108,10 @@ export class NativeProfileProjectTransfer {
 					file = new NativeProjectHandoffFile({ root: p.coreRoot, key: destinationKey });
 					await p.reader.verify(); this.check();
 					const currentIds = reviewHostProfileProjectReferences({ plan: p.plan, sourceKey: p.sourceKey }).projectIds;
-					if (hash([...new Set([...currentIds, ...p.reader.projects.map(item => item.id)])].sort()) !== hash(p.projectIds)) throw new Error();
+					if (hash(projectIdentities(p.reader, currentIds)) !== hash(p.projectIds)) throw new Error();
 					const prepared: NativeProjectHandoffState = { format: "kestrel-native-project-handoff", version: 1, handoffId: p.handoffId, state: "prepared", revision: 0,
 						reviewSha256: p.reviewSha256, sourceProfileRoot: p.sourceRoot, sourceWitness: p.reader.witness, corePlan: p.plan,
-						reviewedProjectIds: p.projectIds, pendingProjectIds: p.projectIds, projects: structuredClone(p.reader.projects), settledProjectIds: [] };
+						...transferredProjects(p.reader, p.projectIds) };
 					const created = await file.create(p.handoffId, prepared); preparedRetained = true; this.check();
 					await p.reader.verify(); this.check();
 					const receipt = applyHostProfileFileTransfer({ plan: p.plan, sourceKey: p.sourceKey, destinationKey, acceptedPlanSha256: p.plan.planSha256, retainRecoveryJournal: true });
@@ -148,18 +156,18 @@ export class NativeProfileProjectTransfer {
 					const review = inspection.review, sourceRoot = dirname(dirname(review.plan.source.path));
 					if (join(sourceRoot, "database/kestrel.sqlite") !== review.plan.source.path) throw invalid();
 					if (sourceRoot === inspection.coreRoot || sourceRoot.startsWith(`${inspection.coreRoot}/`) || inspection.coreRoot.startsWith(`${sourceRoot}/`)) throw invalid();
-					reader = await readProjectHandoffSource(sourceRoot); this.check();
+					reader = await readProjectHandoffSource(sourceRoot, sourceKey); this.check();
 					verifyInterruptedHostProfileFileTransfer({ destinationDatabasePath: review.destinationDatabasePath, sourceKey, destinationKey, acceptedRecoverySha256: review.recoverySha256 });
 					const refs = reviewHostProfileProjectReferences({ plan: review.plan, sourceKey });
-					const projectIds = [...new Set([...refs.projectIds, ...reader.projects.map(item => item.id)])].sort();
+					const projectIds = projectIdentities(reader, refs.projectIds);
 					if (projectIds.length > 500) throw new HostProfileFileTransferError("PROJECT_HANDOFF_LIMIT", "The selected profile exceeds the supported pending-project limit. Existing data was preserved.");
 					file = new NativeProjectHandoffFile({ root: inspection.coreRoot, key: destinationKey });
 					let manifest: RecoveryPlan["manifest"];
 					if (await manifestPresent(inspection.coreRoot)) {
 						const stored = await file.read(inspection.handoffId);
 						const state = parseNativeProjectHandoffState(stored.value, inspection.handoffId);
-						if (state.revision !== 0 || state.settledProjectIds.length || !equal(state.corePlan, review.plan) || !sameProjectHandoffSourceWitness(state.sourceWitness, reader.witness) ||
-							!equal(state.reviewedProjectIds, projectIds) || !equal(state.pendingProjectIds, projectIds) || !equal(state.projects, reader.projects)) throw new Error();
+						if (state.revision !== 0 || !equal(state.corePlan, review.plan) || !sameProjectHandoffSourceWitness(state.sourceWitness, reader.witness) ||
+							!equal({ reviewedProjectIds: state.reviewedProjectIds, pendingProjectIds: state.pendingProjectIds, projects: state.projects, settledProjectIds: state.settledProjectIds }, transferredProjects(reader, projectIds))) throw new Error();
 						manifest = { value: state, witness: stored.witness };
 					}
 					await reader.verify(); this.check();
@@ -185,7 +193,7 @@ export class NativeProfileProjectTransfer {
 					await p.reader.verify(); this.check();
 					verifyInterruptedHostProfileFileTransfer({ destinationDatabasePath: p.inspection.review.destinationDatabasePath, sourceKey: p.sourceKey, destinationKey: p.destinationKey, acceptedRecoverySha256: p.inspection.review.recoverySha256 });
 					const refs = reviewHostProfileProjectReferences({ plan: p.plan, sourceKey: p.sourceKey });
-					if (!equal([...new Set([...refs.projectIds, ...p.reader.projects.map(item => item.id)])].sort(), p.projectIds)) throw new Error();
+					if (!equal(projectIdentities(p.reader, refs.projectIds), p.projectIds)) throw new Error();
 					let witness: ProjectHandoffFileWitness;
 					if (p.manifest) {
 						const current = await file.read(p.handoffId);
@@ -195,7 +203,7 @@ export class NativeProfileProjectTransfer {
 						if (await manifestPresent(p.coreRoot)) throw new Error();
 						const prepared: NativeProjectHandoffState = { format: "kestrel-native-project-handoff", version: 1, handoffId: p.handoffId, state: "prepared", revision: 0,
 							reviewSha256: p.reviewSha256, sourceProfileRoot: p.sourceRoot, sourceWitness: p.reader.witness, corePlan: p.plan,
-							reviewedProjectIds: p.projectIds, pendingProjectIds: p.projectIds, projects: structuredClone(p.reader.projects), settledProjectIds: [] };
+							...transferredProjects(p.reader, p.projectIds) };
 						witness = (await file.create(p.handoffId, prepared)).witness;
 					}
 					await p.reader.verify(); this.check();
@@ -206,7 +214,7 @@ export class NativeProfileProjectTransfer {
 					await p.reader.verify(); this.check();
 					const ready: NativeProjectHandoffState = { format: "kestrel-native-project-handoff", version: 1, handoffId: p.handoffId, state: "ready", revision: 0,
 						reviewSha256: p.reviewSha256, sourceProfileRoot: p.sourceRoot, sourceWitness: p.reader.witness, corePlan: p.plan,
-						reviewedProjectIds: p.projectIds, pendingProjectIds: p.projectIds, projects: structuredClone(p.reader.projects), settledProjectIds: [], receipt };
+						...transferredProjects(p.reader, p.projectIds), receipt };
 					const stored = await file.replace(p.handoffId, ready, witness); this.check(); parseNativeProjectHandoffState(stored.value, p.handoffId);
 					const recovery: Recovery = { ...p, id: randomUUID(), receipt, fileWitness: stored.witness, expiresAt: this.now() + RECOVERY_TTL };
 					this.recovery = recovery;

@@ -37,10 +37,12 @@ const profiles = {}, descriptors = {}, fixtureEvidence = {};
 const modalQuitRequested = process.env.KESTREL_TEST_NATIVE_TRANSFER_MODAL_QUIT === "1";
 const publishedRecoveryRequested = process.env.KESTREL_TEST_NATIVE_TRANSFER_PUBLISHED_RECOVERY === "1";
 const continuationPath = process.env.KESTREL_NATIVE_VAULT_RECOVERY_CONTINUATION;
+const projectsRequested = process.env.KESTREL_TEST_NATIVE_TRANSFER_PROJECTS === "1";
 assert(!continuationPath || publishedRecoveryRequested, "A continuation requires explicit published-recovery mode.");
 assert(!(modalQuitRequested && publishedRecoveryRequested), "Run modal-Quit and published recovery separately.");
+assert(!projectsRequested || !publishedRecoveryRequested, "Run project round-trip and published recovery separately.");
 const receipt = { kind: publishedRecoveryRequested ? "native-vault-published-recovery-canary" : "native-vault-profile-transfer-canary", version: 1, result: "failed", startedAt: new Date().toISOString(), candidate,
- candidateSha256: await candidateDigest(candidate), modalQuitRequested, publishedRecoveryRequested, phases: [], stages: [],
+ candidateSha256: await candidateDigest(candidate), modalQuitRequested, publishedRecoveryRequested, projectsRequested, phases: [], stages: [],
  scope: publishedRecoveryRequested
   ? "Generated production-vault profiles; actual owned parent-process SIGKILL after publication but before activation, native recovery choices, restart and rollback. No worker injection/signalling, source key export, real profile, provider, Store, release gate, mid-stage or power-loss recovery claim. Browser background network traffic is not measured."
   : "Generated private temporary profiles, production local vaults, loopback CDP and operator-driven native menus/dialogs. No real profile, test key, provider credential, mock key, external fixture/provider request, Store, release gate or crash-recovery claim. Browser background network traffic is not measured." };
@@ -70,7 +72,8 @@ async function setup(name) {
 async function start(name) {
  const profile = profiles[name], storage = descriptors[name];
  assert(profile && storage); assertNoCandidate();
- await validateVaultCanaryCandidate(candidate, { root });
+ const checked = await validateVaultCanaryCandidate(candidate, { root });
+ (receipt.executableAliasReviews ??= []).push({ stage: currentStage, ...checked.signingClones });
  assert.equal(await candidateDigest(candidate), receipt.candidateSha256);
  const env = nativeBrowserFixtureStorageEnv(storage);
  assert.equal(env.KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY, "1", "Provider discovery must remain disabled for this local fixture.");
@@ -113,6 +116,24 @@ async function start(name) {
  return { state, home };
 }
 async function request(home, request) { const result = await home.evaluate(value => window.kestrel.request(value), request); assert.equal(result?.ok, true, `Native Core request failed: ${request.type}`); return result; }
+async function chooseGeneratedProjectFolder(home, label, folder, projectId) {
+ // Keep the actual first-party request outstanding while the operator uses the
+ // native picker. No fixture grant or picker result is injected into the host.
+ const pending = home.evaluate(value => window.kestrel.request(value), projectId
+  ? { type: "reconnect-workspace-project", projectId } : { type: "select-workspace-folder" })
+  .then(result => ({ result }), error => ({ error }));
+ await operator(label, "In the owned native folder picker choose only the generated folder, confirm it, then acknowledge.", { folder, projectId });
+ const outcome = await pending; if (outcome.error) throw outcome.error;
+ assert.equal(outcome.result?.ok, true); assert(!outcome.result.cancelled);
+ const project = outcome.result.projects?.find(item => item.path === folder);
+ assert(project?.available, "The generated folder must be chosen through the native picker.");
+ return project;
+}
+async function assertPendingProject(home, project) {
+ const metadata = await request(home, { type: "get-workspace-grants" });
+ assert.deepEqual(metadata.projects, [], "Transferred paths must not become workspace grants.");
+ assert.deepEqual(metadata.pendingWorkspaceProjects, [{ id: project.id, name: project.name }]);
+}
 async function stop() {
  if (!running) return;
  const current = running;
@@ -139,11 +160,11 @@ async function snapshotSource(profile) {
    assert(!(await exists(join(base, forbidden))), "Generated production profile contains test-key material.");
   const prefix = base === profile ? "owner" : "active";
   for (const relative of [".kestrel-local-vault-v1", ".kestrel-desktop.lock", "workspace-grants.json", "native-core-profile.json",
-   "native-core/workspace-grants.json", "native-core/database/kestrel.sqlite", "native-core/database/kestrel.sqlite-wal",
+   "native-core/workspace-grants.json", "native-core/pending-project-handoff.json", "native-core/database/kestrel.sqlite", "native-core/database/kestrel.sqlite-wal",
    "native-core/database/kestrel.sqlite-shm", "native-core/database/kestrel.sqlite-journal"]) {
    if (relative === "native-core-profile.json" && base !== profile) continue;
    const key = `${prefix}/${relative}`, path = join(base, relative);
-   if (!(await exists(path))) { result[key] = null; continue; }
+   if (!(await exists(path))) { if (relative !== "native-core/pending-project-handoff.json") result[key] = null; continue; }
    const info = await lstat(path); assert(info.isFile() && !info.isSymbolicLink() && info.uid === process.getuid() && info.nlink === 1);
    if (relative === ".kestrel-desktop.lock") assert((info.mode & 0o777) === 0o600 && info.size === 0, "Native desktop coordination lock must remain empty and private.");
    result[key] = { mode: info.mode & 0o777, size: info.size, sha256: hash(await readFile(path)) };
@@ -351,8 +372,21 @@ try {
    vaultHash: loaded.spec.vaultSha256, journalHash: loaded.spec.journalSha256, originalTitle: loaded.originalTitle });
  } else {
  currentStage = "seed-A"; const A = await setup("A"), a = await start("A");
+ let sourceProject;
+ if (projectsRequested) {
+  currentStage = "A-project-folder";
+  const folder = join(temp, "generated-source-project"); await mkdir(folder, { mode: 0o700 });
+  const chosen = await chooseGeneratedProjectFolder(a.home, "A-project-folder", folder);
+  const name = `Transferred project ${run}`, instructions = `Generated project instructions ${run}.\nPreserve this second line.`;
+  const updated = await request(a.home, { type: "project-update", projectId: chosen.id, name, instructions });
+  sourceProject = updated.projects?.find(item => item.id === chosen.id);
+  assert.equal(sourceProject?.name, name); assert.equal(sourceProject?.instructions, instructions);
+  receipt.projectExpectation = sourceProject;
+  phase("native-folder-choice-and-generated-project-metadata");
+ }
  const aTitle = `Vault transfer A ${run}`, aText = `Generated A message ${run}`;
- const aSession = (await request(a.home, { type: "runtime-create-session", title: aTitle, kind: "conversation" })).session;
+ const aSession = (await request(a.home, { type: "runtime-create-session", title: aTitle, kind: "conversation",
+  ...(sourceProject ? { projectId: sourceProject.id, workspaceRoot: sourceProject.path } : {}) })).session;
  assert(aSession?.id); await request(a.home, { type: "runtime-append-message", sessionId: aSession.id, role: "user", content: aText });
  assert((await request(a.home, { type: "runtime-list-messages", sessionId: aSession.id })).messages.some(item => item.content === aText));
  await stop(); const aRestart = await start("A");
@@ -388,6 +422,7 @@ try {
  let sessions = await request(bA.home, { type: "runtime-list-sessions" });
  assert(sessions.sessions.some(item => item.id === aSession.id) && !sessions.sessions.some(item => item.id === bSession.id), "Restarted B must show A and exclude B's previous own session.");
  let messages = await request(bA.home, { type: "runtime-list-messages", sessionId: aSession.id }); assert(messages.messages.some(item => item.content === aText));
+ if (sourceProject) { await assertPendingProject(bA.home, sourceProject); phase("first-transfer-preserves-pending-project-without-folder-authority"); }
  await stop(); phase("B-restart-readback-A-present-B-original-absent");
 
  currentStage = "append-child-only"; bA = await start("B");
@@ -411,6 +446,15 @@ try {
  sessions = await request(cB.home, { type: "runtime-list-sessions" });
  assert(sessions.sessions.some(item => item.id === aSession.id) && sessions.sessions.some(item => item.id === childSession.id) && !sessions.sessions.some(item => item.id === bSession.id) && !sessions.sessions.some(item => item.id === cSession.id), "C must contain A and B child-only data, excluding both own sessions and old B data.");
  messages = await request(cB.home, { type: "runtime-list-messages", sessionId: childSession.id }); assert(messages.messages.some(item => item.content === childText));
+ if (sourceProject) {
+  await assertPendingProject(cB.home, sourceProject);
+  const folder = join(temp, "generated-reconnected-project"); await mkdir(folder, { mode: 0o700 });
+  currentStage = "C-reconnect-transferred-project";
+  const reconnected = await chooseGeneratedProjectFolder(cB.home, "C-reconnect-transferred-project", folder, sourceProject.id);
+  for (const field of ["id", "name", "instructions", "createdAt", "updatedAt"]) assert.equal(reconnected[field], sourceProject[field], `Repeated transfer lost project ${field}.`);
+  assert.notEqual(reconnected.path, sourceProject.path);
+  phase("second-transfer-preserves-project-metadata-and-reconnects-only-native-choice");
+ }
  await stop(); phase("C-restart-readback-proves-exact-active-B-child");
 
  currentStage = "rollback-C"; cB = await start("C"); await previous({ ...cB, profile: C }, "C"); await stop();
