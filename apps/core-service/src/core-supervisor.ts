@@ -6,6 +6,7 @@ import {
 	type CoreResponse,
 	CoreResponseSchema,
 	type Project,
+	ProjectSchema,
 	RuntimeEventSchema,
 } from "@kestrel/shared-types";
 import type { ProviderAccountRuntimeConfig } from "@kestrel/agent-core";
@@ -33,8 +34,12 @@ export interface CoreBootstrapConfig {
 	workspaceRoots: string[];
 	configuredWorkspaceRoots: string[];
 	projects?: Project[];
+	pendingProjectIds?: string[];
 	pluginRoots: string[];
 	managedPluginRoots: string[];
+	/** Native host may require trusted signatures on every managed plugin. */
+	pluginTrustKeys?: Array<{ keyId: string; publicKey: string }>;
+	pluginActivationIds?: Record<string, string>;
 	learnedSkillRoot: string;
 	secureEnvironment: NodeJS.ProcessEnv;
 	/** Runtime-only protected account credentials for the child bootstrap. */
@@ -48,10 +53,31 @@ export interface CoreSupervisorOptions {
 	startupTimeoutMs?: number;
 }
 
+export class CoreStopError extends Error {
+	constructor(readonly exitConfirmed: boolean) {
+		super(exitConfirmed
+			? "Agent Core did not stop cleanly. Restart it before creating a backup."
+			: "Agent Core termination could not be confirmed. Restart Kestrel before changing its data.");
+		this.name = "CoreStopError";
+	}
+}
+
+interface CoreStopOutcome { cleanExit: boolean }
+
 const DEFAULT_RESTART_DELAYS_MS = [250, 1_000, 5_000] as const;
 const DEFAULT_STABILITY_WINDOW_MS = 60_000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const MAX_TIMER_MS = 2_147_483_647;
+
+/** Validate raw host metadata before cloning it or opening the profile. */
+export function validateBootstrapPendingProjects(ids: unknown, projects: unknown): void {
+	if (!Array.isArray(ids) || ids.length > 500 || !Array.isArray(projects))
+		throw new Error("Invalid pending project IDs.");
+	const parsed = Array.from(ids, id => ProjectSchema.shape.id.parse(id));
+	const unique = new Set(parsed);
+	if (unique.size !== parsed.length || projects.some(project => project && typeof project === "object" && unique.has((project as { id?: string }).id ?? "")))
+		throw new Error("Pending project IDs must be unique and separate from configured projects.");
+}
 
 function boundedTimer(
 	value: number | undefined,
@@ -71,8 +97,11 @@ function cloneBootstrapConfig(
 		workspaceRoots: [...config.workspaceRoots],
 		configuredWorkspaceRoots: [...config.configuredWorkspaceRoots],
 		projects: config.projects?.map((project) => ({ ...project })) ?? [],
+		...(config.pendingProjectIds !== undefined ? { pendingProjectIds: [...config.pendingProjectIds] } : {}),
 		pluginRoots: [...config.pluginRoots],
 		managedPluginRoots: [...config.managedPluginRoots],
+		...(config.pluginActivationIds !== undefined ? { pluginActivationIds: { ...config.pluginActivationIds } } : {}),
+		...(config.pluginTrustKeys !== undefined ? { pluginTrustKeys: config.pluginTrustKeys.map(key => ({ ...key })) } : {}),
 		secureEnvironment: { ...config.secureEnvironment },
 		...(config.providerAccounts !== undefined
 			? {
@@ -109,6 +138,10 @@ export class CoreSupervisor extends EventEmitter {
 	private stabilityTimer: NodeJS.Timeout | undefined;
 	private recoveryFailureEmitted = false;
 	private browserCleanup: Promise<void> = Promise.resolve();
+	private stoppingOperation: Promise<CoreStopOutcome> | undefined;
+	private stoppedCleanly = false;
+	private expediteStop: (() => void) | undefined;
+	private readonly startupFailures = new WeakMap<CoreProcess, Error>();
 	private startup:
 		| {
 				child: CoreProcess;
@@ -150,6 +183,10 @@ export class CoreSupervisor extends EventEmitter {
 	}
 
 	async start(config: CoreBootstrapConfig): Promise<void> {
+		if (this.child || this.stoppingOperation)
+			throw new Error("Agent Core is already running or still stopping.");
+		validateBootstrapPendingProjects(config.pendingProjectIds === undefined ? [] : config.pendingProjectIds, config.projects === undefined ? [] : config.projects);
+		this.stoppedCleanly = false;
 		this.stopping = false;
 		this.clearRecoveryTimers();
 		this.restartAttempts = 0;
@@ -216,46 +253,98 @@ export class CoreSupervisor extends EventEmitter {
 		});
 	}
 
-	async stop(): Promise<void> {
+	get isReady(): boolean { return this.ready && !!this.child && !this.stopping; }
+	get hasProcess(): boolean { return !!this.child; }
+
+	/** Host maintenance may restore only a cleanly stopped, already bootstrapped
+	 * route. Keep protected configuration inside the supervisor: no credential
+	 * rediscovery, key loading or caller-supplied replacement configuration. */
+	async resumeLastConfiguration(): Promise<void> {
+		if (!this.stoppedCleanly || this.child || this.stoppingOperation || !this.lastSuccessfulConfig)
+			throw new Error("Agent Core must have completed a clean maintenance stop before resuming.");
+		const config = this.lastSuccessfulConfig;
+		this.stoppedCleanly = false;
+		await this.start(config);
+	}
+
+	async stop(options: { requireCleanExit?: boolean; gracefulTimeoutMs?: number } = {}): Promise<void> {
+		if (!this.stoppingOperation) {
+			const operation = this.stopOwnedProcess(boundedTimer(options.gracefulTimeoutMs, 2_000, 1));
+			const reserved = operation.finally(() => {
+				if (this.stoppingOperation === reserved) {
+					this.stoppingOperation = undefined;
+					this.expediteStop = undefined;
+				}
+			});
+			this.stoppingOperation = reserved;
+		}
+		// Quit may interrupt maintenance's longer clean-stop budget. Escalate the
+		// same owned stop rather than launching another shutdown or detaching it.
+		if (options.gracefulTimeoutMs === 0) this.expediteStop?.();
+		const outcome = await this.stoppingOperation;
+		this.stoppedCleanly = outcome.cleanExit;
+		if (options.requireCleanExit && !outcome.cleanExit) throw new CoreStopError(true);
+	}
+
+	private async stopOwnedProcess(gracefulTimeoutMs: number): Promise<CoreStopOutcome> {
 		this.stopping = true;
 		this.ready = false;
 		this.clearRecoveryTimers();
 		for (const controller of this.browserRequests.values())
 			controller.abort(new Error("Agent Core is stopping."));
 		this.browserRequests.clear();
-		await this.cleanupBrowsers();
 		const child = this.child;
-		if (!child) return;
-		const exited = new Promise<void>((resolve) => {
+		if (!child) { await this.cleanupBrowsers(); return { cleanExit: false }; }
+		let beginShutdown!: () => void;
+		const exited = new Promise<CoreStopOutcome>((resolve, reject) => {
 			let settled = false;
 			let timeout: NodeJS.Timeout | undefined;
-			const finish = () => {
+			let forced = false;
+			let shutdownSent = false;
+			const finish = (code: number | null) => {
 				if (settled) return;
 				settled = true;
 				if (timeout) clearTimeout(timeout);
-				resolve();
+				resolve({ cleanExit: !forced && code === 0 });
 			};
 			child.once("exit", finish);
-			timeout = setTimeout(() => {
-				try {
-					child.kill();
-				} catch {
-					// The forced detach below still makes the supervisor restartable.
-				}
-				finish();
-			}, 2_000);
-			timeout.unref();
+			const terminate = () => {
+				if (settled || forced) return;
+				if (timeout) clearTimeout(timeout);
+				forced = true;
+				try { child.kill(); } catch { /* Exit notification remains authoritative. */ }
+				if (settled) return;
+				timeout = setTimeout(() => {
+					try { child.kill("SIGKILL"); } catch { /* Never detach an uncertain owner. */ }
+					if (settled) return;
+					timeout = setTimeout(() => {
+						settled = true;
+						reject(new CoreStopError(false));
+					}, 2_000);
+					timeout.unref();
+				}, 3_000);
+				timeout.unref();
+			};
+			beginShutdown = () => {
+				if (settled || forced || shutdownSent) return;
+				shutdownSent = true;
+				timeout = setTimeout(terminate, Math.min(120_000, gracefulTimeoutMs));
+				timeout.unref();
+				try { child.postMessage({ type: "shutdown" }); }
+				catch { terminate(); }
+			};
+			this.expediteStop = () => {
+				if (settled || forced) return;
+				beginShutdown();
+				if (settled || forced) return;
+				if (timeout) clearTimeout(timeout);
+				timeout = setTimeout(terminate, 250);
+				timeout.unref();
+			};
 		});
-		try {
-			child.postMessage({ type: "shutdown" });
-		} catch {
-			try {
-				child.kill();
-			} catch {
-				// The forced detach below still makes the supervisor restartable.
-			}
-		}
-		await exited;
+		await this.cleanupBrowsers();
+		beginShutdown();
+		const outcome = await exited;
 		if (this.child === child) {
 			this.child = undefined;
 			this.settleStartup(
@@ -268,6 +357,7 @@ export class CoreSupervisor extends EventEmitter {
 			}
 			this.pending.clear();
 		}
+		return outcome;
 	}
 
 	private launch(config: CoreBootstrapConfig): Promise<void> {
@@ -284,7 +374,7 @@ export class CoreSupervisor extends EventEmitter {
 					"Agent Core did not become ready within 10 seconds.",
 				);
 				this.settleStartup(child, error);
-				if (this.child === child) this.child = undefined;
+				this.startupFailures.set(child, error);
 				try {
 					child.kill();
 				} catch {
@@ -310,7 +400,7 @@ export class CoreSupervisor extends EventEmitter {
 						? cause
 						: new Error("Agent Core bootstrap could not be sent.");
 				this.settleStartup(child, error);
-				if (this.child === child) this.child = undefined;
+				this.startupFailures.set(child, error);
 				try {
 					child.kill();
 				} catch {
@@ -321,7 +411,7 @@ export class CoreSupervisor extends EventEmitter {
 	}
 
 	private onMessage(child: CoreProcess, message: unknown): void {
-		if (child !== this.child) return;
+		if (child !== this.child || this.startupFailures.has(child)) return;
 		if (!message || typeof message !== "object" || Array.isArray(message)) {
 			this.invalidCoreMessage("message");
 			return;
@@ -345,7 +435,7 @@ export class CoreSupervisor extends EventEmitter {
 					? new ProtectedDatabaseError(message)
 					: new Error(message);
 			this.settleStartup(child, error);
-			this.child = undefined;
+			this.startupFailures.set(child, error);
 			this.ready = false;
 			try {
 				child.kill();
@@ -461,6 +551,8 @@ export class CoreSupervisor extends EventEmitter {
 
 	private onExit(child: CoreProcess, code: number | null): void {
 		if (child !== this.child) return;
+		const startupFailure = this.startupFailures.get(child);
+		this.startupFailures.delete(child);
 		this.child = undefined;
 		this.ready = false;
 		this.settleStartup(
@@ -479,9 +571,10 @@ export class CoreSupervisor extends EventEmitter {
 		if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
 		this.stabilityTimer = undefined;
 		if (this.stopping) return;
+		if (startupFailure && !this.lastSuccessfulConfig) return;
 		this.scheduleRecovery(
 			code,
-			new Error(
+			startupFailure ?? new Error(
 				`Agent Core exited unexpectedly${code === null ? "" : ` with code ${code}`}.`,
 			),
 		);

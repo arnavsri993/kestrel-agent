@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   renameSync,
   rmSync,
 } from "node:fs";
@@ -29,6 +30,8 @@ import {
   uniquePaths,
   unregister,
 } from "./kestrel-macos-app-hygiene.mjs";
+import { macosAppRuntime } from "./macos-app-runtime.mjs";
+import { withNativeInstallLock } from "./native-install-transaction.mjs";
 
 if (process.platform !== "darwin") {
   throw new Error("The macOS development app installer only runs on macOS.");
@@ -70,6 +73,13 @@ function validateSource(bundlePath) {
   }
 }
 
+function requireElectronSource(bundlePath) {
+  const runtime = macosAppRuntime(bundlePath, plistValue(bundlePath, "CFBundleIdentifier"));
+  if (runtime !== "electron") {
+    throw new Error("Native cutover is not accepted or the bundle runtime is ambiguous. Use the native installer and candidate-bound evidence before replacing the canonical app. No app was installed.");
+  }
+}
+
 function moveDuplicatesToTrash(excludedPaths) {
   return moveDuplicateKestrelAppsToTrash({
     excludedPaths,
@@ -99,19 +109,32 @@ function stageBundle() {
 }
 
 function install() {
+  if (process.env.KESTREL_INSTALL_NATIVE_CANONICAL === "1") {
+    throw new Error("Use install-native-chromium-macos.mjs for a native cutover with retained-bundle recovery. The development installer did not replace any app.");
+  }
   validateSource(source);
+  requireElectronSource(source);
+  if (existsSync(destination)) {
+    if (!isKestrelBundle(destination)) throw new Error(`Refusing to replace a non-Kestrel app at ${destination}`);
+    if (macosAppRuntime(destination, plistValue(destination, "CFBundleIdentifier")) !== "electron")
+      throw new Error("The development installer cannot replace a native or ambiguous canonical app with Electron. Use the native installer and retained-bundle recovery.");
+  }
   preventSpotlightIndexing(repositoryRoot);
   mkdirSync(installRoot, { recursive: true });
   if (existsSync(destination) && !isKestrelBundle(destination)) {
     throw new Error(`Refusing to replace a non-Kestrel app at ${destination}`);
   }
 
-  const removedStaging = removeStaleInstallStagingDirectories(installRoot);
-  const moved = moveDuplicatesToTrash([source, destination]);
+  let removedStaging = [];
+  const moved = [];
   let staged;
   if (!samePath(source, destination)) {
     staged = stageBundle();
     try {
+      requireElectronSource(staged.stagedBundle);
+
+      removedStaging = removeStaleInstallStagingDirectories(installRoot);
+      moved.push(...moveDuplicatesToTrash([source, destination]));
       if (existsSync(destination)) {
         moved.push({
           from: destination,
@@ -129,6 +152,11 @@ function install() {
     }
   }
 
+  if (samePath(source, destination)) {
+    removedStaging = removeStaleInstallStagingDirectories(installRoot);
+    moved.push(...moveDuplicatesToTrash([source, destination]));
+  }
+
   // A second pass catches duplicates that shared the canonical install root.
   // Keep the source build artifact available for packaged smoke tests; it is
   // already excluded from the first pass and must stay excluded here too.
@@ -138,7 +166,14 @@ function install() {
   return { destination, moved, removedStaging };
 }
 
-const result = install();
+// Validate before creating the install root or acquiring coordination state.
+if (process.env.KESTREL_INSTALL_NATIVE_CANONICAL === "1") {
+  throw new Error("Use install-native-chromium-macos.mjs for a native cutover with retained-bundle recovery. The development installer did not replace any app.");
+}
+validateSource(source);
+requireElectronSource(source);
+mkdirSync(installRoot, { recursive: true });
+const result = await withNativeInstallLock(join(realpathSync(installRoot), "Kestrel.app"), install);
 console.log(`Installed Kestrel at ${result.destination}`);
 for (const directory of result.removedStaging) {
   console.log(`Removed stale Kestrel install staging directory: ${directory}`);

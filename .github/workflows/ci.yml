@@ -40,7 +40,7 @@ jobs:
           path: .tmp/source-ingestion-benchmark/*.json
           if-no-files-found: warn
           retention-days: 14
-      - run: corepack pnpm audit
+      - run: corepack pnpm audit:dependencies
       - run: corepack pnpm assets:verify
       - run: corepack pnpm audit:references
       - run: corepack pnpm verify:openclaw2
@@ -48,7 +48,81 @@ jobs:
       - run: corepack pnpm build
       - run: corepack pnpm test:node-core
       - run: corepack pnpm test:chromium-host
+      - run: corepack pnpm test:app-page-interaction
       - run: corepack pnpm test:native-extensions
+      - name: Verify native renderer, durable Core and isolated browsing
+        env:
+          KESTREL_NATIVE_TEST_APP: ${{ github.workspace }}/.tmp/native-chromium-host/Kestrel.app
+          KESTREL_TEST_NATIVE_PROVIDERS: "1"
+          KESTREL_TEST_NATIVE_ISOLATED_AUTOMATION: "1"
+          KESTREL_TEST_NATIVE_FORM_NAVIGATION: "1"
+          KESTREL_TEST_NATIVE_ISOLATED_DOWNLOADS: "1"
+          KESTREL_TEST_NATIVE_CONTEXT_ATTACHMENTS: "1"
+          KESTREL_TEST_NATIVE_LEGACY_CONFLICTS: "1"
+          KESTREL_TEST_NATIVE_WORKSPACE_FIXTURE: "1"
+        run: |
+          corepack pnpm test:native-user-extensions
+          corepack pnpm test:native-chromium-core-relay
+          corepack pnpm test:native-core-durability
+          corepack pnpm test:native-pending-projects
+          corepack pnpm test:native-project-handoff
+          corepack pnpm test:project-reconnection-settings
+          corepack pnpm test:native-browser-backend
+          corepack pnpm test:native-isolated-automation
+          corepack pnpm test:chromium-native-auth
+          corepack pnpm test:chromium-provider-store
+          corepack pnpm test:chromium-context-dialog
+          corepack pnpm test:chromium-readiness
+          corepack pnpm test:chromium-system-integration
+          corepack pnpm test:chromium-external-urls
+          corepack pnpm test:chromium-browser-settings
+          corepack pnpm test:native-voice
+          corepack pnpm test:chromium-desktop
+      - name: Verify reviewed native history transfer
+        run: |
+          ditto --rsrc --extattr --acl .tmp/native-chromium-host/Kestrel.app .tmp/native-history-transfer-ci-host/Kestrel.app
+          KESTREL_NATIVE_TEST_APP="$GITHUB_WORKSPACE/.tmp/native-history-transfer-ci-host/Kestrel.app" corepack pnpm test:native-history-transfer
+      - name: Verify bounded large Core file transfers
+        env:
+          KESTREL_NATIVE_TEST_APP: ${{ github.workspace }}/.tmp/native-chromium-host/Kestrel.app
+          KESTREL_NATIVE_LARGE_CORE_EVIDENCE: ${{ github.workspace }}/.tmp/native-large-core-transfer-evidence
+        run: corepack pnpm test:native-large-core-transfer
+      - name: Upload native extension compatibility evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-extension-compatibility-${{ github.run_attempt }}
+          # .tmp is hidden; allow only generated evidence, never profile trees.
+          include-hidden-files: true
+          path: |
+            .tmp/native-user-extension-evidence/compatibility.json
+            .tmp/native-user-extension-evidence/action-popup.json
+            .tmp/native-user-extension-evidence/tab-ownership.json
+            .tmp/native-user-extension-evidence/*.png
+            .tmp/chromium-desktop-evidence/receipt.json
+            .tmp/chromium-desktop-evidence/native-download-diagnostics.json
+            .tmp/chromium-desktop-evidence/*.png
+            .tmp/chromium-desktop-evidence/runtime.log
+            .tmp/chromium-desktop-evidence/failure.log
+            .tmp/browser-app-page-evidence/receipt.json
+            .tmp/browser-app-page-evidence/desktop.png
+            .tmp/browser-app-page-evidence/compact.png
+            .tmp/browser-app-page-evidence/failure.png
+            .tmp/native-voice-*/receipt.json
+            .tmp/native-voice-*/*.png
+            .tmp/native-context-dialog-evidence/receipt.json
+            .tmp/native-browser-settings-evidence/receipt.json
+            .tmp/native-browser-settings-evidence/*.png
+            .tmp/native-browser-settings-evidence/runtime.log
+            .tmp/native-large-core-transfer-evidence/receipt.json
+            .tmp/native-pending-project-evidence/receipt.json
+            .tmp/native-project-handoff-evidence/receipt.json
+            .tmp/project-reconnection-settings-evidence/receipt.json
+            .tmp/project-reconnection-settings-evidence/*.png
+            .tmp/native-history-transfer-*/receipt.json
+            .tmp/native-history-transfer-*/*.png
+          if-no-files-found: warn
+          retention-days: 14
       - run: corepack pnpm test:e2e
       - run: corepack pnpm test:packaged-cli
       - run: corepack pnpm test:editors

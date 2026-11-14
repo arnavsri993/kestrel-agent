@@ -1,0 +1,195 @@
+diff --git a/chrome/browser/browser_process_impl.cc b/chrome/browser/browser_process_impl.cc
+index bed9453f156ba5b94a8daa5261085045e288098e..ff812bea6f003298d7348a676d46bd5c37b81c1f 100644
+--- a/chrome/browser/browser_process_impl.cc
++++ b/chrome/browser/browser_process_impl.cc
+@@ -283,6 +283,7 @@ void OnLocalStatePrefsLoaded();
+ #endif
+
+ #if BUILDFLAG(IS_MAC)
++#include "components/os_crypt/async/browser/kestrel_vault_key_provider.h"
+ #include "components/os_crypt/async/browser/keychain_key_provider.h"
+ #endif
+
+@@ -1648,7 +1649,14 @@ void BrowserProcessImpl::PreMainMessageLoopRun() {
+ #endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_LINUX)
+
+ #if BUILDFLAG(IS_MAC)
+-  if (base::FeatureList::IsEnabled(features::kUseKeychainKeyProvider)) {
++  if (os_crypt_async::IsKestrelVaultEnabled()) {
++    // This is a replacement, not a higher-priority fallback: never construct
++    // KeychainKeyProvider (or test/legacy providers) in the unlocked-vault mode.
++    providers.clear();
++    providers.emplace_back(
++        /*precedence=*/100u,
++        std::make_unique<os_crypt_async::KestrelVaultKeyProvider>());
++  } else if (base::FeatureList::IsEnabled(features::kUseKeychainKeyProvider)) {
+     providers.emplace_back(std::make_pair(
+         /*precedence=*/10u,
+         std::make_unique<os_crypt_async::KeychainKeyProvider>()));
+diff --git a/components/os_crypt/async/browser/BUILD.gn b/components/os_crypt/async/browser/BUILD.gn
+index 2309659150f87cced2def4071588c60cdc9c591c..76595a25f3b735b0f8251509117bec1df008a2f3 100644
+--- a/components/os_crypt/async/browser/BUILD.gn
++++ b/components/os_crypt/async/browser/BUILD.gn
+@@ -19,6 +19,14 @@ component("browser") {
+
+   defines = [ "IS_OS_CRYPT_ASYNC_IMPL" ]
+
++  if (is_mac) {
++    sources += [
++      "kestrel_vault_key_provider.cc",
++      "kestrel_vault_key_provider.h",
++    ]
++    deps += [ "//crypto" ]
++  }
++
+   if (is_win) {
+     sources += [
+       "os_crypt_win.cc",
+diff --git a/components/os_crypt/async/browser/kestrel_vault_key_provider.cc b/components/os_crypt/async/browser/kestrel_vault_key_provider.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..ebb613eb11a52b8f7c23ab1b5e22429eb6c756e7
+--- /dev/null
++++ b/components/os_crypt/async/browser/kestrel_vault_key_provider.cc
+@@ -0,0 +1,100 @@
++// Copyright 2026 The Kestrel Authors.
++// Use of this source code is governed by a BSD-style license.
++
++#include "components/os_crypt/async/browser/kestrel_vault_key_provider.h"
++
++#include <algorithm>
++#include <array>
++#include <utility>
++
++#include "base/no_destructor.h"
++#include "base/synchronization/lock.h"
++#include "base/types/expected.h"
++#include "components/os_crypt/async/common/algorithm.mojom.h"
++#include "crypto/secure_util.h"
++
++namespace os_crypt_async {
++namespace {
++
++// Versioned, non-overlapping with upstream v10/v11/v20 prefixes. This tag is
++// specific to Kestrel-derived browser keys; it never denotes a static key.
++constexpr char kKestrelKeyTag[] = "v99";
++enum class State { kUnset, kConfigured, kFrozen, kConsumed };
++struct Configuration {
++  base::Lock lock;
++  State state = State::kUnset;
++  std::array<uint8_t, Encryptor::Key::kAES256GCMKeySize> key = {};
++};
++
++Configuration& GetConfiguration() {
++  // No exit-time destructor and no accidental key copy. The staging bytes are
++  // explicitly erased before any Encryptor instance is vended.
++  static base::NoDestructor<Configuration> configuration;
++  return *configuration;
++}
++
++}  // namespace
++
++bool ConfigureKestrelVaultKey(base::span<const uint8_t> browser_key) {
++  if (browser_key.size() != Encryptor::Key::kAES256GCMKeySize) {
++    return false;
++  }
++  auto& configuration = GetConfiguration();
++  base::AutoLock lock(configuration.lock);
++  if (configuration.state != State::kUnset) {
++    return false;
++  }
++  std::ranges::copy(browser_key, configuration.key.begin());
++  configuration.state = State::kConfigured;
++  return true;
++}
++
++bool FreezeKestrelVaultConfiguration() {
++  auto& configuration = GetConfiguration();
++  base::AutoLock lock(configuration.lock);
++  if (configuration.state != State::kConfigured) {
++    return false;
++  }
++  configuration.state = State::kFrozen;
++  return true;
++}
++
++bool IsKestrelVaultEnabled() {
++  auto& configuration = GetConfiguration();
++  base::AutoLock lock(configuration.lock);
++  return configuration.state == State::kFrozen ||
++         configuration.state == State::kConsumed;
++}
++
++KestrelVaultKeyProvider::KestrelVaultKeyProvider() {
++  auto& configuration = GetConfiguration();
++  base::AutoLock lock(configuration.lock);
++  if (configuration.state != State::kFrozen) {
++    return;
++  }
++  key_.emplace(base::span<const uint8_t>(configuration.key),
++               mojom::Algorithm::kAES256GCM);
++  crypto::SecureZeroBuffer(configuration.key);
++  configuration.state = State::kConsumed;
++}
++
++KestrelVaultKeyProvider::~KestrelVaultKeyProvider() = default;
++
++void KestrelVaultKeyProvider::GetKey(KeyCallback callback) {
++  if (!key_) {
++    // Unavailability must NEVER be reported as permanent: callers may delete
++    // ciphertext after kPermanentlyUnavailable. Stop/re-unlock/restart instead.
++    std::move(callback).Run(
++        kKestrelKeyTag, base::unexpected(KeyError::kTemporarilyUnavailable));
++    return;
++  }
++  auto key = std::move(*key_);
++  key_.reset();
++  std::move(callback).Run(kKestrelKeyTag, std::move(key));
++}
++
++bool KestrelVaultKeyProvider::UseForEncryption() {
++  return true;
++}
++
++}  // namespace os_crypt_async
+diff --git a/components/os_crypt/async/browser/kestrel_vault_key_provider.h b/components/os_crypt/async/browser/kestrel_vault_key_provider.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..31c37c8ca205719a4c1df9eb7d285356f4ee11b3
+--- /dev/null
++++ b/components/os_crypt/async/browser/kestrel_vault_key_provider.h
+@@ -0,0 +1,36 @@
++// Copyright 2026 The Kestrel Authors.
++// Use of this source code is governed by a BSD-style license.
++
++#ifndef COMPONENTS_OS_CRYPT_ASYNC_BROWSER_KESTREL_VAULT_KEY_PROVIDER_H_
++#define COMPONENTS_OS_CRYPT_ASYNC_BROWSER_KESTREL_VAULT_KEY_PROVIDER_H_
++
++#include <optional>
++#include "base/component_export.h"
++#include "base/containers/span.h"
++#include "components/os_crypt/async/browser/key_provider.h"
++
++namespace os_crypt_async {
++
++// Browser-process in-memory configuration. No key material is serialized by
++// these functions. Call once before CefInitialize; no runtime replacement.
++COMPONENT_EXPORT(OS_CRYPT_ASYNC)
++bool ConfigureKestrelVaultKey(base::span<const uint8_t> browser_key);
++COMPONENT_EXPORT(OS_CRYPT_ASYNC)
++bool FreezeKestrelVaultConfiguration();
++COMPONENT_EXPORT(OS_CRYPT_ASYNC)
++bool IsKestrelVaultEnabled();
++
++class COMPONENT_EXPORT(OS_CRYPT_ASYNC) KestrelVaultKeyProvider final
++    : public KeyProvider {
++ public:
++  KestrelVaultKeyProvider();
++  ~KestrelVaultKeyProvider() override;
++  void GetKey(KeyCallback callback) override;
++  bool UseForEncryption() override;
++
++ private:
++  std::optional<Encryptor::Key> key_;
++};
++
++}  // namespace os_crypt_async
++#endif  // COMPONENTS_OS_CRYPT_ASYNC_BROWSER_KESTREL_VAULT_KEY_PROVIDER_H_

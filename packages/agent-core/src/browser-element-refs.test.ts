@@ -7,6 +7,20 @@ import {
 } from "./browser-element-refs";
 
 describe("browser element refs", () => {
+	it("preserves host-issued monotonically increasing refs across Core redaction", () => {
+		const tree = { nodes: [{ role: "button", name: "Save", backendDOMNodeId: 1 }, { role: "link", name: "Docs", backendDOMNodeId: 2 }] };
+		const host = annotateAccessibilityTree(tree, 200, { firstRef: 100_001 });
+		expect(host.interactive.map(item => item.ref)).toEqual(["e100001", "e100002"]);
+		const core = annotateAccessibilityTree(host.accessibilityTree, 200, { preserveExistingRefs: true });
+		expect(core.interactive).toEqual(host.interactive);
+		expect(normalizeBrowserElementRef("@e100001")).toBe("e100001");
+		expect(normalizeBrowserElementRef("e1000000000")).toBeUndefined();
+	});
+
+	it("rejects duplicate supplied refs instead of aliasing an action target", () => {
+		expect(() => annotateAccessibilityTree({ nodes: [{ role: "button", backendDOMNodeId: 1, ref: "e3" }, { role: "button", backendDOMNodeId: 2, ref: "e3" }] }, 200, { preserveExistingRefs: true })).toThrow("duplicate references");
+	});
+
 	it("assigns e1/e2 to a button and link without mutating frozen input", () => {
 		const button = Object.freeze({
 			nodeId: "1",

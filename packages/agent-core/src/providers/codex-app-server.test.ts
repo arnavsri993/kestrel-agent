@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 import { CodexAppServerProvider } from "./codex-app-server";
+import { createAccountModelProviders } from "./account-providers";
 import { textContent } from "./types";
 
 const roots: string[] = [];
@@ -31,6 +32,7 @@ function record(value) {
   const row = { pid: process.pid, value };
   if (value.method === "initialize") {
     row.env = {
+      HOME: process.env.HOME ?? null,
       CODEX_HOME: process.env.CODEX_HOME ?? null,
       KESTREL_CODEX_MCP_TOKEN: process.env.KESTREL_CODEX_MCP_TOKEN ?? null,
       OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? null,
@@ -140,6 +142,7 @@ afterEach(async () => {
 type CaptureRecord = {
 	pid: number;
 	env?: {
+		HOME: string | null;
 		CODEX_HOME: string | null;
 		KESTREL_CODEX_MCP_TOKEN: string | null;
 		OPENAI_API_KEY: string | null;
@@ -158,6 +161,19 @@ async function readCapture(path: string): Promise<CaptureRecord[]> {
 }
 
 describe("persistent Codex app-server provider", () => {
+	it("uses the host-selected vendor home without changing Core's home or inheriting API credentials", async () => {
+		const fake = await fakeAppServer();
+		const originalHome = process.env.HOME;
+		const [provider] = createAccountModelProviders([{ id: "native-cli-codex", providerId: "codex", adapter: "codex-app-server", displayName: "Native Codex", authTransport: "oauth", enabled: true,
+			executable: fake.executable, homeDirectory: "/test/vendor-home", profilePath: "/test/vendor-home/.codex" }]);
+		expect(provider).toBeInstanceOf(CodexAppServerProvider);
+		try { await (provider as CodexAppServerProvider).discoverModels(); }
+		finally { await (provider as CodexAppServerProvider).close(); }
+		const initialized = (await readCapture(fake.capture)).find(record => record.value.method === "initialize");
+		expect(initialized?.env).toMatchObject({ HOME: "/test/vendor-home", CODEX_HOME: "/test/vendor-home/.codex", OPENAI_API_KEY: null });
+		expect(process.env.HOME).toBe(originalHome);
+	});
+
 	it("discovers the signed-in account's stable app-server model catalog", async () => {
 		const fake = await fakeAppServer();
 		const provider = new CodexAppServerProvider({

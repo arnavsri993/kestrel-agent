@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "@playwright/test";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
+import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // A caller may supply a just-built artifact to avoid rebuilding for every test.
@@ -17,6 +18,7 @@ const invalid = spawnSync(executable, ["--kestrel-extension-workbench", "--kestr
 assert.equal(invalid.status, 1);
 assert.match(invalid.stderr, /cannot run the privileged shell or Core/);
 const profile = await mkdtemp(join(tmpdir(), "kestrel-native-extensions-test-"));
+await markDisposableNativeTestProfile(profile);
 const server = createServer((_request, response) => {
   response.writeHead(200, { "content-type": "text/html" });
   response.end("<!doctype html><title>Native extension test</title><h1>Native Chromium extension test</h1>");
@@ -28,6 +30,7 @@ let output = "";
 try {
   child = spawn(executable, [
     "--kestrel-extension-workbench", "--kestrel-cache-path", profile,
+    "--kestrel-durable-profile", "--kestrel-test-profile-key",
     "--remote-debugging-port=0",
     `--load-extension=${join(root, "tests/fixtures/native-extension")}`,
   ], { stdio: ["ignore", "pipe", "pipe"] });
@@ -59,6 +62,8 @@ try {
   const first = await page.evaluate(() => JSON.parse(document.documentElement.dataset.kestrelExtensionProbe));
   assert.equal(first.manifest, 3);
   assert.equal(first.runs, 1);
+  assert.equal(first.tabFound, true, "Chrome-style extension tabs.query must see the actual page");
+  assert.deepEqual(first.scripting, { bridge: "undefined", nativeQuery: "undefined" });
   assert.match(first.id, /^[a-p]{32}$/);
   assert.equal(await page.evaluate(() => typeof window.kestrel), "undefined");
   await page.reload();
@@ -66,6 +71,7 @@ try {
   assert.equal(await page.evaluate(() => JSON.parse(document.documentElement.dataset.kestrelExtensionProbe).runs), 2);
   await page.goto(`chrome-extension://${first.id}/popup.html`);
   await page.getByText("Manifest V3 running in native Chromium.").waitFor();
+  await page.getByLabel("Extension storage").filter({ hasText: "Stored runs: 2" }).waitFor();
   assert.equal(await page.evaluate(() => typeof window.kestrel), "undefined");
   // Even a file with the privileged shell's real path gets no bridge in this
   // mode. This checks that the mode reaches renderer helpers, not just main.

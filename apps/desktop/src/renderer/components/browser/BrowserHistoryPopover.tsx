@@ -17,7 +17,7 @@ export function BrowserHistoryPopover({
 	const filtered = useMemo(() => {
 		const normalized = query.trim().toLowerCase();
 		return [...history]
-			.reverse()
+			.sort((a, b) => Date.parse(b.visitedAt) - Date.parse(a.visitedAt))
 			.filter(
 				(entry) =>
 					!normalized ||
@@ -32,7 +32,7 @@ export function BrowserHistoryPopover({
 				<Icon name="history" />
 				<span>
 					<strong>History</strong>
-					<small>Recent pages on this Mac</small>
+					<small>Up to 50 recent pages on this Mac</small>
 				</span>
 				<button
 					type="button"
@@ -77,7 +77,7 @@ export function BrowserHistoryPopover({
 										{hostname.charAt(0).toUpperCase()}
 									</span>
 									<span className="browser-history-popover-copy">
-										<strong>{entry.title}</strong>
+										<strong>{entry.title}{entry.provenance === "imported" && " · Imported"}</strong>
 										<small>{entry.url}</small>
 									</span>
 									<time dateTime={entry.visitedAt}>

@@ -1,0 +1,155 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index dd0a558c0..8ceef4fa2 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -1122,5 +1122,8 @@ source_set("libcef_static") {
+     ]
+
+-    deps += [ "//components/os_crypt/common:keychain_password_mac" ]
++    deps += [
++      "//components/os_crypt/async/browser",
++      "//components/os_crypt/common:keychain_password_mac",
++    ]
+   } else {
+     sources += [
+diff --git a/cef_paths2.gypi b/cef_paths2.gypi
+index df2727da2..fd6d4d1b0 100644
+--- a/cef_paths2.gypi
++++ b/cef_paths2.gypi
+@@ -37,4 +37,5 @@
+       'include/cef_api_hash.h',
+       'include/cef_base.h',
++      'include/cef_kestrel_vault.h',
+       'include/internal/cef_export.h',
+       'include/internal/cef_ptr.h',
+diff --git a/include/cef_kestrel_vault.h b/include/cef_kestrel_vault.h
+new file mode 100644
+index 000000000..5e2f7adaf
+--- /dev/null
++++ b/include/cef_kestrel_vault.h
+@@ -0,0 +1,46 @@
++// Copyright 2026 The Kestrel Authors.
++// Use of this source code is governed by a BSD-style license.
++
++#ifndef CEF_INCLUDE_CEF_KESTREL_VAULT_H_
++#define CEF_INCLUDE_CEF_KESTREL_VAULT_H_
++#pragma once
++
++#include <stddef.h>
++#include <stdint.h>
++#include "include/internal/cef_export.h"
++
++// Hand-written C ABI extension to this pinned Kestrel CEF framework. This is
++// deliberately independent of the generated CEF C++/CAPI translator and API
++// hash: no wrapper, generated struct layout or stock CEF ABI is changed.
++// macOS only. Hosts must require BOTH symbols and this exact version before
++// any CefInitialize call; stock CEF is unsupported and must fail closed.
++#define CEF_KESTREL_VAULT_API_VERSION 1u
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++// Returns zero for debug/always-DCHECK engines whose public reference-count
++// object layout is incompatible with Kestrel's release wrapper.
++CEF_EXPORT unsigned int cef_kestrel_vault_api_version(void);
++
++// On the main thread BEFORE the first CefInitialize, supply exactly 32 bytes
++// of an HKDF-separated browser key. If the main host calls CefExecuteProcess,
++// it must return -1 first. macOS separate-helper hosts need not call it here.
++// The derived browser key must come from
++// the already unlocked Kestrel vault. Never pass the vault master key.
++// Returns 1 only once; rejects helpers, replacement and late configuration.
++// For any non-null exactly-32-byte input, copies when accepted and securely
++// zeros the caller-owned buffer before returning, including on rejection.
++// The caller owns this writable buffer and must never alias the master key.
++// The framework clears its staging copy once the provider constructs the
++// Chromium Encryptor::Key. Only Chromium's private Encryptor Mojo plumbing
++// may pass the DERIVED key to its network service; never to renderer/JS.
++// No key, callback, secret, or token is read from argv, env or the filesystem.
++CEF_EXPORT int cef_kestrel_vault_configure(uint8_t* browser_key,
++                                          size_t browser_key_size);
++
++#ifdef __cplusplus
++}
++#endif
++#endif  // CEF_INCLUDE_CEF_KESTREL_VAULT_H_
+diff --git a/libcef/browser/context.cc b/libcef/browser/context.cc
+index 53abc8dba..51bf1c95e 100644
+--- a/libcef/browser/context.cc
++++ b/libcef/browser/context.cc
+@@ -6,4 +6,5 @@
+
+ #include <memory>
++#include <string_view>
+
+ #include "base/files/file_util.h"
+@@ -23,4 +24,11 @@
+ #include "ui/base/ui_base_switches.h"
+
++#if BUILDFLAG(IS_MAC)
++#include "base/command_line.h"
++#include "cef/include/cef_kestrel_vault.h"
++#include "components/os_crypt/async/browser/kestrel_vault_key_provider.h"
++#include "crypto/secure_util.h"
++#endif
++
+ #if BUILDFLAG(IS_WIN)
+ #include "base/strings/utf_string_conversions.h"
+@@ -205,4 +213,35 @@ int CefExecuteProcess(const CefMainArgs& args,
+ }
+
++#if BUILDFLAG(IS_MAC)
++extern "C" CEF_EXPORT unsigned int cef_kestrel_vault_api_version(void) {
++  // Kestrel and its CEF wrapper use the release RefCountedBase layout. Refuse
++  // incompatible engine builds before the host opens a profile or sends a key.
++#if defined(NDEBUG) && !defined(DCHECK_ALWAYS_ON)
++  return CEF_KESTREL_VAULT_API_VERSION;
++#else
++  return 0;
++#endif
++}
++
++extern "C" CEF_EXPORT int cef_kestrel_vault_configure(uint8_t* browser_key,
++                                                     size_t browser_key_size) {
++  // Main-thread browser-process only. macOS hosts with a separate helper may
++  // not call CefExecuteProcess in the main executable before this API.
++  if (!browser_key || browser_key_size != 32u) {
++    return 0;
++  }
++  auto bytes = base::span<uint8_t>(browser_key, browser_key_size);
++  const bool browser_process =
++      !base::CommandLine::InitializedForCurrentProcess() ||
++      !base::CommandLine::ForCurrentProcess()->HasSwitch("type");
++  const bool configured = browser_process && !g_context &&
++      os_crypt_async::ConfigureKestrelVaultKey(bytes);
++  // Consume the caller's derived-key buffer on success AND rejection. Never
++  // accept a master secret here; it remains exclusively in the host vault.
++  crypto::SecureZeroBuffer(bytes);
++  return configured ? 1 : 0;
++}
++#endif  // BUILDFLAG(IS_MAC)
++
+ bool CefInitialize(const CefMainArgs& args,
+                    const CefSettings& settings,
+@@ -224,4 +263,20 @@ bool CefInitialize(const CefMainArgs& args,
+   }
+
++#if BUILDFLAG(IS_MAC)
++  // Kestrel-only framework: a stock/missing/unlocked-too-late provider must
++  // never open the profile or fall back to the system Keychain. This precedes
++  // CefContext::Initialize, cache-path normalization and Chromium startup.
++  bool secondary_process = false;
++  for (int i = 1; i < args.argc; ++i) {
++    const std::string_view arg(args.argv[i]);
++    secondary_process |= arg == "--type" || arg.starts_with("--type=");
++  }
++  if (secondary_process ||
++      !os_crypt_async::FreezeKestrelVaultConfiguration()) {
++    g_exit_code = 1;
++    return false;
++  }
++#endif
++
+   // Create the new global context object.
+   g_context = new CefContext();

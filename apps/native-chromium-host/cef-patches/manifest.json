@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "name": "kestrel-local-vault-cef",
+  "apiVersion": 1,
+  "abi": "hand-written exported C entry points; no generated CEF API struct changes",
+  "ciphertextPrefix": "v99",
+  "algorithm": "AES-256-GCM",
+  "minimumFreeBytes": 161061273600,
+  "compiledOrRuntimeVerified": false,
+  "pins": {
+    "cef": {
+      "commit": "cf671c072925b27823a61181152f4f288e8e4306",
+      "version": "156.0.15+gcf671c0+chromium-156.0.8078.80",
+      "repository": "https://github.com/chromiumembedded/cef"
+    },
+    "chromium": {
+      "commit": "fb096c0011f9d50f0a264a9376420cdea9c421e3",
+      "tag": "156.0.8078.80",
+      "repository": "https://chromium.googlesource.com/chromium/src"
+    }
+  },
+  "patches": [
+    {
+      "repository": "cef",
+      "file": "cef-kestrel-vault.patch",
+      "sha256": "2759791316808ce6d995421fe57ad31301ca2548e69de8572067fa22e37106c0",
+      "targets": [
+        "BUILD.gn",
+        "cef_paths2.gypi",
+        "include/cef_kestrel_vault.h",
+        "libcef/browser/context.cc"
+      ],
+      "upstreamFiles": [
+        {
+          "path": "BUILD.gn",
+          "sha256": "c98b9601692fb139c5bb5c77027fb5d7313f1ecde31530bdcf8b24ac2d11453d"
+        },
+        {
+          "path": "cef_paths2.gypi",
+          "sha256": "af0d0e4112a64e3419a4a9093ff6ca7ee1f93c943f6d7785352f0d968400e9e6"
+        },
+        {
+          "path": "libcef/browser/context.cc",
+          "sha256": "ffa17d1d1d2524a492c49fdff3e5703d0d3f480337b5e153d0ed955aa5e36c99"
+        }
+      ]
+    },
+    {
+      "repository": "chromium",
+      "file": "chromium-kestrel-vault.patch",
+      "sha256": "206ba986491546ccbdfc3de467fd7d3c43e99e75877963bb33939d9b82c82099",
+      "targets": [
+        "chrome/browser/browser_process_impl.cc",
+        "components/os_crypt/async/browser/BUILD.gn",
+        "components/os_crypt/async/browser/kestrel_vault_key_provider.cc",
+        "components/os_crypt/async/browser/kestrel_vault_key_provider.h"
+      ],
+      "upstreamFiles": [
+        {
+          "path": "chrome/browser/browser_process_impl.cc",
+          "sha256": "122592a2009ac44209f402762327c287d6ec2be39fabe9bc2e7497f023a58c7e"
+        },
+        {
+          "path": "components/os_crypt/async/browser/BUILD.gn",
+          "sha256": "754f8314492ebd25784459941db056d356222d3c3b5a81309338de066d6290d8"
+        }
+      ]
+    }
+  ]
+}

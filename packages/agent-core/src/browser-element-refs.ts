@@ -1,4 +1,4 @@
-export const ELEMENT_REF_PATTERN = /^e[1-9][0-9]{0,4}$/;
+export const ELEMENT_REF_PATTERN = /^e[1-9][0-9]{0,8}$/;
 
 const INTERACTIVE_ROLES = new Set([
 	"button",
@@ -176,11 +176,15 @@ export function isSensitiveBrowserInteractiveRef(
 export function annotateAccessibilityTree(
 	tree: unknown,
 	maxInteractive = 200,
+	options: { firstRef?: number; preserveExistingRefs?: boolean } = {},
 ): AnnotatedBrowserTree {
 	const cap = Number.isFinite(maxInteractive)
 		? Math.max(0, Math.trunc(maxInteractive))
 		: 200;
 	const interactive: BrowserInteractiveRef[] = [];
+	const firstRef = options.firstRef ?? 1;
+	if (!Number.isSafeInteger(firstRef) || firstRef < 1 || firstRef + cap > 1_000_000_000) throw new Error("Browser reference range is invalid.");
+	const assignedRefs = new Set<string>();
 	let truncated = false;
 
 	const assignRef = (
@@ -200,7 +204,11 @@ export function annotateAccessibilityTree(
 				? node.backendDOMNodeId
 				: undefined;
 		if (backendDOMNodeId === undefined) return node;
-		const ref = `e${interactive.length + 1}`;
+		const existing = options.preserveExistingRefs && typeof node.ref === "string" ? node.ref : undefined;
+		if (existing !== undefined && (!ELEMENT_REF_PATTERN.test(existing) || assignedRefs.has(existing))) throw new Error("Browser snapshot contains invalid or duplicate references.");
+		const ref = existing ?? `e${firstRef + interactive.length}`;
+		if (assignedRefs.has(ref)) throw new Error("Browser snapshot contains duplicate references.");
+		assignedRefs.add(ref);
 		const name = isSensitiveAccessibilityNode(node)
 			? REDACTED_SENSITIVE_FIELD_NAME
 			: axText(node.name);

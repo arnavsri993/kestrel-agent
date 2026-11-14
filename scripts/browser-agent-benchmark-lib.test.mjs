@@ -16,7 +16,7 @@ import {
 
 describe("browser-agent benchmark corpus", () => {
 	it("pins the versioned 50-workflow corpus and category distribution", () => {
-		expect(BROWSER_AGENT_BENCHMARK_CORPUS_VERSION).toBe("1.1.0");
+		expect(BROWSER_AGENT_BENCHMARK_CORPUS_VERSION).toBe("1.1.1");
 		expect(validateBenchmarkCorpus(BROWSER_AGENT_BENCHMARK_CORPUS)).toEqual([]);
 		expect(BROWSER_AGENT_BENCHMARK_CORPUS).toHaveLength(50);
 		expect(
@@ -43,7 +43,7 @@ describe("browser-agent benchmark corpus", () => {
 
 	it("uses a stable canonical corpus hash", () => {
 		expect(corpusSha256(BROWSER_AGENT_BENCHMARK_CORPUS)).toBe(
-			"aadf606b16d190f4647148b19171cd3b90519bdee46acc40b87d2e872bfbf141",
+			"ba3a185c4d4aad122b0e4ee2c0bcf5804dd7ddc437f18e5049545987b7e7dc60",
 		);
 		expect(corpusSha256([{ b: 2, a: 1 }])).toBe(
 			corpusSha256([{ a: 1, b: 2 }]),

@@ -18,6 +18,13 @@ The corpus is defined in
 version and a canonical SHA-256 so results from a changed corpus are not
 silently compared with earlier runs.
 
+Corpus 1.1.1 requires a fresh observation of the authenticated account page
+before session-continuity and logout workflows navigate onward. The fixture's
+login handler awaits its state-write response before setting the cookie and
+redirecting. Sending the next navigation immediately after the click could
+race that unfinished handler. The observation verifies the login handoff;
+the existing billing, logout and independent state predicates remain enforced.
+
 ## What this track measures
 
 The runner launches the real Kestrel Electron application and invokes the

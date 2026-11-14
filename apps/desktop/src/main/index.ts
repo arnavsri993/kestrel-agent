@@ -22,6 +22,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  MenuItem,
   nativeImage,
   Notification,
   screen,
@@ -57,8 +58,10 @@ import {
   type WorkspaceSnapshot,
 } from "@kestrel/shared-types";
 import { CoreSupervisor } from "./core-supervisor";
-import { desktopCoreProcess } from "./electron-core-process";
+import { desktopCoreProcess, packagedAgentCoreSidecar } from "./electron-core-process";
+import { NativeProfileExportHost } from "./native-profile-export-host";
 import { CredentialBroker } from "./credential-broker";
+import { createElectronSecretProtection } from "./electron-secret-protection";
 import {
   BrokerCredentialStore,
   MacOSKeychainCredentialStore,
@@ -192,6 +195,8 @@ let quitting = false;
 let shutdownComplete = false;
 let shutdownPromise: Promise<void> | null = null;
 let coreStartupComplete = false;
+let nativeProfileExportInstance: NativeProfileExportHost | undefined;
+let activeSourceTransferRequests = 0;
 let startupRecoveryWindowCreated = false;
 let agentState: AgentState = "idle";
 const activeAgentStreams = new Set<string>();
@@ -600,6 +605,98 @@ const isPackagedKestrelApp = isPackagedKestrelRuntime(
 	process.env.NODE_ENV_ELECTRON_VITE,
 );
 const execFileAsync = promisify(execFile);
+const SOURCE_EXPORT_MENU_ID = "kestrel-prepare-chromium-transfer";
+
+function canPrepareChromiumTransfer(): boolean {
+	return isPackagedKestrelApp && process.platform === "darwin" && process.arch === "arm64" && coreStartupComplete && supervisor.isReady &&
+		!nativeProfileExportInstance?.busy && !nativeProfileExportInstance?.restartRequired && activeSourceTransferRequests === 0 &&
+		activeAgentStreams.size === 0 && ["idle", "paused"].includes(agentState);
+}
+
+function installSourceExportMenu(): void {
+	if (process.platform !== "darwin") return;
+	let menu = Menu.getApplicationMenu();
+	if (!menu) {
+		menu = Menu.buildFromTemplate([{ role: "appMenu" }, { role: "fileMenu" }, { role: "editMenu" }, { role: "viewMenu" }, { role: "windowMenu" }]);
+		Menu.setApplicationMenu(menu);
+	}
+	const appMenu = menu.items[0]?.submenu;
+	if (!appMenu || menu.getMenuItemById(SOURCE_EXPORT_MENU_ID)) return;
+	const beforeQuit = appMenu.items.findIndex(item => item.role === "quit");
+	appMenu.insert(beforeQuit < 0 ? appMenu.items.length : beforeQuit, new MenuItem({ id: SOURCE_EXPORT_MENU_ID, label: "Prepare Chromium Data Transfer…", enabled: canPrepareChromiumTransfer(), click: () => { void prepareChromiumProfileTransfer(); } }));
+	Menu.setApplicationMenu(menu);
+}
+
+function sourceProfileExporter(): NativeProfileExportHost {
+	if (nativeProfileExportInstance) return nativeProfileExportInstance;
+	if (!isPackagedKestrelApp || process.platform !== "darwin" || process.arch !== "arm64")
+		throw new Error("Prepare a Chromium transfer from the packaged Apple Silicon Kestrel app.");
+	const sidecar = packagedAgentCoreSidecar();
+	nativeProfileExportInstance = new NativeProfileExportHost({
+		sourceRoot: app.getPath("userData"), broker: credentialBroker(), core: supervisor,
+		workerExecutable: sidecar.executable,
+		workerEntry: join(dirname(sidecar.entryPath), "host-profile-project-transfer.js"),
+		vaultProvisioner: join(dirname(process.execPath), "Kestrel Vault Provisioner"),
+		isBusy: () => activeSourceTransferRequests > 0 || activeAgentStreams.size > 0 || deliveringExternalIntakes || !["idle", "paused"].includes(agentState),
+		shouldRestoreCore: () => !quitting,
+		changed: () => {
+			updateTray();
+			if (nativeProfileExportInstance?.busy || nativeProfileExportInstance?.restartRequired) providerAuthMonitor.stop();
+			else if (!quitting && supervisor.isReady) { providerAuthMonitor.start(); void deliverPendingExternalIntakes(); }
+		},
+		chooseParent: async signal => {
+			if (signal.aborted) return null;
+			const options: Electron.OpenDialogOptions = { title: "Choose a Chromium transfer destination", buttonLabel: "Use Folder",
+				message: "Kestrel will create a private encrypted transfer folder here. Keep it at its original location on this Mac; it cannot unlock on another Mac. Your original Kestrel data stays available.",
+				properties: ["openDirectory", "createDirectory"] };
+			const selected = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+			return signal.aborted || selected.canceled ? null : selected.filePaths[0] ?? null;
+		},
+		approve: async (preview, signal) => {
+			const lines = [
+				`Conversations: ${preview.counts.runtime_sessions ?? 0}`,
+				`Messages: ${preview.counts.runtime_messages ?? 0}`,
+				`Memory records: ${preview.counts.memories ?? 0}`,
+				`Timeline entries: ${preview.counts.memory_timeline_events ?? 0}`,
+				`Project details: ${preview.projects} (${preview.instructions} with instructions)`,
+				`In-flight runs to retire in the copy: ${preview.excluded.activeAgentRunsCancelled ?? 0}`,
+				`Unexecuted approvals to clear in the copy: ${preview.excluded.unexecutedApprovalsRetired ?? 0}`,
+				`Scheduled jobs to disable in the copy: ${preview.excluded.scheduledJobsCancelled ?? 0}`,
+				"", "Agent Core is stopped during this review. Your original profile remains selected.",
+				"", "This prepares conversations, memory, task history and supported project details. In-flight actions and approvals will not resume in the copy. Browser data and saved credentials are excluded. Review settings and reconnect providers and project folders in native Kestrel.",
+				"", "The encrypted copy only unlocks at its original location on this Mac. This does not switch the current profile or replace the installed app.",
+			];
+			const options: Electron.MessageBoxOptions = { type: "question", title: "Review Chromium transfer", message: "Prepare this encrypted transfer?", detail: lines.join("\n"), buttons: ["Prepare Transfer", "Cancel"], defaultId: 1, cancelId: 1, noLink: true, signal };
+			const result = mainWindow ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
+			return !signal.aborted && result.response === 0;
+		},
+	});
+	return nativeProfileExportInstance;
+}
+
+async function prepareChromiumProfileTransfer(): Promise<void> {
+	try {
+		const result = await sourceProfileExporter().execute();
+		if (quitting || (result.state === "cancelled" && !result.outputFolder)) return;
+		const folder = result.outputFolder;
+		const options: Electron.MessageBoxOptions = { type: "info", title: result.state === "prepared" ? "Chromium transfer prepared" : "Transfer cancelled",
+			message: result.state === "prepared" ? "The encrypted copy was verified." : "No conversations or memory were copied.",
+			detail: result.state === "prepared"
+				? `Your original Kestrel profile is still available. In native Kestrel, choose Transfer Conversations & Memory and select:\n\n${result.profile}\n\nKeep this copy at its original location on this Mac. New work in the original profile after this snapshot is not included.`
+				: `Your original profile is still available. The private staging folder was preserved for review:\n\n${folder}`,
+			buttons: ["OK", "Show Folder"], defaultId: 0, cancelId: 0, noLink: true };
+		const answer = mainWindow ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
+		if (answer.response === 1 && folder) shell.showItemInFolder(folder);
+	} catch {
+		if (quitting) return;
+		const folder = nativeProfileExportInstance?.outputFolder;
+		const options: Electron.MessageBoxOptions = { type: "warning", title: "Chromium transfer not prepared", message: "Your original profile remains available.",
+			detail: `${nativeProfileExportInstance?.restartRequired ? "Restart Kestrel before running another task. " : "Finish or cancel active work, and use an already-unlocked profile. "}No new key unlock is requested by this transfer.${folder ? `\n\nPreserve this generated folder for review:\n${folder}` : ""}`,
+			buttons: folder ? ["OK", "Show Folder"] : ["OK"], defaultId: 0, cancelId: 0, noLink: true };
+		const answer = mainWindow ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
+		if (answer.response === 1 && folder) shell.showItemInFolder(folder);
+	}
+}
 
 function computerUseManager(): ComputerUseManager {
 	return (computerUseManagerInstance ??= new ComputerUseManager(
@@ -942,7 +1039,7 @@ function localRuntimeManager(): LocalRuntimeManager {
 }
 
 function credentialBroker(): CredentialBroker {
-	appCredentialBroker ??= new CredentialBroker(app.getPath("userData"));
+	appCredentialBroker ??= new CredentialBroker(app.getPath("userData"), createElectronSecretProtection());
 	return appCredentialBroker;
 }
 
@@ -1697,7 +1794,7 @@ function queueExternalIntake(
 }
 
 async function deliverPendingExternalIntakes(): Promise<void> {
-	if (deliveringExternalIntakes) return;
+	if (deliveringExternalIntakes || nativeProfileExportInstance?.busy || nativeProfileExportInstance?.restartRequired) return;
 	deliveringExternalIntakes = true;
 	try {
 		while (pendingExternalIntakes.length > 0) {
@@ -2360,6 +2457,8 @@ function setAgentState(next: AgentState): void {
 }
 
 function updateTray(): void {
+	const sourceExportItem = Menu.getApplicationMenu()?.getMenuItemById(SOURCE_EXPORT_MENU_ID);
+	if (sourceExportItem) sourceExportItem.enabled = canPrepareChromiumTransfer();
 	const visual = visualStateForAgentState(agentState);
 	if (!tray) {
 		tray = new Tray(trayIcon());
@@ -2372,7 +2471,7 @@ function updateTray(): void {
 	tray.setToolTip(`${PRODUCT_IDENTITY.productName} · ${agentState.replace("_", " ")}`);
 	const isWorking = activeAgentStreams.size > 0 || ["working", "observing", "updating"].includes(agentState);
 	const isWaiting = agentState === "waiting_approval";
-	const statusLabel = isWorking
+	const statusLabel = nativeProfileExportInstance?.busy ? "Preparing Chromium transfer" : isWorking
 		? `Working${activeAgentTaskLabel ? ` · ${activeAgentTaskLabel}` : ""}`
 		: isWaiting
 			? "Needs your approval"
@@ -2412,6 +2511,7 @@ function updateTray(): void {
 				: []),
 			{
 				label: agentState === "paused" ? "Resume agent" : "Pause agent",
+				enabled: !nativeProfileExportInstance?.busy && !nativeProfileExportInstance?.restartRequired,
 				click: async () => {
 					const response = await supervisor.request({
 						type: "set-paused",
@@ -2423,6 +2523,11 @@ function updateTray(): void {
 						mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
 					}
 				},
+			},
+			{
+				label: "Prepare Chromium Data Transfer…",
+				enabled: canPrepareChromiumTransfer(),
+				click: () => { void prepareChromiumProfileTransfer(); },
 			},
 			...recentItems,
 			{ type: "separator" },
@@ -2450,6 +2555,8 @@ function broadcastPetStatus(
 async function initializeCore(
   resolvedExternal?: ResolvedExternalCredentials,
 ): Promise<void> {
+	if (nativeProfileExportInstance?.busy || nativeProfileExportInstance?.restartRequired)
+		throw new Error("Finish the Chromium transfer before changing the Core configuration.");
   const userData = app.getPath("userData");
   const broker = credentialBroker();
   const key = await broker.getDatabaseKey();
@@ -2734,6 +2841,10 @@ function registerIpc(): void {
     )
       throw new Error("Kestrel rejected a request from an untrusted renderer.");
     const request = RendererRequestSchema.parse(raw);
+		if (nativeProfileExportInstance?.busy || nativeProfileExportInstance?.restartRequired)
+			throw new Error(nativeProfileExportInstance.restartRequired ? "Restart Kestrel before running another task." : "An encrypted Chromium transfer is being prepared. Finish or cancel its native review first.");
+		activeSourceTransferRequests += 1;
+		try {
     if (
       isCalculatorOverlayWindow &&
       request.type !== "browser-close-calculator"
@@ -4903,6 +5014,7 @@ function registerIpc(): void {
 		)
 			finishMacWidgetRun(response);
     return response;
+		} finally { activeSourceTransferRequests -= 1; }
   });
 }
 
@@ -5030,6 +5142,7 @@ async function cancelActiveOAuthFlows(): Promise<void> {
 
 async function performAppShutdown(): Promise<void> {
   providerAuthMonitor.stop();
+  await nativeProfileExportInstance?.close().catch(() => undefined);
   await cancelActiveOAuthFlows();
   await Promise.all([
     supervisor.stop().catch(() => undefined),
@@ -5100,6 +5213,7 @@ void app
       return;
     }
     coreStartupComplete = true;
+		installSourceExportMenu();
     if (
       startupRecoveryWindowCreated &&
       mainWindow &&

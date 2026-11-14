@@ -1,12 +1,16 @@
 export * from "./configuration";
 export * from "./communication";
+export * from "./native-login-code";
 export * from "./chrome-web-store";
+export * from "./native-browser-settings";
+export * from "./native-request-frame";
 export * from "./extension-compatibility";
 export * from "./contracts";
 export * from "./browser-tab-organization";
 export * from "./identity";
 export * from "./memory-capture";
 export * from "./memory-architecture";
+export * from "./capture-pattern";
 export * from "./memory-workspace";
 export * from "./memory-recovery";
 export * from "./memory-recall-receipt";
@@ -18,3 +22,7 @@ export * from "./agent-templates";
 export * from "./resource-access";
 
 export * from "./source-observations";
+export * from "./renderer-bridge";
+export * from "./request-timeouts";
+export * from "./ollama-locality";
+export * from "./native-embedding-recovery";

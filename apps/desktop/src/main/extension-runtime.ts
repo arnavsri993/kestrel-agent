@@ -27,6 +27,8 @@ export interface ExtensionRuntime {
 		options: { allowFileAccess: boolean },
 	): Promise<ExtensionRuntimeLoadResult>;
 	removeExtension(id: string): void | Promise<void>;
+	/** Remove the installation and its runtime-owned data, when supported. */
+	uninstallExtension?(id: string): void | Promise<void>;
 	getExtension(id: string): ExtensionRuntimeExtension | null;
 	startServiceWorker(extensionId: string): Promise<void>;
 }

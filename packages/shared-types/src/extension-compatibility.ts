@@ -29,6 +29,11 @@ export type ExtensionCompatibilityState = z.infer<
 
 export const ExtensionCompatibilityEvidenceSchema = z.enum([
 	"electron_documented",
+	/**
+	 * Reserved for Chromium/CEF adapter evidence. Existing Electron-era reports
+	 * must keep their original evidence values; do not rewrite them in place.
+	 */
+	"chromium_documented",
 	"manifest",
 	"static_analysis",
 	"runtime",

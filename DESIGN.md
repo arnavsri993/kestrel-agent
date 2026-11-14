@@ -1,3 +1,63 @@
+# Native vault recovery guidance — November 12, 2026
+
+Tiny copy correction in the existing React recovery panel and native macOS
+dialogs. Keep system typography, layout, native buttons, accessible names,
+keyboard focus and reduced-motion behavior. Add no new controls or effects.
+
+- State that existing encrypted data is preserved, retry on this Mac, and keep
+  the original profile and local vault. Do not direct people to Keychain prompts.
+- Explain that a data backup cannot recover a missing vault or unlock the data
+  on another Mac; copying encrypted files is not a portable recovery promise.
+- Verify the real native package and updated backup disclosure. Build/typecheck
+  results alone do not prove the canonical app or a successful recovery.
+
+# App page interaction during route transitions — November 5, 2026
+
+Motion refinement for the existing dense macOS application, visual intensity 1.
+The active Kestrel page must stay interactive when a route transition reverses;
+input authority follows current presence, independently of visual interpolation.
+Preserve existing system typography, graphite/light roles, 4px rhythm, surfaces,
+layout, focus indicators and copy. No new library, assets or decorative effects.
+
+- State continuity: retain the existing short opacity/3px page transition.
+  Reduced motion retains the existing immediate visual state without transforms.
+- Feedback: existing native controls and focus behavior. No focal motion role.
+- Exiting pages cannot receive pointer or keyboard input; returning active pages
+  regain it immediately, including rapid same-key re-entry and reduced motion.
+- Keep interaction state out of animation completion or duration-based timers.
+- Verify real headless pointer hit tests, repeated/reversed route changes, focus,
+  exiting-page semantics, narrow layout and reduced motion. Full app/CI evidence
+  remains separate from an isolated harness and canonical installed-app proof.
+- Why this is not generic: the change preserves Kestrel's existing visual system
+  and repairs its observed Work/Command Center route ownership failure.
+
+# Native browser settings and window ownership — October 30, 2026
+
+Existing product integration, with frequent use and a high consequence for
+misleading preference or profile state. Preserve Kestrel's actual Home,
+Settings, sidebar and agent conversation in Chromium's window. The frontend
+classifier's landing-page suggestion does not fit this runtime migration.
+
+- Keep existing system type, graphite/light theme tokens, 4px rhythm, existing
+  section headings, dividers, buttons, focus indicators and reduced motion.
+  Browser and Agent remain distinct Settings scopes. Add no fonts or imagery.
+- Home background, shortcuts and widgets belong to Kestrel. Chromium owns its
+  browser preferences: category actions open the actual browser settings tab
+  in the same window with Kestrel's companion. Compatibility defaults must
+  never appear as measured Chromium preference values.
+- Each Home/Settings document retains its own route and draft. The companion
+  and Core tools follow the actual active browser tab. Duplicate Settings
+  documents are valid and must never be identified by URL matching alone.
+- Narrow windows start with a compact rail when no preference is saved. The
+  Expand sidebar control reveals Projects and chats at every window width;
+  its visual and accessibility states must agree.
+- Verify real native routes, keyboard controls, image upload/removal, actual
+  search-provider changes, independent documents, narrow expansion, restart,
+  external links, window ownership and clean shutdown on an owned candidate.
+  Source/build evidence never substitutes for canonical installation evidence.
+- Why this is not generic: settings follow Kestrel's real preference owners,
+  project navigation and same-window agent workflow, using its existing UI.
+
 # Memory workspace — September 16, 2026
 
 Thesis: a calm, editable account of what Kestrel knows, organized around the

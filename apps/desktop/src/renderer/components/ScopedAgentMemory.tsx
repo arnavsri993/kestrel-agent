@@ -35,7 +35,7 @@ export function ScopedAgentMemory({ sessionId }: { sessionId: string }) {
 	}
 	const matches = (text: string) => text.toLocaleLowerCase().includes(query.toLocaleLowerCase());
 	return <section className="life-page scoped-agent-memory" aria-label="Scoped agent memory">
-		<header className="page-header"><h1>{data ? `${data.identity.name} memory` : "Agent memory"}</h1></header>
+		<header className="page-header"><h2>{data ? `${data.identity.name} knowledge` : "Agent knowledge"}</h2></header>
 		<MemoryRecovery key={sessionId} sessionId={sessionId} onRestored={() => setRevision(value => value + 1)} />
 		<label className="scoped-memory-search">Search this scope<input type="search" value={query} onChange={event => setQuery(event.target.value)} /></label>
 		<nav className="life-switcher" aria-label="Agent memory views">
