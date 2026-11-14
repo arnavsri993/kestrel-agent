@@ -139,6 +139,7 @@ export class CoreSupervisor extends EventEmitter {
 	private recoveryFailureEmitted = false;
 	private browserCleanup: Promise<void> = Promise.resolve();
 	private stoppingOperation: Promise<CoreStopOutcome> | undefined;
+	private stoppedCleanly = false;
 	private expediteStop: (() => void) | undefined;
 	private readonly startupFailures = new WeakMap<CoreProcess, Error>();
 	private startup:
@@ -185,6 +186,7 @@ export class CoreSupervisor extends EventEmitter {
 		if (this.child || this.stoppingOperation)
 			throw new Error("Agent Core is already running or still stopping.");
 		validateBootstrapPendingProjects(config.pendingProjectIds === undefined ? [] : config.pendingProjectIds, config.projects === undefined ? [] : config.projects);
+		this.stoppedCleanly = false;
 		this.stopping = false;
 		this.clearRecoveryTimers();
 		this.restartAttempts = 0;
@@ -254,6 +256,17 @@ export class CoreSupervisor extends EventEmitter {
 	get isReady(): boolean { return this.ready && !!this.child && !this.stopping; }
 	get hasProcess(): boolean { return !!this.child; }
 
+	/** Host maintenance may restore only a cleanly stopped, already bootstrapped
+	 * route. Keep protected configuration inside the supervisor: no credential
+	 * rediscovery, key loading or caller-supplied replacement configuration. */
+	async resumeLastConfiguration(): Promise<void> {
+		if (!this.stoppedCleanly || this.child || this.stoppingOperation || !this.lastSuccessfulConfig)
+			throw new Error("Agent Core must have completed a clean maintenance stop before resuming.");
+		const config = this.lastSuccessfulConfig;
+		this.stoppedCleanly = false;
+		await this.start(config);
+	}
+
 	async stop(options: { requireCleanExit?: boolean; gracefulTimeoutMs?: number } = {}): Promise<void> {
 		if (!this.stoppingOperation) {
 			const operation = this.stopOwnedProcess(boundedTimer(options.gracefulTimeoutMs, 2_000, 1));
@@ -269,6 +282,7 @@ export class CoreSupervisor extends EventEmitter {
 		// same owned stop rather than launching another shutdown or detaching it.
 		if (options.gracefulTimeoutMs === 0) this.expediteStop?.();
 		const outcome = await this.stoppingOperation;
+		this.stoppedCleanly = outcome.cleanExit;
 		if (options.requireCleanExit && !outcome.cleanExit) throw new CoreStopError(true);
 	}
 

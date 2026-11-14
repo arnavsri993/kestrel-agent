@@ -25,6 +25,12 @@ exports.default = async function architectureAudit(context) {
 		typeof configuredIdentity === "string"
 			? configuredIdentity
 			: process.env.KESTREL_MACOS_WIDGETS_IDENTITY || process.env.CSC_NAME || "-";
+	// electron-builder's Arch.arm64 is 3; use the target, not the build Mac.
+	if (context.arch === 3 || (context.arch === undefined && (process.env.npm_config_arch || process.arch) === "arm64")) {
+		const { pathToFileURL } = require("node:url");
+		const { buildNativeVaultTools } = await import(pathToFileURL(join(__dirname, "../../../scripts/build-native-vault-tools.mjs")).href);
+		await buildNativeVaultTools({ macos: join(appPath, "Contents/MacOS"), identity });
+	}
 	execFileSync(
 		process.execPath,
 		[

@@ -365,6 +365,7 @@ export class CredentialBroker {
 	private readonly credentialRoot: string;
 	private readonly protection: Promise<SecretProtection>;
 	private databaseKey: Promise<Buffer> | undefined;
+	private resolvedDatabaseKey: Buffer | undefined;
 	private readonly hostKeyProvider: (() => Promise<Buffer>) | undefined;
 	private readonly credentialCache = new Map<
 		BrokeredCredentialId,
@@ -390,11 +391,30 @@ export class CredentialBroker {
 
 	async getDatabaseKey(): Promise<Buffer> {
 		this.databaseKey ??= this.hostKeyProvider ? this.loadHostDatabaseKey(this.hostKeyProvider) : this.loadDatabaseKey();
+		const pending = this.databaseKey;
 		try {
-			return await this.databaseKey;
+			const key = await pending;
+			if (this.databaseKey === pending) this.resolvedDatabaseKey = key;
+			return key;
 		} catch (error) {
-			this.databaseKey = undefined;
+			if (this.databaseKey === pending) {
+				this.databaseKey = undefined;
+				this.resolvedDatabaseKey = undefined;
+			}
 			throw error;
+		}
+	}
+
+	/** Borrow a wipe-on-return copy only after this broker has already unlocked its key. */
+	async withCachedDatabaseKey<T>(operation: (key: Buffer) => T | PromiseLike<T>): Promise<T> {
+		const cached = this.resolvedDatabaseKey;
+		if (!cached)
+			throw new SecureStorageError("The protected database key must already be unlocked before it can be borrowed.");
+		const borrowed = Buffer.from(cached);
+		try {
+			return await operation(borrowed);
+		} finally {
+			borrowed.fill(0);
 		}
 	}
 

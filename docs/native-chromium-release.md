@@ -7,6 +7,47 @@ from a private first-party MV3 extension. The agent companion uses Chromium's
 side panel. There is no AppKit window reparenting, clipped duplicate shell, or
 Electron process in this path.
 
+## Cached source-host export, 2026-11-14
+
+An updated packaged Apple Silicon source host exposes **Kestrel → Prepare
+Chromium Data Transfer…**, also available from its tray. This operation borrows
+only an already-resolved broker key; a cold or in-flight unlock is refused
+before a picker opens. It never requests another source unlock, reads a
+Keychain password item, or writes the source key to disk. It cannot add this
+interface to an older running binary; updating/restarting that older source and
+unlocking its existing protected profile remains a separate boundary.
+
+The host fences new work, requires a clean Core stop, creates a separate private
+destination, and displays bounded counts before copying. A signed one-shot
+helper creates a fresh Secure Enclave vault at its final path. Only its private
+inherited socket carries the new derived key. Existing roots are refused; the
+helper cannot unwrap a chosen existing vault. The packaged transfer worker
+authenticates the source, approved plan, destination and project handoff before
+publishing the native profile descriptor and ownership lock. The source then
+resumes using its retained supervisor configuration. An uncertain worker exit
+keeps it stopped and requires restart. Quit cancels preparation without resuming
+Core.
+
+This copies supported conversations, memory, task history and project details.
+Credentials and browser data are excluded, and imported project paths remain
+pending reconnection rather than becoming folder grants. The copy is bound to
+its original path on this Mac. Preparing it neither selects a profile nor
+replaces the installed app; native transfer/selection is a separate action.
+
+The focused supervisor, broker, host, worker, client and native protocol suites
+pass **87 tests**. `scripts/smoke-native-source-export.mjs` also passed all six
+phases using an actual live packaged Core, cached runtime-only generated source
+key, signed production Secure Enclave provisioner and packaged transfer worker.
+Chooser and consent replies were simulated in this canary. The source resumed
+after preview cancellation and successful export, original messages were read
+back, no additional provider/protection call occurred, and no file-backed key
+was created. The receipt is `.tmp/native-source-export-final/receipt.json`,
+bound before/after to native bundle
+`45bfbaacf3e6bbefb672ed109aaa141cc8daf290168d78979152c94e1b28b39c`.
+This is generated-profile protocol evidence; source native-dialog acceptance,
+real protected-profile migration, signing/notarization and canonical cutover
+are separate outstanding checks.
+
 ## Current checkpoint — custom Chromium and production vault, 2026-11-12
 
 The user retired the Keychain route because its repeated permission prompt was

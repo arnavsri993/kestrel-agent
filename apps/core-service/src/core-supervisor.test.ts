@@ -61,6 +61,29 @@ afterEach(() => {
 });
 
 describe("CoreSupervisor recovery", () => {
+	it("restores only its retained protected configuration after a clean maintenance stop", async () => {
+		const children: FakeCoreProcess[] = [];
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: () => { const child = new FakeCoreProcess(); children.push(child); return child; } });
+		await expect(supervisor.resumeLastConfiguration()).rejects.toThrow("clean maintenance stop");
+		expect(children).toHaveLength(0);
+		const original = { ...config, workspaceRoots: ["/tmp/selected"], secureEnvironment: { OPENAI_API_KEY: "retained-fixture-value" }, hostToolNames: ["browser.visible-tabs"] };
+		const started = supervisor.start(original); children[0]!.ready(); await started;
+		await expect(supervisor.resumeLastConfiguration()).rejects.toThrow("clean maintenance stop");
+		children[0]!.exitOnShutdown = true; await supervisor.stop({ requireCleanExit: true });
+		original.secureEnvironment.OPENAI_API_KEY = "later-caller-value"; original.workspaceRoots.push("/tmp/unreviewed"); original.hostToolNames.push("unreviewed-tool");
+		const resumed = supervisor.resumeLastConfiguration();
+		expect(children).toHaveLength(2);
+		expect(children[1]!.messages[0]).toMatchObject({ type: "bootstrap", config: { workspaceRoots: ["/tmp/selected"], secureEnvironment: { OPENAI_API_KEY: "retained-fixture-value" }, hostToolNames: ["browser.visible-tabs"] } });
+		await expect(supervisor.resumeLastConfiguration()).rejects.toThrow("clean maintenance stop");
+		children[1]!.ready(); await resumed; children[1]!.exitOnShutdown = true; await supervisor.stop();
+	});
+	it("does not resume a forced or unconfirmed maintenance stop", async () => {
+		vi.useFakeTimers(); const child = new FakeCoreProcess(); const factory = vi.fn(() => child);
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: factory });
+		const started = supervisor.start(config); child.ready(); await started;
+		const stopped = supervisor.stop(); await vi.advanceTimersByTimeAsync(2500); await stopped;
+		await expect(supervisor.resumeLastConfiguration()).rejects.toThrow("clean maintenance stop"); expect(factory).toHaveBeenCalledTimes(1);
+	});
 	it("rejects raw invalid pending metadata without spawning a child", async () => {
 		const spawn = vi.fn(() => new FakeCoreProcess());
 		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: spawn });

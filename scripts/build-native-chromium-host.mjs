@@ -10,6 +10,7 @@ import { buildNativeChromiumRenderer } from "./build-native-chromium-renderer.mj
 import { buildNativeExtensionService } from "./build-native-extension-service.mjs";
 import { buildNativeUi } from "./build-native-ui.mjs";
 import { compileNativeLocalVaultCrypto, nativeLocalVaultLinkFlags } from "./build-native-local-vault.mjs";
+import { buildNativeVaultTools } from "./build-native-vault-tools.mjs";
 import { validateNativeVaultCefRuntime } from "./native-vault-cef-runtime.mjs";
 import { sealPackagedVaultRecord } from "./native-vault-bundle-record.mjs";
 import { selectNativeVaultRuntime } from "./native-vault-runtime-selection.mjs";
@@ -247,11 +248,7 @@ export async function buildNativeChromiumHost({ output, vaultCefRuntime } = {}) 
 		];
 		const vaultCrypto = compileNativeLocalVaultCrypto(join(staging, "local-vault-crypto.o"));
 		const vaultLinkFlags = nativeLocalVaultLinkFlags();
-		run(compiler, ["-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-arch", "arm64", "-mmacosx-version-min=13.0", "-isysroot", sdkPath,
-			join(nativeHostRoot, "src", "kestrel_local_vault_crypto_helper.cc"), vaultCrypto,
-			...vaultLinkFlags, "-o", join(paths.app, "Contents/MacOS/Kestrel Vault")]);
-		run("/usr/bin/codesign", ["--force", "--sign", signingIdentity, "--options", "runtime",
-			join(paths.app, "Contents/MacOS/Kestrel Vault")]);
+		await buildNativeVaultTools({ macos: join(paths.app, "Contents/MacOS"), cryptoObject: vaultCrypto, identity: signingIdentity });
 		run(compiler, [
 			...compileFlags,
 			"-F",
