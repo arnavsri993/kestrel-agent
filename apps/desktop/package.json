@@ -2,6 +2,7 @@
   "name": "@kestrel/desktop",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@11.15.1",
   "type": "module",
   "description": "A local-first personal agent with visible approvals and verified actions.",
   "author": "Kestrel contributors",

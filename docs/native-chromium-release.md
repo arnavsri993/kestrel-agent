@@ -49,9 +49,44 @@ back, no additional provider/protection call occurred, and no file-backed key
 was created. The receipt is `.tmp/native-source-export-final/receipt.json`,
 bound before/after to native bundle
 `45bfbaacf3e6bbefb672ed109aaa141cc8daf290168d78979152c94e1b28b39c`.
-This is generated-profile protocol evidence; source native-dialog acceptance,
-real protected-profile migration, signing/notarization and canonical cutover
-are separate outstanding checks.
+This is generated-profile protocol evidence. Native-dialog acceptance on a
+separate updated source package is recorded below; real protected-profile
+migration, signing/notarization and canonical cutover remain outstanding.
+
+### Packaged source dialogs and dependency collection, 2026-11-15
+
+Launching the source package's actual window exposed a missing ARM64 Sharp
+optional dependency. The earlier protocol canary used the separately packaged
+Core and did not establish source-window startup. The standalone builder had
+selected npm for the desktop package; pinning its `packageManager` to the
+workspace's `pnpm@11.15.1` makes the collector include the platform package and
+native module. The rebuilt ASAR contains both, and the normal packaged window
+and Core start successfully.
+
+The export items now refresh after the last IPC request or external intake
+finishes and when their menus open. External-intake delivery also participates
+in the availability check; the export host still independently checks admission.
+The initial disabled menu observed in the generated fixture was correct: that
+agent was waiting for approval. The test explicitly paused it through the
+first-party request API before exercising the available export action.
+
+The actual native application menu, folder chooser and count review passed all
+five phases in `.tmp/native-source-export-menu-fixed-ui/receipt.json`, bound to
+unchanged source bundle
+`ad3b2501c697b052ec625e4710148d18d15dee1b8ae18a64c30f512c6f576a9d`:
+packaged startup with a generated conversation; chooser cancellation without
+output; count-review cancellation with source readback and no published native
+profile; consented production-vault export with original source readback; and
+Quit from the application menu while the chooser remained open. Quit returned
+exit 0, left no late output folder and stopped every owned bundle process.
+Keyboard Quit attempts did not produce that exit and are not counted as proof.
+
+The source uses explicit test-only protection in a private generated profile;
+the destination uses the signed production Secure Enclave provisioner. No real
+source unlock, native destination selection, installed-app refresh or canonical
+cutover is claimed. The original startup-failure receipts remain preserved.
+Desktop Node typechecking, 34 focused host/worker/client tests, the desktop
+build, packaging and the migration/preload/file-icon guards passed.
 
 ## Managed local Core acceptance, 2026-11-15
 
@@ -89,6 +124,19 @@ KESTREL_NATIVE_TEST_APP=/absolute/path/to/disposable/Kestrel.app \
 KESTREL_NATIVE_MANAGED_CORE_EVIDENCE=/absolute/path/to/fresh/evidence \
   node scripts/smoke-native-managed-core.mjs
 ```
+
+## Unlocked native browser acceptance, 2026-11-15
+
+The same custom-engine bundle `45bfbaac…` passed all **16** modern-browser
+phases with production-vault fixture storage after the desktop was unlocked.
+This includes actual Home/Settings, Core tab tools and approvals, private-field
+isolation, isolated browsing/downloads, Core crash recovery, durable readback
+and three clean exit-0 stops. The complete bundle hash matches before/after.
+Receipt: `.tmp/native-source-export-modern-browser-unlocked/receipt.json`.
+The earlier eight-phase locked-desktop failure remains unchanged in
+`.tmp/native-source-export-modern-browser/receipt.json`. This run did not
+request the Chrome Web Store flow and does not establish Store upgrade parity,
+real-profile migration or installed-app acceptance.
 
 ## Current checkpoint — custom Chromium and production vault, 2026-11-12
 

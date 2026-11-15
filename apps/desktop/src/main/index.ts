@@ -606,11 +606,19 @@ const isPackagedKestrelApp = isPackagedKestrelRuntime(
 );
 const execFileAsync = promisify(execFile);
 const SOURCE_EXPORT_MENU_ID = "kestrel-prepare-chromium-transfer";
+let sourceExportTrayItem: MenuItem | null = null;
 
 function canPrepareChromiumTransfer(): boolean {
 	return isPackagedKestrelApp && process.platform === "darwin" && process.arch === "arm64" && coreStartupComplete && supervisor.isReady &&
 		!nativeProfileExportInstance?.busy && !nativeProfileExportInstance?.restartRequired && activeSourceTransferRequests === 0 &&
-		activeAgentStreams.size === 0 && ["idle", "paused"].includes(agentState);
+		!deliveringExternalIntakes && activeAgentStreams.size === 0 && ["idle", "paused"].includes(agentState);
+}
+
+function updateSourceExportAvailability(): void {
+	const enabled = canPrepareChromiumTransfer();
+	const item = Menu.getApplicationMenu()?.getMenuItemById(SOURCE_EXPORT_MENU_ID);
+	if (item) item.enabled = enabled;
+	if (sourceExportTrayItem) sourceExportTrayItem.enabled = enabled;
 }
 
 function installSourceExportMenu(): void {
@@ -624,6 +632,7 @@ function installSourceExportMenu(): void {
 	if (!appMenu || menu.getMenuItemById(SOURCE_EXPORT_MENU_ID)) return;
 	const beforeQuit = appMenu.items.findIndex(item => item.role === "quit");
 	appMenu.insert(beforeQuit < 0 ? appMenu.items.length : beforeQuit, new MenuItem({ id: SOURCE_EXPORT_MENU_ID, label: "Prepare Chromium Data Transfer…", enabled: canPrepareChromiumTransfer(), click: () => { void prepareChromiumProfileTransfer(); } }));
+	appMenu.on("menu-will-show", updateSourceExportAvailability);
 	Menu.setApplicationMenu(menu);
 }
 
@@ -1796,6 +1805,7 @@ function queueExternalIntake(
 async function deliverPendingExternalIntakes(): Promise<void> {
 	if (deliveringExternalIntakes || nativeProfileExportInstance?.busy || nativeProfileExportInstance?.restartRequired) return;
 	deliveringExternalIntakes = true;
+	updateSourceExportAvailability();
 	try {
 		while (pendingExternalIntakes.length > 0) {
 			const next = pendingExternalIntakes[0]!;
@@ -1836,6 +1846,7 @@ async function deliverPendingExternalIntakes(): Promise<void> {
 		}
 	} finally {
 		deliveringExternalIntakes = false;
+		updateSourceExportAvailability();
 	}
 }
 
@@ -2457,8 +2468,7 @@ function setAgentState(next: AgentState): void {
 }
 
 function updateTray(): void {
-	const sourceExportItem = Menu.getApplicationMenu()?.getMenuItemById(SOURCE_EXPORT_MENU_ID);
-	if (sourceExportItem) sourceExportItem.enabled = canPrepareChromiumTransfer();
+	updateSourceExportAvailability();
 	const visual = visualStateForAgentState(agentState);
 	if (!tray) {
 		tray = new Tray(trayIcon());
@@ -2488,8 +2498,7 @@ function updateTray(): void {
 				...recentAgentTasks.map((task) => ({ label: `✓ ${task}`, enabled: false })),
 		  ]
 		: [];
-	tray.setContextMenu(
-		Menu.buildFromTemplate([
+	const contextMenu = Menu.buildFromTemplate([
 			{ label: `${PRODUCT_IDENTITY.productName} · ${statusLabel}`, enabled: false },
 			...(activeAgentTaskLabel ? [{ label: activeAgentTaskLabel, enabled: false }] : []),
 			{ type: "separator" },
@@ -2525,6 +2534,7 @@ function updateTray(): void {
 				},
 			},
 			{
+				id: SOURCE_EXPORT_MENU_ID,
 				label: "Prepare Chromium Data Transfer…",
 				enabled: canPrepareChromiumTransfer(),
 				click: () => { void prepareChromiumProfileTransfer(); },
@@ -2538,8 +2548,10 @@ function updateTray(): void {
 					app.quit();
 				},
 			},
-		]),
-	);
+		]);
+	sourceExportTrayItem = contextMenu.getMenuItemById(SOURCE_EXPORT_MENU_ID);
+	contextMenu.on("menu-will-show", updateSourceExportAvailability);
+	tray.setContextMenu(contextMenu);
 }
 
 function broadcastPetStatus(
@@ -2844,6 +2856,7 @@ function registerIpc(): void {
 		if (nativeProfileExportInstance?.busy || nativeProfileExportInstance?.restartRequired)
 			throw new Error(nativeProfileExportInstance.restartRequired ? "Restart Kestrel before running another task." : "An encrypted Chromium transfer is being prepared. Finish or cancel its native review first.");
 		activeSourceTransferRequests += 1;
+		updateSourceExportAvailability();
 		try {
     if (
       isCalculatorOverlayWindow &&
@@ -5014,7 +5027,12 @@ function registerIpc(): void {
 		)
 			finishMacWidgetRun(response);
     return response;
-		} finally { activeSourceTransferRequests -= 1; }
+		} finally {
+			activeSourceTransferRequests -= 1;
+			// Core events can refresh the menus before this request releases
+			// admission. Publish the quiescent state after the final request ends.
+			updateSourceExportAvailability();
+		}
   });
 }
 
