@@ -1,3 +1,12 @@
+export function isWhatsAppWebUrl(value: string): boolean {
+ try {
+  const url = new URL(value);
+  return url.protocol === "https:" && url.origin === "https://web.whatsapp.com";
+ } catch {
+  return false;
+ }
+}
+
 /** Runs inside the selected connection page. Never inspect the inbox or full body.
  * Unsupported layouts and uncertain privacy controls fail closed. */
 export function whatsappDomSnapshot(input: { resourceId?: string; capture: boolean }) {

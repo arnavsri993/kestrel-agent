@@ -1,4 +1,4 @@
-import { normalizeWhatsAppTimestamp } from "./whatsapp-source";
+import { isWhatsAppWebUrl, normalizeWhatsAppTimestamp } from "./whatsapp-source";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -2212,7 +2212,7 @@ function createDetachedBrowserWindow(
     ...(!connectionMode ? { nameTabFolders: nameBrowserTabFolders } : {}),
   });
   browserWindowServices.set(window, service);
-  if (connectionMode && !service.getState().tabs.some(item => item.url.startsWith("https://web.whatsapp.com"))) void service.createTab("https://web.whatsapp.com", true);
+  if (connectionMode && !service.getState().tabs.some(item => isWhatsAppWebUrl(item.url))) void service.createTab("https://web.whatsapp.com", true);
   window.webContents.setWindowOpenHandler(({ url }) => {
     openExternalSafely((target) => shell.openExternal(target), url);
     return { action: "deny" };

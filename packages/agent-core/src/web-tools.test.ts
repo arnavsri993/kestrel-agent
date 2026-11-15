@@ -12,6 +12,46 @@ import {
 } from "./web-tools";
 
 describe("network-policy web tools", () => {
+	it("extracts untrusted plain text with quoted tags, hidden blocks and single-pass entities", async () => {
+		const client = new NetworkPolicyWebClient({
+			allowedHosts: ["docs.example.test"],
+			resolveHost: async () => ["203.0.113.20"],
+			fetcher: async () => new Response(
+				'<title>Guide &amp; notes</title><!-- hidden comment --><p title=">">Read '
+				+ '<script data-value=">">hidden script</ScRiPt ><style>hidden style</style\n>'
+				+ '&amp;lt;img&amp;gt; &lt;b&gt; &NBSP; 2 < 3</p>',
+				{ headers: { "content-type": "text/html" } },
+			),
+		});
+		expect(await client.fetch("https://docs.example.test")).toMatchObject({
+			content: "Guide & notes Read &lt;img&gt; <b> 2 < 3",
+			trust: "untrusted_external",
+			citation: { title: "Guide & notes" },
+		});
+	});
+
+	it.each(["script", "style"])("omits an unclosed %s block without exposing its contents", async (tag) => {
+		const client = new NetworkPolicyWebClient({
+			allowedHosts: ["docs.example.test"],
+			resolveHost: async () => ["203.0.113.20"],
+			fetcher: async () => new Response(`<p>Visible</p><${tag}>hidden instructions`, { headers: { "content-type": "text/html" } }),
+		});
+		expect(await client.fetch("https://docs.example.test")).toMatchObject({ content: "Visible", trust: "untrusted_external" });
+	});
+
+	it.each([
+		["unclosed raw-text blocks", "<script>".repeat(120_000), ""],
+		["unclosed title tags", "<title>".repeat(100_000), ""],
+		["literal opening brackets", "<".repeat(100_000), "<".repeat(100_000)],
+	])("handles large %s without repeated suffix scans", async (_, html, content) => {
+		const client = new NetworkPolicyWebClient({
+			allowedHosts: ["docs.example.test"],
+			resolveHost: async () => ["203.0.113.20"],
+			fetcher: async () => new Response(html, { headers: { "content-type": "text/html" } }),
+		});
+		expect(await client.fetch("https://docs.example.test")).toMatchObject({ content, citation: { title: "docs.example.test" }, trust: "untrusted_external" });
+	});
+
 	it("classifies mapped and uppercase private network addresses correctly", () => {
 		expect(isPrivateNetworkAddress("::ffff:127.0.0.1")).toBe(true);
 		expect(isPrivateNetworkAddress("::ffff:7f00:1")).toBe(true);

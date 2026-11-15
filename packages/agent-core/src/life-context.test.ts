@@ -134,6 +134,21 @@ describe("unified life context", () => {
 		database.close();
 	});
 
+	it("handles long whitespace near misses and spaced numeric clocks", () => {
+		const { database, life } = fixture();
+		const spaces = " ".repeat(100000);
+		expect(life.captureConversation(`I have ${spaces}every weekday from noon to noon!x`, "bad-prefix")).toEqual([]);
+		expect(life.captureConversation(`a${spaces}ends at noon on Friday!x`, "bad-friday-title")).toEqual([]);
+		expect(life.captureConversation(`I have school every weekday from 8${spaces}no`, "bad-weekday")).toEqual([]);
+		expect(life.captureConversation(`I have a${spaces}almost`, "bad-title")).toEqual([]);
+		expect(life.captureConversation(`I have school every weekday from noon${spaces}almost`, "bad-noon")).toEqual([]);
+		expect(life.captureConversation(`School ends at noon${spaces}almost`, "bad-noon-friday")).toEqual([]);
+		expect(life.captureConversation(`School ends at 8${spaces}no`, "bad-friday")).toEqual([]);
+		expect(life.captureConversation("I have school every weekday from 8   to 2 PM", "weekday")).toHaveLength(1);
+		expect(life.captureConversation("School ends at 12   on Friday", "friday")).toHaveLength(1);
+		database.close();
+	});
+
 	it("maps a direct recurring schedule and applies a Friday exception without duplicating the weekday routine", () => {
 		const { database, life } = fixture();
 		expect(

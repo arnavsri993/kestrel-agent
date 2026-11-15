@@ -141,30 +141,67 @@ export function isPrivateNetworkAddress(address: string): boolean {
 	);
 }
 
-function readableText(contentType: string, raw: string): string {
-	if (!contentType.includes("html")) return raw;
-	return raw
-		.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
-		.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
-		.replace(/<[^>]+>/g, " ")
-		.replace(/&nbsp;/gi, " ")
-		.replace(/&amp;/gi, "&")
-		.replace(/&lt;/gi, "<")
-		.replace(/&gt;/gi, ">")
-		.replace(/\s+/g, " ")
-		.trim();
-}
-
-function pageTitle(contentType: string, raw: string, url: string): string {
-	if (contentType.includes("html")) {
-		const title = raw
-			.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]
-			?.replace(/<[^>]+>/g, " ")
-			.replace(/\s+/g, " ")
-			.trim();
-		if (title) return title.slice(0, 500);
+function readableDocument(contentType: string, raw: string, url: string): { content: string; title: string } {
+	const fallbackTitle = new URL(url).hostname;
+	if (!contentType.includes("html")) return { content: raw, title: fallbackTitle };
+	// Best-effort plain text, never an HTML sanitizer. The result remains untrusted.
+	// Advancing past each token avoids quadratic rescans of unclosed tags/blocks.
+	const content: string[] = [], title: string[] = [];
+	let cursor = 0, rawText = "", inTitle = false, titleClosed = false;
+	const space = (value: string | undefined) => value !== undefined && " \t\n\r\f".includes(value);
+	const tagEnd = (start: number) => {
+		let quote = "";
+		for (let index = start + 1; index < raw.length; index++) {
+			const character = raw[index]!;
+			if (quote) { if (character === quote) quote = ""; }
+			else if (character === '"' || character === "'") quote = character;
+			else if (character === ">") return index;
+		}
+		return -1;
+	};
+	const append = (text: string) => { if (text) { content.push(text); if (inTitle) title.push(text); } };
+	while (cursor < raw.length) {
+		const start = raw.indexOf("<", cursor);
+		if (start < 0) { if (!rawText) append(raw.slice(cursor)); break; }
+		if (rawText) {
+			const afterName = start + 2 + rawText.length;
+			if (raw.startsWith("</", start) && raw.slice(start + 2, afterName).toLowerCase() === rawText &&
+				(space(raw[afterName]) || raw[afterName] === "/" || raw[afterName] === ">")) {
+				const end = tagEnd(start); if (end < 0) break;
+				rawText = ""; cursor = end + 1; append(" ");
+			} else cursor = start + 1;
+			continue;
+		}
+		append(raw.slice(cursor, start));
+		if (raw.startsWith("<!--", start)) {
+			const end = raw.indexOf("-->", start + 4);
+			if (end < 0) break;
+			cursor = end + 3; append(" "); continue;
+		}
+		const closing = raw[start + 1] === "/", nameStart = start + (closing ? 2 : 1);
+		if (!/[a-z]/i.test(raw[nameStart] ?? "")) {
+			if (raw[start + 1] === "!" || raw[start + 1] === "?") {
+				const end = tagEnd(start); if (end < 0) break;
+				cursor = end + 1; append(" "); continue;
+			}
+			append("<"); cursor = start + 1; continue;
+		}
+		let nameEnd = nameStart + 1;
+		while (nameEnd < raw.length && !space(raw[nameEnd]) && raw[nameEnd] !== "/" && raw[nameEnd] !== ">") nameEnd++;
+		const name = raw.slice(nameStart, nameEnd).toLowerCase(), end = tagEnd(start);
+		if (end < 0) break;
+		cursor = end + 1;
+		if (name === "title") {
+			if (closing && inTitle) { inTitle = false; titleClosed = true; }
+			else if (!closing && !titleClosed) inTitle = true;
+		}
+		if (!closing && (name === "script" || name === "style")) rawText = name;
+		append(" ");
 	}
-	return new URL(url).hostname;
+	const entities: Record<string, string> = { nbsp: " ", amp: "&", lt: "<", gt: ">" };
+	const normalize = (text: string) => text.replace(/&(nbsp|amp|lt|gt);/gi, (_, name: string) => entities[name.toLowerCase()]!)
+		.replace(/\s+/g, " ").trim();
+	return { content: normalize(content.join("")), title: (titleClosed && normalize(title.join("")).slice(0, 500)) || fallbackTitle };
 }
 
 function boundedSearchResultCount(value: number): number {
@@ -261,14 +298,15 @@ export class NetworkPolicyWebClient {
 					"Web response exceeds the configured byte limit.",
 				);
 				const raw = new TextDecoder().decode(bytes);
+				const document = readableDocument(contentType, raw, current);
 				const result = {
 					url: current,
 					status: response.status,
 					contentType,
-					content: readableText(contentType, raw),
+					content: document.content,
 					trust: "untrusted_external" as const,
 					citation: {
-						title: pageTitle(contentType, raw, current),
+						title: document.title,
 						url: current,
 						retrievedAt: this.now().toISOString(),
 					},

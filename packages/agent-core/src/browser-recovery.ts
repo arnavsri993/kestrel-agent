@@ -261,19 +261,28 @@ export function browserRecoveryReason(
 		)
 	)
 		return "obscured";
+	// A dot in the original classifiers did not cross JavaScript line terminators.
+	// Search each line once, avoiding repeated wildcard scans on long messages.
+	const lines = message.split(/[\n\r\u2028\u2029]/);
+	const hasBoth = (line: string, left: readonly string[], right: readonly string[]) =>
+		left.some((word) => line.includes(word)) &&
+		right.some((word) => line.includes(word));
 	if (
-		/execution context.*destroyed|frame.*detached|page (?:has )?changed|navigation (?:has )?changed|target closed|cannot find context/.test(
-			message,
-		)
+		lines.some((line) => {
+			const execution = line.indexOf("execution context");
+			const frame = line.indexOf("frame");
+			return (execution !== -1 && line.indexOf("destroyed", execution + 17) !== -1) ||
+				(frame !== -1 && line.indexOf("detached", frame + 5) !== -1);
+		}) ||
+		/page (?:has )?changed|navigation (?:has )?changed|target closed|cannot find context/.test(message)
 	)
 		return "navigation_changed";
 	if (
-		/(?:authentication|login|sign[ -]?in).*(?:required|expired)|(?:required|expired).*(?:authentication|login|sign[ -]?in)|(?:browser|fixture|user) session expired/.test(
-			message,
-		)
+		lines.some((line) => hasBoth(line, ["authentication", "login", "signin", "sign in", "sign-in"], ["required", "expired"])) ||
+		/(?:browser|fixture|user) session expired/.test(message)
 	)
 		return "auth_required";
-	if (/popup.*(?:denied|blocked)|(?:denied|blocked).*popup/.test(message))
+	if (lines.some((line) => hasBoth(line, ["popup"], ["denied", "blocked"])))
 		return "popup_denied";
 	if (
 		/\b(?:network error|network disconnected|network unavailable|failed to fetch|load failed|internet disconnected)\b|net::err_|err_(?:internet_disconnected|network_changed|connection_[a-z_]+|name_not_resolved|timed_out)|\b(?:enotfound|econnreset|econnrefused)\b/.test(

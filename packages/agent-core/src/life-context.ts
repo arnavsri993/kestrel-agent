@@ -17,6 +17,25 @@ import { MemoryManager } from "./memory";
 
 const DAY_MS = 86_400_000;
 
+// Consume the leading whitespace atomically so it cannot repeatedly trade
+// characters with the bounded title and its whitespace separator.
+const WEEKDAY_SCHEDULE = /^I have(?=(\s+))\1(.{1,200}?)\s+every weekday\s+from\s+((?:noon|midnight|\d{1,2}(?::\d{2})?(?:\s*(?:am|pm))?))\s+to\s+((?:noon|midnight|\d{1,2}(?::\d{2})?\s*(?:am|pm)?))[.!]?$/i;
+
+function matchWeekdaySchedule(value: string): { title: string; start: string; end: string } | undefined {
+	const text = value.trim();
+	let match = text.match(WEEKDAY_SCHEDULE);
+	if (match) return { title: match[2]!.trim(), start: match[3]!, end: match[4]! };
+
+	// The original expression also accepted a whitespace-only title: at least
+	// one whitespace character must be available on either side, and the title
+	// character itself must be matchable by JavaScript's dot.
+	const prefix = text.match(/^I have(\s+)/i);
+	const whitespace = prefix?.[1];
+	if (!whitespace || whitespace.length < 3 || !/[^\S\n\r\u2028\u2029]/.test(whitespace.slice(1, -1))) return undefined;
+	match = (`I have x ${text.slice(prefix![0].length)}`).match(WEEKDAY_SCHEDULE);
+	return match ? { title: "", start: match[3]!, end: match[4]! } : undefined;
+}
+
 function normalized(value: string): string {
 	return value
 		.normalize("NFKC")
@@ -719,15 +738,11 @@ export class LifeContextService {
 
 	captureConversation(text: string, sourceId: string): UnifiedCalendarEvent[] {
 		const created: UnifiedCalendarEvent[] = [];
-		const weekday = text
-			.trim()
-			.match(
-				/^I have\s+(.{1,200}?)\s+every weekday\s+from\s+((?:noon|midnight|\d{1,2}(?::\d{2})?\s*(?:am|pm)?))\s+to\s+((?:noon|midnight|\d{1,2}(?::\d{2})?\s*(?:am|pm)?))[.!]?$/i,
-			);
+		const weekday = matchWeekdaySchedule(text);
 		if (weekday) {
-			const title = weekday[1]!.trim();
-			const startClock = parseClock(weekday[2]!);
-			const endClock = parseClock(weekday[3]!);
+			const title = weekday.title;
+			const startClock = parseClock(weekday.start);
+			const endClock = parseClock(weekday.end);
 			if (startClock && endClock) {
 				const start = nextWeekdayAnchor(this.now(), 1, startClock);
 				const end = new Date(start);
@@ -793,7 +808,7 @@ export class LifeContextService {
 		const dayOverride = text
 			.trim()
 			.match(
-				/^(.{1,200}?)\s+ends at\s+((?:noon|midnight|\d{1,2}(?::\d{2})?\s*(?:am|pm)?))\s+on Fridays?[.!]?$/i,
+				/^(.{1,200}?)\s+ends at\s+((?:noon|midnight|\d{1,2}(?::\d{2})?(?:\s*(?:am|pm))?))\s+on Fridays?[.!]?$/i,
 			);
 		if (dayOverride) {
 			const title = dayOverride[1]!.trim().replace(/^my\s+/i, "");
