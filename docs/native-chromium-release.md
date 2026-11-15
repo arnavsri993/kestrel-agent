@@ -53,6 +53,43 @@ This is generated-profile protocol evidence; source native-dialog acceptance,
 real protected-profile migration, signing/notarization and canonical cutover
 are separate outstanding checks.
 
+## Managed local Core acceptance, 2026-11-15
+
+`scripts/smoke-native-managed-core.mjs` now exercises the actual native app's
+production vault, first-party setup request, provider host and Core together.
+This differs from the older standalone manager and generated host-key tests.
+On unchanged custom-engine bundle `45bfbaac…`, all six phases pass: fresh
+production profile; guarded runtime/model download and Core route commit; a
+real local assistant reply with tools denied; clean server/runner shutdown and
+encrypted response inspection; same-profile native restart with the restored
+route and decrypted reply; and a second clean shutdown with unchanged vault
+and bundle hashes. The real server reports pinned Ollama `0.32.1`; the installed
+Qwen3 0.6B model digest matches the official registry manifest before and after
+restart. The generated profile and its downloaded runtime/model are removed
+only after successful shutdown and absence checks.
+
+Receipt: `.tmp/native-managed-core-production-pinned/receipt.json`. The first
+attempt's failed receipt remains in `.tmp/native-managed-core-production-first/`:
+it obtained a real reply and clean parent exit, then checked complete bundle
+absence before Chromium's cleanup helper exited. The canary now waits within a
+fixed deadline for full process absence. A clone-inventory `ENOENT` is retried
+only inside the trusted signing-clone namespace, using the full strict preflight.
+No production permission or identity guard was relaxed.
+
+This is protocol-level native acceptance. It does not verify setup controls on
+screen, every model, agent tool execution, an existing external service, a real
+profile or canonical cutover. The default-port preflight and ownership monitor
+cannot atomically exclude another actor starting a listener concurrently.
+The command requires explicit download and production-vault fixture opt-ins:
+
+```bash
+KESTREL_TEST_NATIVE_LOCAL_VAULT=1 \
+KESTREL_TEST_REAL_MANAGED_RUNTIME=1 \
+KESTREL_NATIVE_TEST_APP=/absolute/path/to/disposable/Kestrel.app \
+KESTREL_NATIVE_MANAGED_CORE_EVIDENCE=/absolute/path/to/fresh/evidence \
+  node scripts/smoke-native-managed-core.mjs
+```
+
 ## Current checkpoint — custom Chromium and production vault, 2026-11-12
 
 The user retired the Keychain route because its repeated permission prompt was
