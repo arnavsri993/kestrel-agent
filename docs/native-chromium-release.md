@@ -138,6 +138,168 @@ The earlier eight-phase locked-desktop failure remains unchanged in
 request the Chrome Web Store flow and does not establish Store upgrade parity,
 real-profile migration or installed-app acceptance.
 
+A separate window-lifecycle run passed **12** phases on that same bundle,
+including an actual native last-window close and reopen. The same three Core
+processes and saved conversation remain live, and exactly one restored Home is
+observed. It records three clean stops and unchanged complete bundle hashes in
+`.tmp/native-window-lifecycle-current-unlocked/receipt.json`.
+
+### Current-bundle official Store acceptance
+
+`.tmp/native-source-export-current-store/receipt.json` records **18 passed
+phases**, with two aggregate extension-parity phases still false solely because
+no published version upgrade occurred. Official JSON Formatter `0.10.2` and
+uBlock Origin Lite `2026.1110.1816` were installed through their actual native
+permission sheets. Extension-created tabs, the isolated native action popup,
+Chrome manager disable/re-enable with actual injection stopping/restoring, and
+functional persistence after full restart all pass. All three stops are clean;
+the complete `45bfbaac…` bundle hash remains unchanged.
+
+The official update callback returns `no_update`. This confirms a successful
+update query and current installed version, without proving an upgrade. The
+strict Store parity gate remains incomplete. The run recorded a normal-install
+generated production-vault checkpoint in
+`.tmp/native-source-export-current-store/store-update-checkpoint.json`. On
+November 15, its temporary profile was missing. The checkpoint and receipt are
+preserved, but they are not a live fixture for a later upgrade.
+
+### Transfer observer correction
+
+The first unlocked production-vault transfer run reached both native completion
+dialogs and verified the first transfer across restart, then failed at the
+second transfer's readback because its retained Playwright Page had closed. All
+ten owned starts/stops were clean; its six passed phases, unchanged bundle and
+recorded generated-profile paths remain in
+`.tmp/native-vault-transfer-current-unlocked/receipt.json`. It is not a full
+transfer/rollback pass. Those temporary folders were also missing on November
+15. The cause of the earlier window closures is not established.
+
+The canary now selects the exact owner-profile-derived first-party extension
+URL at startup and reacquires a unique live Home before post-apply read-only
+inspection. One bounded observer reconnect is allowed only when that exact
+target exists but is unattached. It records the owned PID, target ID and observer
+page/reconnection events; observer page closure is not mislabeled as proof of
+physical target destruction. Missing or ambiguous targets still fail. Apply
+and other mutations are never replayed, and no production guard changed.
+
+The fresh exact-Home run passed all **nine** production-vault phases across
+**15 clean starts/stops** on unchanged bundle `45bfbaac…`: two reviewed native
+transfers, active-child readback, both actual native previous-profile selections
+and original-session readback after each restart, plus clean SIGTERM while the
+native refusal alert stayed open. Source snapshots remain unchanged, every
+owned candidate process is absent, and successful generated profiles were
+removed. Receipt: `.tmp/native-vault-transfer-exact-home/receipt.json`.
+This run did not include project reconnection, a real source or canonical
+installation.
+
+After this run started, independent review tightened the observer's timeout and
+transient-readiness handling. All observation operations now share the deadline;
+owned SIGTERM precedes a bounded observer disconnect. Seven simulated fault
+probes execute the actual extracted canary helper bodies against stubbed CDP,
+pages, ownership and accelerated timers. They cover stalled discovery, wrong
+and ambiguous targets, confirmed readiness closure, one owned-endpoint
+reconnection, and cleanup despite a stalled disconnect. They pass in
+`.tmp/native-home-observer-faults.json`, bound to the final helper source hash.
+These are simulated helper tests, separate from the preceding native normal-flow
+acceptance. Syntax, whitespace and independent final-delta review also pass.
+
+### Visible generated export after interruption, 2026-11-15
+
+The interrupted visible check timed out with one protocol phase and a clean
+stop. Its receipt remains unchanged in `.tmp/native-export-visible-unlocked/`.
+The attempted resume refused the now-missing temporary export before launch;
+that preflight log is preserved separately. No existing profile was replaced.
+
+A fresh generated source/export passed all six cached-source protocol phases
+in `.tmp/native-export-visible-fresh-source/receipt.json`. Its production-vault
+destination then passed four native visible/readback phases and two clean stops
+on unchanged bundle `45bfbaac…` in
+`.tmp/native-export-visible-fresh-ui/receipt.json`. CUA actually opened the
+generated conversation and observed its message in the native app, then observed
+the same message after full restart. The script neither read nor supplied the
+destination key. Pending project metadata remains disconnected. This is fresh
+generated-source acceptance, separate from real-profile migration or installation.
+
+## Release parsing and origin follow-up, 2026-11-15
+
+Head `c602b62905887a82e51f9aad2725efead05ab534` passed both jobs in
+[CI 43680159281](https://github.com/arnavsri993/kestrel-agent/actions/runs/43680159281).
+The downloaded native artifact `14148134852` matches SHA256
+`51c326b54f4e0bec58dcdfde944ccbbccea8ce0ec97cc390e9bb928afe24eb60`.
+Safe ZIP/CRC/path checks and independent parsing confirm eight bound receipts
+with unchanged reported candidate hash pairs and 96 passed phases. This is
+generated stock/mock CI; its candidate bundle is absent for independent rehash.
+
+CodeQL's check passed, but that is not an alert-free result. The exact synthetic
+PR-head ref reports 16 open alerts at this head, all also present on current
+main: 15 high and one medium. An unfiltered repository query reports 30; a normal
+branch-ref query reports zero because the PR analysis uses `refs/pull/872/head`.
+The scoped review is `.tmp/ci-c602b629-evidence/alert-scope-triage.md`. No alert was
+dismissed or suppressed.
+
+Independent source review found real polynomial-time error/schedule patterns
+and a deceptive-hostname tab-deduplication bug. Recovery classification now uses
+per-line substring searches with the same precedence. Schedule parsing consumes
+leading whitespace atomically and removes the ambiguous clock separator while
+preserving accepted clocks, titles and line terminators; a differential check
+covered 2,240 input combinations. WhatsApp tab deduplication now compares the
+parsed HTTPS origin, so a hostname suffix cannot suppress opening the genuine
+provider tab. This does not claim a previous capture-authority bypass or a live
+WhatsApp-account test.
+
+An isolated actual web-client probe also found repeated unclosed script tags
+within the one-megabyte body limit exceeded three seconds; a regular larger-page
+control parsed in 25 ms. HTML text/title extraction now advances through tokens
+once, omits script/style/comment bodies and decodes the existing entities in one
+pass. Output remains explicitly untrusted plain text, never sanitized HTML.
+Malformed markup may discard the remaining text; complete browser DOM/visibility
+semantics are not claimed.
+
+The parsing/origin source run passed 3,563 unit tests in 369 files, with the
+three existing skips. Core and desktop Node typechecks pass. The rebuilt native
+bundle is `069c599f13cefe863cc405b22e23b9f3e14569715f10062d4cfa7a7412b9ed89`:
+
+- `.tmp/native-release-linear-parsing-modern-browser/receipt.json`: all 16
+  production-vault browser phases, three clean stops and unchanged bundle.
+- `.tmp/native-browser-local-vault-1794768162247-6aa105c7-540b-47d2-9826-512c57bb380c/receipt.json`:
+  all seven production-vault phases and three clean stops, including generated
+  password autofill, cookie/Core restart and tampered-cookie refusal.
+- `.tmp/native-release-linear-parsing-store/receipt.json`: 18 passed phases and
+  three clean stops; both official Store installs, popup, tab ownership,
+  disable/re-enable and functional restart pass. Two aggregate phases remain
+  incomplete solely because the official query returns `no_update`.
+
+The updated source package `c07edb8f422e97836d30265d5ef7208d02c180ac723a7b52c59fba7095a9a0bd`
+builds and passes development signature,
+architecture, preload and migration/file-icon guards. Its generated window and
+picker cancellation were actually exercised in `.tmp/native-release-linear-source-ui/`.
+That operator run was interrupted while awaiting its count-review cancellation
+stage and has no
+terminal receipt; no complete five-phase pass or clean exit is claimed for it.
+All owned package processes are absent. The earlier `45bfbaac…` and `ad3b2501…`
+observations remain separate prior-package evidence.
+
+### Terminal Store checkpoint sealing
+
+The first attempt to preserve the new generated Store fixture refused its
+checkpoint because cleanup had changed the receipt after its digest was saved.
+The app's Store checks passed, but that checkpoint is invalid; the profile was
+not moved. Both original artifacts and the refusal log stay preserved.
+
+The canary now finishes cleanup, process absence, cancellation and profile
+disposition before sealing the terminal receipt and publishing its checkpoint.
+It does not rewrite a sealed receipt. A private exclusive pending marker keeps
+publication fail-closed: even a complete checkpoint file is rejected if a later
+sync or close fails. The marker is removed only after successful publication;
+the loader also rejects finalization-failure evidence, including dangling marker
+symlinks. Late signals cannot mutate the sealed receipt while its checkpoint is
+being committed. Publication failure preserves the generated profile and writes
+separate diagnostics. Twenty-seven focused tests pass, including actual
+FileHandle sync/close fault injection, failed/cancelled cleanup and legacy
+checkpoint compatibility. The complete source suite passes 3,572 tests in 369
+files, with three existing skips. A fresh live Store run is still required to establish
+a usable retained checkpoint after this fix.
+
 ## Current checkpoint — custom Chromium and production vault, 2026-11-12
 
 The user retired the Keychain route because its repeated permission prompt was

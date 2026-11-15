@@ -10,6 +10,8 @@ const extensionIds = ["bcjindcccaagfpapjjmafapmmgkkhgoa", "ddkjiahejlhfcafbddmgi
 const parityChecks = ["storeInstall", "extensionCreatedTabs", "toolbarActionPopup", "chromeManagerDisableReenable", "storePersistence", "storeVersionUpgrade"];
 const aggregatePhases = new Set(["native-chromium-extension-parity-after-official-store-install", "native-chromium-extension-parity-final"]);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+export const storeFixturePendingName = "store-update-finalization.pending";
+export const storeFixtureFailureName = "finalization-failure.log";
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 async function boundedJson(file) {
 	const info = await lstat(file);
@@ -78,7 +80,14 @@ export async function retainStoreUpdateFixture({ profile, receiptPath, checkpoin
 // Revalidate actual filesystem state; a saved path alone is not a live wait or
 // proof the temporary profile still exists. No browser or Keychain is opened.
 export async function loadRetainedStoreUpdateFixture(checkpointPath, { root = repositoryRoot, candidateCopy } = {}) {
-	const checkpoint = resolve(checkpointPath), { value } = await boundedJson(checkpoint);
+	const checkpoint = resolve(checkpointPath);
+	for (const name of [storeFixturePendingName, storeFixtureFailureName]) {
+		const marker = join(dirname(checkpoint), name);
+		let exists = true;
+		try { await lstat(marker); } catch (error) { if (error.code === "ENOENT") exists = false; else throw error; }
+		assert(!exists, `Store fixture finalization is incomplete or failed: ${name}.`);
+	}
+	const { value } = await boundedJson(checkpoint);
 	assert.equal(value.kind, "native-store-update-fixture"); assert.equal(value.version, 1);
 	assert.equal(value.profileRoot, value.fixtureStorage
 		? await validateRetainedNativeBrowserFixtureStorage({ profile: value.profileRoot, candidate: value.candidate,

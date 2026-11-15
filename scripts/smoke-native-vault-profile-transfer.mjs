@@ -42,7 +42,7 @@ assert(!continuationPath || publishedRecoveryRequested, "A continuation requires
 assert(!(modalQuitRequested && publishedRecoveryRequested), "Run modal-Quit and published recovery separately.");
 assert(!projectsRequested || !publishedRecoveryRequested, "Run project round-trip and published recovery separately.");
 const receipt = { kind: publishedRecoveryRequested ? "native-vault-published-recovery-canary" : "native-vault-profile-transfer-canary", version: 1, result: "failed", startedAt: new Date().toISOString(), candidate,
- candidateSha256: await candidateDigest(candidate), modalQuitRequested, publishedRecoveryRequested, projectsRequested, phases: [], stages: [],
+ candidateSha256: await candidateDigest(candidate), modalQuitRequested, publishedRecoveryRequested, projectsRequested, phases: [], stages: [], targetLifecycle: [],
  scope: publishedRecoveryRequested
   ? "Generated production-vault profiles; actual owned parent-process SIGKILL after publication but before activation, native recovery choices, restart and rollback. No worker injection/signalling, source key export, real profile, provider, Store, release gate, mid-stage or power-loss recovery claim. Browser background network traffic is not measured."
   : "Generated private temporary profiles, production local vaults, loopback CDP and operator-driven native menus/dialogs. No real profile, test key, provider credential, mock key, external fixture/provider request, Store, release gate or crash-recovery claim. Browser background network traffic is not measured." };
@@ -69,6 +69,77 @@ async function setup(name) {
  await prepareNativeBrowserFixtureProfile({ profile, storage });
  return profile;
 }
+function homeUrl(profile) {
+ const id = [...hash(join(profile, "kestrel-ui-bundle")).slice(0, 32)]
+  .map(digit => "abcdefghijklmnop"[parseInt(digit, 16)]).join("");
+ return `chrome-extension://${id}/index.html`;
+}
+function assertOwned(state) {
+ assert.equal(running, state, "The observed candidate is no longer the owned running state.");
+ assert(state.child.exitCode === null && state.child.signalCode === null, "The owned candidate exited.");
+}
+function observeTargets(connection, state) {
+ const seen = new WeakSet();
+ const observePage = page => {
+  if (seen.has(page)) return;
+  seen.add(page);
+  // Record only the generated first-party URL or a category, never arbitrary page URLs.
+  const safeUrl = () => page.url() === state.homeUrl ? state.homeUrl : "other";
+  receipt.targetLifecycle.push({ event: "observer-page-open", url: safeUrl(), stage: currentStage, pid: state.child.pid });
+  page.on("close", () => receipt.targetLifecycle.push({ event: "observer-page-close", url: safeUrl(), stage: currentStage, pid: state.child.pid }));
+ };
+ const observeContext = context => { context.on("page", observePage); for (const page of context.pages()) observePage(page); };
+ connection.on("context", observeContext);
+ for (const context of connection.contexts()) observeContext(context);
+}
+async function findOwnedHome(state, previous, reason) {
+ const deadline = Date.now() + 30_000;
+ let reconnected = false;
+ const bounded = async (operation, label) => {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new Error(`Home observation deadline expired before ${label}.`);
+  let timer;
+  try { return await Promise.race([operation(), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`Home observation deadline expired during ${label}.`)), remaining); })]); }
+  finally { clearTimeout(timer); }
+ };
+ while (Date.now() < deadline) {
+  assert(!interrupted, "Harness interrupted."); assertOwned(state);
+  const session = await bounded(() => browser.newBrowserCDPSession(), "CDP session creation");
+  let targets;
+  try { ({ targetInfos: targets } = await bounded(() => session.send("Target.getTargets"), "target enumeration")); }
+  finally { await bounded(() => session.detach(), "CDP session detach"); }
+  assertOwned(state);
+  const exactTargets = targets.filter(target => target.type === "page" && target.url === state.homeUrl);
+  assert(exactTargets.length <= 1, "Ambiguous exact-profile Home targets.");
+  const pages = browser.contexts().flatMap(context => context.pages()).filter(page => !page.isClosed() && page.url() === state.homeUrl);
+  assert(pages.length <= 1, "Ambiguous observed exact-profile Home pages.");
+  if (exactTargets.length === 1 && pages.length === 1) {
+   try {
+    await bounded(() => pages[0].waitForFunction(() => typeof window.kestrel?.request === "function", null, { timeout: Math.max(1, deadline - Date.now()) }), "Home readiness");
+   } catch (error) {
+    assertOwned(state);
+    if (!pages[0].isClosed() || !/Target page, context or browser has been closed/.test(String(error))) throw error;
+    receipt.targetLifecycle.push({ event: "home-closed-during-readiness", url: state.homeUrl, targetId: exactTargets[0].targetId, stage: currentStage, pid: state.child.pid });
+    continue;
+   }
+   assertOwned(state);
+   receipt.targetLifecycle.push({ event: previous && previous !== pages[0] ? "home-replaced" : "home-selected", url: state.homeUrl,
+    targetId: exactTargets[0].targetId, stage: currentStage, pid: state.child.pid,
+    ...(previous && previous !== pages[0] ? { reason, previousClosed: previous.isClosed(), observerReconnected: reconnected } : {}) });
+   return pages[0];
+  }
+  if (exactTargets.length === 1 && pages.length === 0 && !reconnected) {
+   reconnected = true;
+   receipt.targetLifecycle.push({ event: "observer-disconnect-intent", stage: currentStage, pid: state.child.pid, targetId: exactTargets[0].targetId });
+   await bounded(() => browser.close(), "observer disconnect"); assertOwned(state);
+   receipt.targetLifecycle.push({ event: "observer-reconnect-intent", stage: currentStage, pid: state.child.pid, targetId: exactTargets[0].targetId });
+   browser = await bounded(() => chromium.connectOverCDP(state.endpoint, { noDefaults: true, timeout: Math.max(1, deadline - Date.now()) }), "observer reconnect");
+   observeTargets(browser, state);
+  }
+  await delay(150);
+ }
+ throw new Error("Unique live exact-profile Home was not available before the deadline.");
+}
 async function start(name) {
  const profile = profiles[name], storage = descriptors[name];
  assert(profile && storage); assertNoCandidate();
@@ -80,7 +151,7 @@ async function start(name) {
  assert(!Object.keys(env).some(key => /TOKEN|SECRET|COOKIE|API_KEY|AUTH/i.test(key) && !["PATH"].includes(key)), "Unexpected credential-like environment entry.");
  const args = ["--kestrel-chromium-desktop", "--kestrel-cache-path", profile, "--kestrel-durable-profile", "--enable-automation", "--remote-debugging-port=0", ...nativeBrowserFixtureStorageArgs(storage)];
  assert(!args.some(arg => /test-profile-key|mock-keychain|real-keychain/i.test(arg)));
- const state = { output: "", name, profile };
+ const state = { output: "", name, profile, homeUrl: homeUrl(profile) };
  state.child = spawn(executable, args, { stdio: ["ignore", "pipe", "pipe"], env });
  state.exited = new Promise(done => state.child.once("exit", (code, signal) => done({ code, signal })));
  for (const stream of [state.child.stdout, state.child.stderr]) stream.on("data", bytes => { state.output = (state.output + bytes).slice(-250_000); });
@@ -92,20 +163,14 @@ async function start(name) {
   return state.output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+)/)?.[1];
  }, "Native loopback CDP endpoint missing.", 60_000);
  state.endpoint = endpoint; browser = await chromium.connectOverCDP(endpoint, { noDefaults: true });
+ observeTargets(browser, state);
  const command = await browser.newBrowserCDPSession();
  try {
   const { arguments: effective } = await command.send("Browser.getBrowserCommandLine");
   assert(Array.isArray(effective) && effective.includes("--kestrel-durable-profile"));
   assert(!effective.some(arg => /^--(?:use-mock-keychain|kestrel-real-keychain|kestrel-test-profile-key)(?:=|$)/.test(arg)), "Non-production storage switch present.");
  } finally { await command.detach(); }
- let home;
- await eventually(async () => {
-  home = browser.contexts().flatMap(context => context.pages()).find(page => /chrome-extension:\/\/[^/]+\/index\.html$/.test(page.url()));
-  if (home) return true;
-  const session = await browser.newBrowserCDPSession(); const targets = await session.send("Target.getTargets"); await session.detach();
-  if (targets.targetInfos.some(item => /chrome-extension:\/\/[^/]+\/index\.html$/.test(item.url))) { await browser.close(); browser = await chromium.connectOverCDP(endpoint, { noDefaults: true }); }
-  return false;
- }, "Native Home missing.");
+ const home = await findOwnedHome(state);
  state.home = home;
  await home.waitForFunction(() => typeof window.kestrel?.request === "function");
  await home.evaluate(() => { localStorage.setItem("kestrel:onboarded", "yes"); localStorage.setItem("kestrel:default-browser-prompted", "yes"); });
@@ -137,8 +202,14 @@ async function assertPendingProject(home, project) {
 async function stop() {
  if (!running) return;
  const current = running;
- await browser?.close().catch(() => {}); browser = undefined;
+ // Stop the owned process independently of a potentially stalled observer disconnect.
  if (current.child.exitCode === null && current.child.signalCode === null) current.child.kill("SIGTERM");
+ const observer = browser; browser = undefined;
+ if (observer) {
+  let timer;
+  try { await Promise.race([observer.close().catch(() => {}), new Promise(resolve => { timer = setTimeout(resolve, 2000); })]); }
+  finally { clearTimeout(timer); }
+ }
  const outcome = await Promise.race([current.exited, delay(15_000).then(() => null)]);
  assert(outcome, "Owned candidate shutdown was not confirmed; fixture retained.");
  assert.deepEqual(outcome, { code: 0, signal: null }, "Owned candidate did not stop cleanly.");
@@ -239,6 +310,8 @@ async function applyNativeTransfer(owner, label, oldSelection, oldSnapshot, sour
  assert.equal(after.active, relative, "Transfer must select the imported child for the next launch.");
  assert.equal(after.previous, oldSelection.active ?? "", "Transfer must record the old selection for native rollback.");
  assert.equal(after.handoffs[relative], (await selection(owner.state.profile)).handoffs[relative]);
+ owner.home = await findOwnedHome(owner.state, owner.home, "Reacquired the owned Home before post-apply readback.");
+ owner.state.home = owner.home;
  const stillLive = await request(owner.home, { type: "runtime-list-sessions" });
  assert(stillLive.sessions.some(item => item.id === liveSessionId) && !stillLive.sessions.some(item => item.id === incomingSessionId),
   "The current app must remain on its old live Core until restart.");

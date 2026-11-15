@@ -18,15 +18,16 @@ import {assertNativeBrowserFixtureStopped,captureNativeBrowserFixtureStorage,nat
 import {candidateDigest} from './native-retirement-evidence.mjs';
 import {createIsolatedDownloadFixtures,nativeIsolatedDownloadsCanary} from './native-isolated-downloads-canary.mjs';
 import {validateDisposableNativeTestProfile} from './native-test-profile.mjs';
-import {retainStoreUpdateFixture} from './native-store-update-profile.mjs';
+import {finalizeStoreUpdateFixture} from './native-store-update-finalization.mjs';
 import {CEF_VERSION} from './prepare-native-chromium-runtime.mjs';
 
-let receipt;
+let receipt,terminalSealed=false;
 const cancellation=createNativeDesktopCancellation({onCancel:error=>{
  process.exitCode=error.signal==='SIGINT'?130:143;
  if(receipt){receipt.cancelled={signal:error.signal};receipt.failed=String(error);}
 }});
-const onInt=()=>cancellation.cancel('SIGINT'),onTerm=()=>cancellation.cancel('SIGTERM');
+// Once sealing starts, finish checkpoint publication without mutating its receipt.
+const onInt=()=>{if(!terminalSealed)cancellation.cancel('SIGINT');},onTerm=()=>{if(!terminalSealed)cancellation.cancel('SIGTERM');};
 process.on('SIGINT',onInt);process.on('SIGTERM',onTerm);
 const delay=(...args)=>cancellation.delay(...args);
 async function connect(endpoint){
@@ -93,7 +94,7 @@ const server=createServer((req,res)=>{
  <script>window.getSelection=()=>({rangeCount:1,toString:()=>"canary_page_world_spoof_secret"});</script>`);
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-let child,browser,output='',profileRetained=false,uiActionPage;
+let child,browser,output='',uiActionPage,storageEvidence,runCompleted=false;
 let savedSession,providerEvidence,workspaceEvidence,codexEvidence;
 function ownedNodeProcesses(){
  const rows=execFileSync('/bin/ps',['-axo','pid=,ppid=,comm='],{encoding:'utf8'}).trim().split('\n').map(line=>line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)).filter(Boolean);
@@ -667,16 +668,14 @@ try{
   }
  }
  await close();receipt.phases.push({phase:'durable-core-and-clean-restart',passed:true});
- const storageEvidence=await captureNativeBrowserFixtureStorage({profile,storage:fixtureStorage});
+ storageEvidence=await captureNativeBrowserFixtureStorage({profile,storage:fixtureStorage});
  receipt.fixtureStorage=storageEvidence;
  receipt.candidateSha256After=await candidateDigest(app);
  assert.equal(receipt.candidateSha256After,receipt.candidateSha256,'The candidate bundle changed during native desktop verification.');
  assert(!requireExtensionParity||receipt.extensionParity?.passed,'Required Chromium extension parity is incomplete; inspect the candidate-bound receipt for missing capabilities.');
  if(retainUpdateProfile)receipt.storeUpdateFixture={profileRoot:fixtureStorage.mode==='test-key'?await validateDisposableNativeTestProfile(profile):profile,checkpointPath:join(evidence,'store-update-checkpoint.json')};
- await writeFile(join(evidence,'receipt.json'),JSON.stringify(receipt,null,2),{mode:0o600});
- if(retainUpdateProfile){await retainStoreUpdateFixture({profile,receiptPath:join(evidence,'receipt.json'),checkpointPath:receipt.storeUpdateFixture.checkpointPath,storageEvidence,root:process.cwd()});profileRetained=true;console.log('STORE_UPDATE_FIXTURE_RETAINED: '+receipt.storeUpdateFixture.checkpointPath+'; a real published-version upgrade remains a separate acceptance check.');}
  cancellation.check();
- console.log('Native Chromium desktop passed: real Kestrel Home/Settings, Core tab tools and approval enforcement, native tabs, web bridge isolation, durable restart, and clean shutdown'+(store?', plus native Store install and functional extension restart.':'.'));
+ runCompleted=true;
 }catch(error){
  receipt.failed=String(cancellation.error??error);
  const info=await lstat(executable).catch(()=>undefined);
@@ -699,16 +698,28 @@ finally{
  }
  await new Promise(resolve=>server.close(resolve));
  if(cancellation.cancelled){receipt.cancelled={signal:cancellation.error.signal};receipt.failed=String(cancellation.error);}
- if(!profileRetained&&(retainUpdateProfile||receipt.failed)){
+ if(retainUpdateProfile||receipt.failed){
   receipt.generatedProfilesRemoved=false;receipt.retainedProfile=profile;
-  console.error('Generated native fixture kept for inspection without an accepted checkpoint: '+profile);
- }else if(!profileRetained){
+  if(receipt.failed)console.error('Generated native fixture kept for inspection without an accepted checkpoint: '+profile);
+ }else{
   // No awaited boundary between the cancellation check and removal: a queued
   // signal cannot resume this branch after cancellation has been recorded.
   cancellation.check();
   try{rmSync(profile,{recursive:true,force:true,maxRetries:10,retryDelay:100});receipt.generatedProfilesRemoved=true;}
   catch(error){receipt.failed=String(error);receipt.generatedProfilesRemoved=false;receipt.retainedProfile=profile;process.exitCode ||= 1;}
  }
- writeFileSync(join(evidence,'receipt.json'),JSON.stringify(receipt,null,2),{mode:0o600});
+ if(retainUpdateProfile && runCompleted && !receipt.failed){
+  try{
+   await finalizeStoreUpdateFixture({receipt,profile,receiptPath:join(evidence,'receipt.json'),checkpointPath:receipt.storeUpdateFixture.checkpointPath,storageEvidence,root:process.cwd(),checkCancellation:()=>cancellation.check(),seal:()=>{terminalSealed=true;}});
+   console.log('STORE_UPDATE_FIXTURE_RETAINED: '+receipt.storeUpdateFixture.checkpointPath+'; a real published-version upgrade remains a separate acceptance check.');
+  }catch(error){
+   // Before sealing, preserve cancellation/failure in the receipt. After
+   // sealing it may already be checkpoint-bound and must never be rewritten.
+   if(!terminalSealed){receipt.failed=String(cancellation.error??error);writeFileSync(join(evidence,'receipt.json'),JSON.stringify(receipt,null,2),{mode:0o600});}
+   process.exitCode ||= 1;console.error('Store fixture finalization failed; preserve profile and evidence: '+String(error));
+   try{writeFileSync(join(evidence,'finalization-failure.log'),String(error)+'\n',{mode:0o600,flag:'wx'});}catch(logError){console.error('Could not write finalization failure evidence: '+String(logError));}
+  }
+ }else writeFileSync(join(evidence,'receipt.json'),JSON.stringify(receipt,null,2),{mode:0o600});
+ if(runCompleted&&!receipt.failed&&!process.exitCode)console.log('Native Chromium desktop passed: real Kestrel Home/Settings, Core tab tools and approval enforcement, native tabs, web bridge isolation, durable restart, and clean shutdown'+(store?', plus native Store install and functional extension restart.':'.'));
  process.removeListener('SIGINT',onInt);process.removeListener('SIGTERM',onTerm);
 }

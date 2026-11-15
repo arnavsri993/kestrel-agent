@@ -1,9 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { appendFile, cp, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, cp, mkdtemp, open, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
-import { loadRetainedStoreUpdateFixture, retainStoreUpdateFixture } from "./native-store-update-profile.mjs";
+import { loadRetainedStoreUpdateFixture, retainStoreUpdateFixture, storeFixturePendingName, storeFixtureFailureName } from "./native-store-update-profile.mjs";
 import { selectNativeBrowserFixtureStorage, prepareNativeBrowserFixtureProfile, captureNativeBrowserFixtureStorage } from "./native-browser-fixture-storage.mjs";
 
 vi.mock("./native-vault-canary-candidate.mjs", () => ({
@@ -136,4 +136,83 @@ it("refuses a checkpoint that removes or substitutes the receipt's storage mode"
 	checkpoint.fixtureStorage = { ...paths.storageEvidence, mode: "test-key" };
 	await writeFile(paths.checkpointPath, JSON.stringify(checkpoint));
 	await expect(loadRetainedStoreUpdateFixture(paths.checkpointPath)).rejects.toThrow();
+});
+
+it("publishes a loadable checkpoint only after the terminal receipt is sealed", async () => {
+ const paths = await fixture(() => {}, true);
+ const { finalizeStoreUpdateFixture } = await import('./native-store-update-finalization.mjs');
+ const receipt = JSON.parse(await readFile(paths.receiptPath, 'utf8'));
+ Object.assign(receipt, { cleanup: { forced: false, cleanupUnconfirmed: false }, exactCandidateAbsent: true,
+  generatedProfilesRemoved: false, retainedProfile: paths.profile });
+ let sealed = false;
+ const checkpoint = await finalizeStoreUpdateFixture({ ...paths, receipt, checkCancellation: () => expect(sealed).toBe(false), seal: () => { sealed = true; } });
+ expect(sealed).toBe(true);
+ const sealedBytes = await readFile(paths.receiptPath);
+ expect(await loadRetainedStoreUpdateFixture(paths.checkpointPath)).toEqual(checkpoint);
+ expect(await readFile(paths.receiptPath)).toEqual(sealedBytes);
+ expect(JSON.parse(sealedBytes).exactCandidateAbsent).toBe(true);
+ expect(await readdir(join(paths.checkpointPath, '..'))).not.toContain(storeFixturePendingName);
+});
+
+it.each(['cleanup failure', 'cancelled', 'late cancellation'])('does not publish after %s', async mode => {
+ const paths = await fixture();
+ const { finalizeStoreUpdateFixture } = await import('./native-store-update-finalization.mjs');
+ const receipt = JSON.parse(await readFile(paths.receiptPath, 'utf8'));
+ Object.assign(receipt, { cleanup: { forced: mode === 'cleanup failure', cleanupUnconfirmed: false }, exactCandidateAbsent: true,
+  generatedProfilesRemoved: false, retainedProfile: paths.profile });
+ if (mode === 'cancelled') { receipt.cancelled = { signal: 'SIGTERM' }; receipt.failed = 'cancelled'; }
+ let sealed = false;
+ await expect(finalizeStoreUpdateFixture({ ...paths, receipt, checkCancellation: () => { if (mode === 'late cancellation') throw Error('cancelled'); }, seal: () => { sealed = true; } })).rejects.toThrow();
+ expect(sealed).toBe(false);
+ await expect(readFile(paths.checkpointPath)).rejects.toThrow(/ENOENT/);
+});
+
+it('keeps the pending marker when cancellation arrives immediately before sealing', async () => {
+ const paths = await fixture();
+ const { finalizeStoreUpdateFixture } = await import('./native-store-update-finalization.mjs');
+ const receipt = JSON.parse(await readFile(paths.receiptPath, 'utf8'));
+ Object.assign(receipt, { cleanup: { forced: false }, exactCandidateAbsent: true,
+  generatedProfilesRemoved: false, retainedProfile: paths.profile });
+ let checks = 0, sealed = false;
+ await expect(finalizeStoreUpdateFixture({ ...paths, receipt, checkCancellation: () => { if (++checks === 2) throw Error('cancelled'); }, seal: () => { sealed = true; } })).rejects.toThrow('cancelled');
+ expect(sealed).toBe(false);
+ expect(await readFile(join(paths.checkpointPath, '..', storeFixturePendingName), 'utf8')).toContain('pending');
+ await expect(loadRetainedStoreUpdateFixture(paths.checkpointPath)).rejects.toThrow(/finalization is incomplete/);
+});
+
+it.each(['sync', 'close'])('rejects a complete checkpoint when its %s fails after sealing', async method => {
+ const paths = await fixture();
+ const { finalizeStoreUpdateFixture } = await import('./native-store-update-finalization.mjs');
+ const receipt = JSON.parse(await readFile(paths.receiptPath, 'utf8'));
+ Object.assign(receipt, { cleanup: { forced: false }, exactCandidateAbsent: true,
+  generatedProfilesRemoved: false, retainedProfile: paths.profile });
+ const probe = await open(paths.receiptPath, 'r');
+ const prototype = Object.getPrototypeOf(probe);
+ await probe.close();
+ const originalSync = prototype.sync;
+ const syncSpy = vi.spyOn(prototype, 'sync').mockImplementation(async function (...args) {
+  const result = await originalSync.call(this, ...args);
+  if (method === 'sync') throw Error('injected sync failure');
+  const originalClose = this.close;
+  this.close = async function (...closeArgs) {
+   await originalClose.apply(this, closeArgs);
+   throw Error('injected close failure');
+  };
+  return result;
+ });
+ try {
+  await expect(finalizeStoreUpdateFixture({ ...paths, receipt, checkCancellation: () => {}, seal: () => {} })).rejects.toThrow(`injected ${method} failure`);
+ } finally { syncSpy.mockRestore(); }
+ expect(JSON.parse(await readFile(paths.checkpointPath, 'utf8')).kind).toBe('native-store-update-fixture');
+ expect(await readFile(join(paths.checkpointPath, '..', storeFixturePendingName), 'utf8')).toContain('pending');
+ await expect(loadRetainedStoreUpdateFixture(paths.checkpointPath)).rejects.toThrow(/finalization is incomplete/);
+});
+
+it.each(['pending symlink', 'failure log'])('rejects a checkpoint with %s', async kind => {
+ const paths = await fixture();
+ await retainStoreUpdateFixture(paths);
+ const marker = join(paths.checkpointPath, '..', kind === 'pending symlink' ? storeFixturePendingName : storeFixtureFailureName);
+ if (kind === 'pending symlink') await symlink('missing-target', marker);
+ else await writeFile(marker, 'failure');
+ await expect(loadRetainedStoreUpdateFixture(paths.checkpointPath)).rejects.toThrow(/finalization is incomplete/);
 });
