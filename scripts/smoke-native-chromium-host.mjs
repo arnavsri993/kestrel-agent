@@ -107,6 +107,18 @@ function waitForExit(child, timeoutMs) {
 	});
 }
 
+async function waitForProfileProcessesToExit(profiles, timeoutMs) {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const rows = execFileSync("/bin/ps", ["-axo", "command="], { encoding: "utf8" })
+			.split("\n")
+			.filter((command) => profiles.some((profile) => command.includes(profile)));
+		if (rows.length === 0) return true;
+		await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+	}
+	return false;
+}
+
 async function startNativeHost(args, requiredMarkers, label) {
 	let output = "";
 	const child = spawn(executable, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -316,6 +328,13 @@ try {
 		}
 	}
 	await new Promise((resolvePromise) => userBrowserServer.close(resolvePromise));
+	try {
+		if (!await waitForProfileProcessesToExit([directProfile, ...bridgeProfiles], 5_000)) {
+			shutdownError ??= new Error("Native Chromium helpers still reference generated profiles; preserving them.");
+		}
+	} catch (error) {
+		shutdownError ??= error;
+	}
 	if (shutdownError) throw shutdownError;
 	await rm(directProfile, { recursive: true, force: true });
 	await Promise.all(
