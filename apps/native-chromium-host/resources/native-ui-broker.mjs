@@ -298,6 +298,10 @@ async function shutdown(code = 0) {
 	const deadline = setTimeout(() => core.kill("SIGKILL"), 12_000);
 	await new Promise((done) => { if (core.exitCode !== null || core.signalCode !== null) done(); else core.once("exit", done); });
 	clearTimeout(timer); clearTimeout(deadline);
+	// The native owner must not mistake a failed Core shutdown for a clean
+	// profile release. In particular, a SIGTERM/SIGKILL fallback is not proof
+	// that Core completed its own durable shutdown.
+	if (core.exitCode !== 0 || core.signalCode !== null) code = code || 1;
 	await rm(socketDirectory, { recursive: true, force: true });
 	// Destroy the launch secret, preserving browser/profile state.
 	await rm(join(extensionRoot, configName), { force: true });

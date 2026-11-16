@@ -38,7 +38,7 @@
     "test:chromium-context-dialog": "node scripts/smoke-native-context-dialog.mjs",
     "test:chromium-system-integration": "node --test apps/native-chromium-host/tests/native_system_integration.test.mjs",
     "test:chromium-external-urls": "node --test apps/native-chromium-host/tests/native_external_url_plist.test.mjs",
-    "test:native-dev-lifecycle": "node --test apps/native-chromium-host/tests/native_dev_lifecycle.test.mjs apps/native-chromium-host/tests/native_core_relay_shutdown.test.mjs",
+    "test:native-dev-lifecycle": "node --test apps/native-chromium-host/tests/native_dev_lifecycle.test.mjs apps/native-chromium-host/tests/native_core_relay_shutdown.test.mjs apps/native-chromium-host/tests/native_ui_broker_shutdown.test.mjs",
     "test:chromium-browser-settings": "node scripts/smoke-native-browser-settings.mjs",
     "test:chromium-ui": "vitest run apps/native-chromium-host/resources packages/shared-types/src/renderer-bridge.test.ts packages/shared-types/src/chrome-web-store.test.ts packages/shared-types/src/request-timeouts.test.ts packages/shared-types/src/native-request-frame.test.ts",
     "dev:native-chromium-host": "node scripts/dev-native-chromium-host.mjs",

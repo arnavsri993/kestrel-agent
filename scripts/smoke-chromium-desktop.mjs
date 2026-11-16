@@ -37,8 +37,12 @@ async function connect(endpoint){
 }
 const store=process.env.KESTREL_TEST_REAL_CHROME_WEB_STORE==='1';
 const requireExtensionParity=process.env.KESTREL_TEST_REQUIRE_CHROMIUM_EXTENSION_PARITY==='1';
+const storeFormatterOnly=process.env.KESTREL_TEST_STORE_FORMATTER_ONLY==='1';
 const retainUpdateProfile=process.env.KESTREL_TEST_KEEP_STORE_UPDATE_PROFILE==='1';
 assert(!requireExtensionParity||store,'Strict Chromium extension parity requires the real Store flow.');
+assert(!storeFormatterOnly||store,'Formatter-only Store acceptance requires the real Store flow.');
+assert(!storeFormatterOnly||!requireExtensionParity,'Formatter-only Store acceptance cannot satisfy full extension parity.');
+assert(!storeFormatterOnly||!retainUpdateProfile,'Store-update fixture preparation requires full Store acceptance.');
 assert(!retainUpdateProfile||(store&&!requireExtensionParity),'Store-update fixture retention requires a real Store preparation run, separate from strict extension acceptance.');
 const fixtureStorage=await selectNativeBrowserFixtureStorage({candidate:resolve(process.env.KESTREL_NATIVE_TEST_APP||'.tmp/native-chromium-host/Kestrel.app'),root:process.cwd()});
 const app=fixtureStorage.candidate;
@@ -69,7 +73,7 @@ const formatter='bcjindcccaagfpapjjmafapmmgkkhgoa';
 // JSON Formatter is a content-only MV3 extension. Use the official uBO Lite
 // Store package for the separate background-worker and action-popup probes.
 const actionExtension='ddkjiahejlhfcafbddmgiahcphecmpfh';
-receipt={kind:'native-chromium-desktop-receipt',at:new Date().toISOString(),candidate:app,candidateSha256:fixtureStorage.candidateSha256,executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),fixtureStorageMode:fixtureStorage.mode,storeRequested:store,extensionParityRequired:requireExtensionParity,lifecycleRequested:lifecycle,phases:[]};
+receipt={kind:'native-chromium-desktop-receipt',at:new Date().toISOString(),candidate:app,candidateSha256:fixtureStorage.candidateSha256,executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),fixtureStorageMode:fixtureStorage.mode,storeRequested:store,storeAcceptanceMode:store?(storeFormatterOnly?'formatter-only':'full-extension-parity'):'not-requested',extensionParityRequired:requireExtensionParity,lifecycleRequested:lifecycle,phases:[]};
 const jsonFixture={source:'kestrel-native-canary',nested:{installedExtensionRuns:true},values:[1,2,3]};
 const isolationFixtures=createIsolationFixtures();
 const isolatedDownloadFixtures=createIsolatedDownloadFixtures();
@@ -501,6 +505,7 @@ try{
   assert(installed,'Native Store installation was not observed.');
   receipt.phases.push({phase:'native-web-store-install',passed:true,extension:{id:installed.id,version:installed.version,enabled:installed.enabled},windowIds,panelTarget:panel.targetId});
   await formatterRuns('native-extension-functional');
+  if(!storeFormatterOnly){
   const actionListingCreated=await home.evaluate(url=>window.kestrel.request({type:'browser-create-tab',input:url}),`https://chromewebstore.google.com/detail/ublock-origin-lite/${actionExtension}`);assert(actionListingCreated.ok,actionListingCreated.error);
   const actionListing=await createdPage(url=>url.includes(`/detail/ublock-origin-lite/${actionExtension}`));
   const actionListingState=await home.evaluate(()=>window.kestrel.request({type:'browser-get-state'}));
@@ -674,6 +679,7 @@ try{
   receipt.extensionParity.passed=Object.values(extensionParity.checks).every(Boolean);
   receipt.phases.push({phase:'native-chromium-extension-parity-after-official-store-install',passed:receipt.extensionParity.passed,checks:extensionParity.checks,missing:extensionParity.missing,updateCheck:extensionParity.updateCheck});
   if(!receipt.extensionParity.passed)console.log(`Native Chromium extension parity INCOMPLETE: ${extensionParity.missing.map(item=>item.capability).join(', ')||'required check not passed'}.`);
+  }
  }
  await close();
  const restarted=await start();
@@ -703,9 +709,11 @@ try{
   const extensions=await restarted.home.evaluate(()=>window.kestrel.request({type:'browser-list-extensions'}));
   const installed=extensions.extensions?.find(item=>item.id===formatter),actionInstalled=extensions.extensions?.find(item=>item.id===actionExtension);
   assert(installed?.enabled,'Chrome-installed content extension must survive full restart.');
-  assert(actionInstalled?.enabled,'Chrome-installed action extension must survive full restart.');
+  if(!storeFormatterOnly)assert(actionInstalled?.enabled,'Chrome-installed action extension must survive full restart.');
   await formatterRuns('native-extension-functional-after-restart');
-  receipt.phases.push({phase:'native-extension-restart',passed:true,id:installed.id,version:installed.version,actionExtension:{id:actionInstalled.id,version:actionInstalled.version,enabled:actionInstalled.enabled}});
+  const restartPhase={phase:'native-extension-restart',passed:true,id:installed.id,version:installed.version};
+  if(actionInstalled)restartPhase.actionExtension={id:actionInstalled.id,version:actionInstalled.version,enabled:actionInstalled.enabled};
+  receipt.phases.push(restartPhase);
   if(receipt.extensionParity){receipt.extensionParity.checks.storePersistence=true;receipt.extensionParity.restartEvidence={extensionId:formatter,installed:true,enabled:installed.enabled,version:installed.version,functionalAfterRestart:true,actionExtension:{id:actionInstalled.id,version:actionInstalled.version,enabled:actionInstalled.enabled}};receipt.extensionParity.passed=Object.values(receipt.extensionParity.checks).every(Boolean);receipt.phases.push({phase:'native-chromium-extension-parity-final',passed:receipt.extensionParity.passed,checks:receipt.extensionParity.checks,missing:receipt.extensionParity.missing,updateCheck:receipt.extensionParity.updateCheck,restartEvidence:receipt.extensionParity.restartEvidence});}
   if(retainUpdateProfile){
    const provenance=await home.evaluate(ids=>Promise.all(ids.map(id=>new Promise((resolve,reject)=>chrome.management.get(id,item=>{const error=chrome.runtime.lastError;if(error)reject(Error(error.message));else resolve({id:item.id,version:item.version,enabled:item.enabled,installType:item.installType});})))),[formatter,actionExtension]);
