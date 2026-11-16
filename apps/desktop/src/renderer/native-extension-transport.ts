@@ -19,7 +19,10 @@ interface NativeChromeUi {
 		onChanged: { addListener(callback: (changes: Record<string, { newValue?: unknown }>, area: string) => void): void; removeListener(callback: (changes: Record<string, { newValue?: unknown }>, area: string) => void): void };
 	};
 	windows?: { getCurrent(): Promise<{ id?: number }> };
-	tabs?: { getCurrent(): Promise<{ id?: number } | undefined> };
+	tabs?: {
+		getCurrent(): Promise<{ id?: number } | undefined>;
+		query?(query: { active: boolean; currentWindow: boolean }): Promise<Array<{ id?: number }>>;
+	};
 	sidePanel?: {
 		open(options: { windowId: number }): Promise<void>;
 		close(options: { windowId: number }): Promise<void>;
@@ -30,13 +33,20 @@ const chromeUi = (globalThis as typeof globalThis & { chrome?: NativeChromeUi })
 const runtime = chromeUi?.runtime;
 export const nativeChromiumSurface = typeof location !== "undefined" && location.protocol === "chrome-extension:" && runtime?.id === location.hostname;
 export const nativeChromiumPanel = nativeChromiumSurface && new URLSearchParams(location.search).get("surface") === "panel";
+export const nativeChromiumFrameShell = nativeChromiumSurface && new URLSearchParams(location.search).get("surface") === "frame";
 let nativeWindowId: number | undefined;
 const openPanelsKey = "kestrel.native.openPanels.v1";
 const tabIdsKey = "kestrel.native.browser.tabIds.v1";
 const inactiveDocumentStatus: NativeDocumentTabStatus = { state: "loading" };
 const documentTabResolver = nativeChromiumSurface && !nativeChromiumPanel
 	? createNativeDocumentTabResolver({
-		getCurrent: () => chromeUi?.tabs?.getCurrent() ?? Promise.resolve(undefined),
+		getCurrent: async () => {
+			if (nativeChromiumFrameShell) {
+				const active = await chromeUi?.tabs?.query?.({ active: true, currentWindow: true });
+				return active?.[0];
+			}
+			return chromeUi?.tabs?.getCurrent() ?? undefined;
+		},
 		readMapping: async () => (await chromeUi?.storage?.session.get(tabIdsKey))?.[tabIdsKey],
 		subscribeMapping: callback => {
 			// Chrome's event supports removeListener; keep the subscription scoped to
@@ -117,7 +127,7 @@ export function openNativeAgentPanel(): Promise<void> {
 	return chromeUi.sidePanel.open({ windowId: nativeWindowId });
 }
 export function closeNativeAgentPanel(): Promise<void> {
-	if (!nativeChromiumPanel || nativeWindowId === undefined || !chromeUi?.sidePanel) return Promise.reject(new Error("Kestrel's agent panel is not available in this window."));
+	if ((!nativeChromiumPanel && !nativeChromiumFrameShell) || nativeWindowId === undefined || !chromeUi?.sidePanel) return Promise.reject(new Error("Kestrel's agent panel is not available in this window."));
 	return chromeUi.sidePanel.close({ windowId: nativeWindowId });
 }
 
@@ -125,7 +135,7 @@ export function closeNativeAgentPanel(): Promise<void> {
 // transport into user tabs; the worker authenticates its native channel first.
 if (nativeChromiumSurface && runtime) {
 	document.documentElement.dataset.desktopRuntime = "chromium";
-	document.documentElement.dataset.nativeSurface = nativeChromiumPanel ? "panel" : "home";
+	document.documentElement.dataset.nativeSurface = nativeChromiumPanel ? "panel" : nativeChromiumFrameShell ? "frame" : "home";
 	const port = runtime.connect({ name: "kestrel-ui" });
 	let sequence = 0;
 	let closed = false;

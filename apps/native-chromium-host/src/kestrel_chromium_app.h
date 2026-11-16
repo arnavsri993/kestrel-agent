@@ -30,7 +30,8 @@ class KestrelChromiumApp final : public CefApp,
       bool user_extensions_enabled = false,
       std::string isolated_profile_root = {},
       DefaultClient default_client = {},
-      std::string desktop_ui_path = {});
+      std::string desktop_ui_path = {},
+      std::string desktop_ui_extension_id = {});
 
   void OnBeforeCommandLineProcessing(
       const CefString& process_type,
@@ -64,6 +65,7 @@ class KestrelChromiumApp final : public CefApp,
   bool user_extensions_enabled_;
   const std::string isolated_profile_root_;
   const std::string desktop_ui_path_;
+  const std::string desktop_ui_extension_id_;
   CefRefPtr<CefMessageRouterRendererSide> renderer_router_;
 
   IMPLEMENT_REFCOUNTING(KestrelChromiumApp);

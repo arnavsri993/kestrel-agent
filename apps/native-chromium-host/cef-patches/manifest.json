@@ -48,12 +48,14 @@
     {
       "repository": "chromium",
       "file": "chromium-kestrel-vault.patch",
-      "sha256": "206ba986491546ccbdfc3de467fd7d3c43e99e75877963bb33939d9b82c82099",
+      "sha256": "aef75146da004dc38c70807a3ee1a85e1aea7db331fce85635a40ba14dd2b859",
       "targets": [
         "chrome/browser/browser_process_impl.cc",
         "components/os_crypt/async/browser/BUILD.gn",
         "components/os_crypt/async/browser/kestrel_vault_key_provider.cc",
-        "components/os_crypt/async/browser/kestrel_vault_key_provider.h"
+        "components/os_crypt/async/browser/kestrel_vault_key_provider.h",
+        "chrome/browser/ui/views/frame/browser_view.cc",
+        "chrome/browser/ui/views/frame/browser_view.h"
       ],
       "upstreamFiles": [
         {
@@ -63,6 +65,14 @@
         {
           "path": "components/os_crypt/async/browser/BUILD.gn",
           "sha256": "754f8314492ebd25784459941db056d356222d3c3b5a81309338de066d6290d8"
+        },
+        {
+          "path": "chrome/browser/ui/views/frame/browser_view.cc",
+          "sha256": "1f50fd9bd07c94240a180e004fdec4469356f256fc936936363541f740942e0a"
+        },
+        {
+          "path": "chrome/browser/ui/views/frame/browser_view.h",
+          "sha256": "0672990c45e87d45d3b0918a1fa46d14b1de078203f93c9d8ba0bd42036af766"
         }
       ]
     }

@@ -71,9 +71,11 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
  public:
   using NativeComputerReply = std::function<void(const std::string&, bool, const std::string&, const std::string&)>;
   DesktopClient(std::string ui_url, NativeIsolatedAutomation::Reply automation_reply,
-                NativeComputerReply native_computer_reply)
+                NativeComputerReply native_computer_reply,
+                bool browser_frame_enabled)
       : ui_url_(std::move(ui_url)), automation_reply_(std::move(automation_reply)),
-        native_computer_reply_(std::move(native_computer_reply)) {}
+        native_computer_reply_(std::move(native_computer_reply)),
+        browser_frame_enabled_(browser_frame_enabled) {}
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
@@ -179,7 +181,10 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
     CefWindowInfo window;
     window.runtime_style = CEF_RUNTIME_STYLE_CHROME;
     CefBrowserSettings settings;
-    CefBrowserHost::CreateBrowserSync(window, this, url.empty() ? ui_url_ : url, settings, nullptr, nullptr);
+    const std::string initial_url = url.empty()
+        ? (browser_frame_enabled_ ? "about:blank" : ui_url_)
+        : url;
+    CefBrowserHost::CreateBrowserSync(window, this, initial_url, settings, nullptr, nullptr);
   }
   void Reopen() {
     if (closing_) return;
@@ -200,12 +205,14 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
   void OpenUiWhenReady() {
     if (!document_ready_ || ui_opened_ || !first_browser_) return;
     ui_opened_ = true;
+    if (browser_frame_enabled_) return;
     const std::string url = first_browser_->GetMainFrame()->GetURL();
     if (url.empty() || url == "about:blank") first_browser_->GetMainFrame()->LoadURL(ui_url_);
   }
   const std::string ui_url_;
   NativeIsolatedAutomation::Reply automation_reply_;
   NativeComputerReply native_computer_reply_;
+  const bool browser_frame_enabled_;
   std::set<std::string> native_computer_cancelled_;
   std::set<std::string> native_computer_active_;
   std::mutex native_computer_mutex_;
@@ -763,7 +770,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     if (!bytes || bytes.length > 1'048'576) return;
     NSMutableData* line = [bytes mutableCopy]; [line appendBytes:"\n" length:1];
     @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) { /* Broker shutdown settles its pending requests. */ }
-  });
+  }, true);
   desktop_broker_input = input.fileHandleForWriting;
   const std::string key_profile(core_profile.fileSystemRepresentation);
   const auto key_owner = native_core_key_dispatcher.BeginOwner(
@@ -1156,7 +1163,8 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     window.runtime_style = CEF_RUNTIME_STYLE_CHROME;
     CefBrowserSettings browser_settings;
     if (!CefBrowserHost::CreateBrowserSync(window, desktop_client, "about:blank", browser_settings, nullptr, nullptr)) CefQuitMessageLoop();
-  }, false, true, std::string(profile.UTF8String), [] { return desktop_client; }, ui_path);
+  }, false, true, std::string(profile.UTF8String), [] { return desktop_client; },
+      ui_path, std::string(extension_id.UTF8String));
   id<NSApplicationDelegate> owner_delegate = NSApp.delegate;
   if (!CefInitialize(args, settings, app, nullptr)) { native_core_key_dispatcher.InvalidateOwner(key_owner); [broker terminate]; desktop_client = nullptr; desktop_broker_input = nil; return CefGetExitCode(); }
   // CEF initializes Chromium's app controller during startup. Install our

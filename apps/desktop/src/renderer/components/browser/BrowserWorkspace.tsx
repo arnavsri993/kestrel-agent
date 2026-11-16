@@ -28,7 +28,7 @@ import {
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import { BookmarksBar } from "./BookmarksBar";
-import { nativeChromiumPanel, nativeChromiumSurface, useNativeDocumentTabId } from "../../native-extension-transport";
+import { nativeChromiumFrameShell, nativeChromiumPanel, nativeChromiumSurface, useNativeDocumentTabId } from "../../native-extension-transport";
 import { BrowserToolbar } from "./BrowserToolbar";
 import { BookmarkDialog, type BookmarkDialogSaveInput } from "./BookmarkDialog";
 import { ChromeWebStoreInstallBar } from "./ChromeWebStoreInstallBar";
@@ -874,23 +874,24 @@ export function BrowserWorkspace({
   }
 
   const showBookmarksBar = !nativeChromiumSurface && state.settings.showBookmarksBar && !activeTab.url;
+  const tabLayout = nativeChromiumFrameShell ? "horizontal" : state.settings.tabLayout;
 
   return (
     <main
-      className={`browser-workspace browser-workspace-${state.settings.tabLayout}${
+      className={`browser-workspace browser-workspace-${tabLayout}${
         showBookmarksBar ? " browser-workspace-bookmarks" : ""
       }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}${
         findOpen ? " browser-workspace-find-open" : ""
-      }`}
+      }${nativeChromiumFrameShell ? " browser-workspace-native-frame-shell" : ""}`}
       aria-label="Browser"
     >
       {navigationSidebar}
-      {!nativeChromiumSurface && <TabStrip
+      {(!nativeChromiumSurface || nativeChromiumFrameShell) && <TabStrip
         tabs={state.tabs}
         originFavicons={state.originFavicons}
         tabFolders={state.tabFolders}
         activeTabId={state.activeTabId}
-        orientation={state.settings.tabLayout}
+        orientation={tabLayout}
         onSelect={(tabId) => void selectTab(tabId)}
         onClose={(tabId) => closeTab(tabId)}
         onCreate={() => void createTab()}
@@ -922,16 +923,18 @@ export function BrowserWorkspace({
         onTabSizingChange={(tabSizing) => {
           void browser.updateSettings({ tabSizing });
         }}
-        onToggleOrientation={() => {
-          void browser.updateSettings({
-            tabLayout:
-              state.settings.tabLayout === "vertical"
-                ? "horizontal"
-                : "vertical",
-          });
-        }}
+        {...(!nativeChromiumFrameShell && {
+          onToggleOrientation: () => {
+            void browser.updateSettings({
+              tabLayout:
+                state.settings.tabLayout === "vertical"
+                  ? "horizontal"
+                  : "vertical",
+            });
+          },
+        })}
       />}
-      {!nativeChromiumSurface && <BrowserToolbar
+      {(!nativeChromiumSurface || nativeChromiumFrameShell) && <BrowserToolbar
         tab={activeTab}
         history={state.history}
         bookmarks={state.bookmarks}

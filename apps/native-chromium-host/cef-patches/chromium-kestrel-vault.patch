@@ -193,3 +193,246 @@ index 0000000000000000000000000000000000000000..31c37c8ca205719a4c1df9eb7d285356
 +
 +}  // namespace os_crypt_async
 +#endif  // COMPONENTS_OS_CRYPT_ASYNC_BROWSER_KESTREL_VAULT_KEY_PROVIDER_H_
+
+diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
+index b68f089..fac76ba 100644
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -22,0 +23 @@
++#include "base/files/file_path.h"
+@@ -26,0 +28 @@
++#include "base/logging.h"
+@@ -52,0 +55,2 @@
++#include "chrome/browser/extensions/extension_view_host.h"
++#include "chrome/browser/extensions/extension_view_host_factory.h"
+@@ -157,0 +162 @@
++#include "chrome/browser/ui/views/extensions/extension_view_views.h"
+@@ -296,0 +302,2 @@
++#include "content/public/browser/navigation_handle.h"
++#include "content/public/browser/web_contents_observer.h"
+@@ -310,0 +318,2 @@
++#include "extensions/browser/extension_registry.h"
++#include "extensions/browser/extension_registry_observer.h"
+@@ -311,0 +321 @@
++#include "extensions/common/extension.h"
+@@ -365,0 +376 @@
++#include "url/gurl.h"
+@@ -426,0 +438,65 @@ using web_modal::WebContentsModalDialogHost;
++class KestrelBrowserFrameLoadObserver final
++    : public content::WebContentsObserver {
++ public:
++  KestrelBrowserFrameLoadObserver(content::WebContents* contents,
++                                  GURL expected_url)
++      : content::WebContentsObserver(contents),
++        expected_url_(std::move(expected_url)) {}
++
++  void DidFinishNavigation(
++      content::NavigationHandle* navigation_handle) override {
++    if (reported_ || !navigation_handle->HasCommitted() ||
++        !navigation_handle->IsInPrimaryMainFrame() ||
++        navigation_handle->GetURL() != expected_url_) {
++      return;
++    }
++    reported_ = true;
++    LOG(INFO) << "KESTREL_CHROMIUM_BROWSER_FRAME_DOCUMENT_LOADED";
++    // Keep existing native smoke receipts bound to the real Kestrel document.
++    LOG(INFO) << "KESTREL_CHROMIUM_DESKTOP_DOCUMENT_LOADED";
++  }
++
++ private:
++  const GURL expected_url_;
++  bool reported_ = false;
++};
++
++class KestrelBrowserFrameExtensionObserver final
++    : public extensions::ExtensionRegistryObserver {
++ public:
++  KestrelBrowserFrameExtensionObserver(
++      extensions::ExtensionRegistry* registry,
++      std::string extension_id,
++      base::RepeatingClosure on_loaded,
++      base::RepeatingClosure on_unloaded)
++      : extension_id_(std::move(extension_id)),
++        on_loaded_(std::move(on_loaded)),
++        on_unloaded_(std::move(on_unloaded)) {
++    observation_.Observe(registry);
++  }
++
++  void OnExtensionLoaded(content::BrowserContext*,
++                         const extensions::Extension* extension) override {
++    if (extension->id() == extension_id_) {
++      on_loaded_.Run();
++    }
++  }
++
++  void OnExtensionUnloaded(
++      content::BrowserContext*,
++      const extensions::Extension* extension,
++      extensions::UnloadedExtensionReason) override {
++    if (extension->id() == extension_id_) {
++      on_unloaded_.Run();
++    }
++  }
++
++ private:
++  const std::string extension_id_;
++  base::RepeatingClosure on_loaded_;
++  base::RepeatingClosure on_unloaded_;
++  base::ScopedObservation<extensions::ExtensionRegistry,
++                          extensions::ExtensionRegistryObserver>
++      observation_{this};
++};
++
+@@ -4889,0 +4966,35 @@ void BrowserView::Layout(PassKey) {
++  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
++          "kestrel-browser-frame")) {
++    constexpr int kKestrelFrameHeight = 82;
++    if (top_container_) {
++      top_container_->SetVisible(false);
++    }
++    if (horizontal_tab_strip_region_view_) {
++      horizontal_tab_strip_region_view_->SetVisible(false);
++    }
++    if (vertical_tab_strip_region_view_) {
++      vertical_tab_strip_region_view_->SetVisible(false);
++    }
++    if (kestrel_frame_view_) {
++      kestrel_frame_view_->SetBounds(0, 0, width(), kKestrelFrameHeight);
++    }
++    const int infobar_height =
++        infobar_container_ ? infobar_container_->height() : 0;
++    if (infobar_container_) {
++      infobar_container_->SetBounds(0, kKestrelFrameHeight, width(),
++                                    infobar_height);
++    }
++    if (multi_contents_view_) {
++      multi_contents_view_->SetBounds(
++          0, kKestrelFrameHeight + infobar_height, width(),
++          std::max(0, height() - kKestrelFrameHeight - infobar_height));
++    }
++    if (side_panel_) {
++      gfx::Rect side_panel_bounds = side_panel_->bounds();
++      side_panel_bounds.set_y(kKestrelFrameHeight);
++      side_panel_bounds.set_height(
++          std::max(0, height() - kKestrelFrameHeight));
++      side_panel_->SetBoundsRect(side_panel_bounds);
++    }
++  }
++
+@@ -4987,0 +5099 @@ void BrowserView::AddedToWidget() {
++    MaybeCreateKestrelBrowserFrame();
+@@ -5179,0 +5292,87 @@ void BrowserView::AddedToWidget() {
++  MaybeCreateKestrelBrowserFrame();
++}
++
++void BrowserView::MaybeCreateKestrelBrowserFrame() {
++  const base::CommandLine* command_line =
++      base::CommandLine::ForCurrentProcess();
++  if (!command_line->HasSwitch("kestrel-browser-frame")) {
++    return;
++  }
++
++  const std::string extension_id =
++      command_line->GetSwitchValueASCII("kestrel-shell-extension-id");
++  const base::FilePath extension_path =
++      command_line->GetSwitchValuePath("kestrel-shell-extension-path");
++  if (extension_id.size() != 32 ||
++      extension_id.find_first_not_of("abcdefghijklmnop") != std::string::npos ||
++      extension_path.empty()) {
++    LOG(ERROR) << "Kestrel browser frame is missing its trusted extension "
++                  "identity.";
++    return;
++  }
++
++  extensions::ExtensionRegistry* registry =
++      extensions::ExtensionRegistry::Get(GetProfile());
++  if (!registry) {
++    LOG(ERROR) << "Kestrel browser frame cannot access the profile extension "
++                  "registry.";
++    return;
++  }
++
++  const extensions::Extension* extension =
++      registry->enabled_extensions().GetByID(extension_id);
++  if (extension) {
++    if (extension->path() != extension_path) {
++      LOG(ERROR) << "Kestrel browser frame extension path did not match its "
++                    "startup identity.";
++      return;
++    }
++    if (kestrel_frame_view_) {
++      return;
++    }
++
++    const GURL frame_url("chrome-extension://" + extension_id +
++                         "/index.html?surface=frame");
++    kestrel_frame_host_ =
++        extensions::ExtensionViewHostFactory::CreateSidePanelHost(
++            *extension, frame_url, browser_, /*tab_interface=*/nullptr);
++    if (!kestrel_frame_host_) {
++      LOG(ERROR) << "Kestrel browser frame extension host creation failed.";
++      return;
++    }
++
++    kestrel_frame_load_observer_ =
++        std::make_unique<KestrelBrowserFrameLoadObserver>(
++            kestrel_frame_host_->web_contents(), frame_url);
++    auto frame_view = std::make_unique<ExtensionViewViews>(
++        GetProfile(), kestrel_frame_host_.get());
++    frame_view->Init();
++    kestrel_frame_view_ = AddChildView(std::move(frame_view));
++    kestrel_frame_view_->SetVisible(true);
++    DeprecatedLayoutImmediately();
++    return;
++  }
++
++  if (!kestrel_frame_extension_observer_) {
++    kestrel_frame_extension_observer_ =
++        std::make_unique<KestrelBrowserFrameExtensionObserver>(
++            registry, extension_id,
++            base::BindRepeating(
++                &BrowserView::MaybeCreateKestrelBrowserFrame,
++                weak_ptr_factory_.GetWeakPtr()),
++            base::BindRepeating(&BrowserView::DestroyKestrelBrowserFrame,
++                                weak_ptr_factory_.GetWeakPtr()));
++    LOG(INFO) << "Kestrel browser frame is waiting for its bundled UI extension.";
++  }
++}
++
++void BrowserView::DestroyKestrelBrowserFrame() {
++  kestrel_frame_load_observer_.reset();
++  if (kestrel_frame_view_) {
++    views::View* parent = kestrel_frame_view_->parent();
++    if (parent) {
++      parent->RemoveChildViewT(kestrel_frame_view_).reset();
++    }
++    kestrel_frame_view_ = nullptr;
++  }
++  kestrel_frame_host_.reset();
+@@ -5182,0 +5382 @@ void BrowserView::RemovedFromWidget() {
++  DestroyKestrelBrowserFrame();
+diff --git a/chrome/browser/ui/views/frame/browser_view.h b/chrome/browser/ui/views/frame/browser_view.h
+index 6c4807b..d838984 100644
+--- a/chrome/browser/ui/views/frame/browser_view.h
++++ b/chrome/browser/ui/views/frame/browser_view.h
+@@ -105,0 +106,7 @@ class WebAppFrameToolbarView;
++class ExtensionViewViews;
++class KestrelBrowserFrameLoadObserver;
++class KestrelBrowserFrameExtensionObserver;
++
++namespace extensions {
++class ExtensionViewHost;
++}  // namespace extensions
+@@ -1076,0 +1084,2 @@ class BrowserView : public BrowserWindow,
++  void MaybeCreateKestrelBrowserFrame();
++  void DestroyKestrelBrowserFrame();
+@@ -1410,0 +1420,9 @@ class BrowserView : public BrowserWindow,
++  // Kestrel owns the visible browser frame; Chromium still owns the window,
++  // BrowserView, TabStripModel, extension hosts, and web contents.
++  std::unique_ptr<extensions::ExtensionViewHost> kestrel_frame_host_;
++  std::unique_ptr<KestrelBrowserFrameLoadObserver>
++      kestrel_frame_load_observer_;
++  std::unique_ptr<KestrelBrowserFrameExtensionObserver>
++      kestrel_frame_extension_observer_;
++  raw_ptr<ExtensionViewViews> kestrel_frame_view_ = nullptr;
++

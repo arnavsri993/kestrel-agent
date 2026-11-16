@@ -84,9 +84,9 @@ test('source revision or file mismatch stops before modifying source', async () 
   }
 });
 
-test.skipIf(process.env.KESTREL_VERIFY_UPSTREAM_PATCHES !== '1')('patches apply to SHA256-verified small pinned upstream fixture', async () => {
+test.skipIf(process.env.KESTREL_VERIFY_UPSTREAM_PATCHES !== '1')('patches apply to SHA256-verified bounded pinned upstream fixture', async () => {
   const result = await verifyUpstreamPatchFixture();
   assert.equal(result.patchAppliesToPinnedUpstream, true);
-  assert.ok(result.downloadedBytes > 0 && result.downloadedBytes < 300_000);
+  assert.ok(result.downloadedBytes > 0 && result.downloadedBytes < 600_000);
   assert.equal(result.compiledOrRuntimeVerified, false);
 });

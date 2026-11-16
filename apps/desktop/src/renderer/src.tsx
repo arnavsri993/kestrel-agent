@@ -1,4 +1,4 @@
-import { nativeChromiumSurface } from "./native-extension-transport";
+import { nativeChromiumFrameShell, nativeChromiumSurface } from "./native-extension-transport";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
@@ -23,6 +23,7 @@ import "./glass-menus.css";
 import "./native-chromium.css";
 import { ActionMotion } from "./components/ActionMotion";
 import { App } from "./App";
+import { NativeChromiumFrameApp } from "./NativeChromiumFrameApp";
 import { CalculatorOverlay } from "./components/browser/CalculatorOverlay";
 import { PasswordOverlay } from "./components/browser/PasswordOverlay";
 import { PaymentOverlay } from "./components/browser/PaymentOverlay";
@@ -69,7 +70,7 @@ ReactDOM.createRoot(root).render(
 			<>
 				<ActionMotion />
 				{!nativeChromiumSurface && <WindowControls />}
-				<App />
+				{nativeChromiumFrameShell ? <NativeChromiumFrameApp /> : <App />}
 			</>
 		)}
 	</React.StrictMode>,

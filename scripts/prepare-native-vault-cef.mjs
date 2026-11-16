@@ -148,7 +148,7 @@ export function verifySourceTrees(sourceRoot, { requireGitPins = true } = {}) {
   return roots;
 }
 
-// Downloads only the five manifest-pinned original files (<300 KB total),
+// Downloads only the manifest-pinned original files (<600 KB total),
 // into a disposable fixture. This never clones/checks out a full engine.
 export async function verifyUpstreamPatchFixture({ cacheRoot = path.join(repositoryRoot, '.tmp') } = {}) {
   verifyPatchDigests();
@@ -170,9 +170,9 @@ export async function verifyUpstreamPatchFixture({ cacheRoot = path.join(reposit
         let bytes = 0;
         for await (const chunk of response.body) {
           bytes += chunk.length;
-          if (bytes > 150_000 || downloadedBytes + bytes > 300_000) {
+          if (bytes > 250_000 || downloadedBytes + bytes > 600_000) {
             await response.body.cancel().catch(() => {});
-            throw new Error('Pinned-source fixture exceeded the 300 KB download budget.');
+            throw new Error('Pinned-source fixture exceeded the 600 KB download budget.');
           }
           chunks.push(chunk);
         }

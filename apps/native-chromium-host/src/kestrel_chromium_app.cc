@@ -180,13 +180,15 @@ KestrelChromiumApp::KestrelChromiumApp(
     bool user_extensions_enabled,
     std::string isolated_profile_root,
     DefaultClient default_client,
-    std::string desktop_ui_path)
+    std::string desktop_ui_path,
+    std::string desktop_ui_extension_id)
     : on_context_initialized_(std::move(on_context_initialized)),
       default_client_(std::move(default_client)),
       extension_workbench_(extension_workbench),
       user_extensions_enabled_(user_extensions_enabled),
       isolated_profile_root_(std::move(isolated_profile_root)),
-      desktop_ui_path_(std::move(desktop_ui_path)) {}
+      desktop_ui_path_(std::move(desktop_ui_path)),
+      desktop_ui_extension_id_(std::move(desktop_ui_extension_id)) {}
 
 void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     const CefString& process_type,
@@ -200,8 +202,20 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     // testing trials can request helper bundle types Kestrel does not ship.
     command_line->AppendSwitch("disable-field-trial-config");
     if (!desktop_ui_path_.empty()) {
+      if (desktop_ui_extension_id_.size() != 32 ||
+          desktop_ui_extension_id_.find_first_not_of("abcdefghijklmnop") !=
+              std::string::npos) {
+        std::cerr << "Kestrel's native browser frame has no valid UI extension identity."
+                  << std::endl;
+        return;
+      }
       command_line->RemoveSwitch("disable-extensions");
       command_line->AppendSwitchWithValue("load-extension", desktop_ui_path_);
+      command_line->AppendSwitch("kestrel-browser-frame");
+      command_line->AppendSwitchWithValue("kestrel-shell-extension-id",
+                                          desktop_ui_extension_id_);
+      command_line->AppendSwitchWithValue("kestrel-shell-extension-path",
+                                          desktop_ui_path_);
     }
     const bool mock_keychain =
         kestrel::ConfigureKeychainPolicy(*command_line);
