@@ -5,6 +5,7 @@ import { constants } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { candidateDigest } from "./native-retirement-evidence.mjs";
 import { markDisposableNativeTestProfile, validateDisposableNativeTestProfile } from "./native-test-profile.mjs";
 import { validateVaultCanaryCandidate } from "./native-vault-canary-candidate.mjs";
@@ -25,14 +26,37 @@ function stateFor(storage) {
 }
 function assertCandidateStopped(candidate) {
  const rows = execFileSync("/bin/ps", ["-axo", "pid=,comm="], { encoding: "utf8", timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
+ const running = [];
  for (const row of rows.split(/\r?\n/)) {
   const match = row.trim().match(/^\d+\s+(.+)$/);
-  assert(!match || !match[1].startsWith(`${candidate}/`), "A selected candidate process is still running.");
+  if (match && match[1].startsWith(`${candidate}/`)) running.push(`${row.trim()}`);
+ }
+ if (running.length) {
+  const error = new Error(`A selected candidate process is still running: ${running.join(", ")}`);
+  error.code = "KESTREL_CANDIDATE_RUNNING";
+  throw error;
  }
 }
 // Do not terminate any process: callers own their launch and cleanup lifecycle.
 export function assertNativeBrowserFixtureStopped(storage) {
  assertCandidateStopped(stateFor(storage).candidate);
+}
+// Process exit can precede the last short-lived Chromium helper's exit. Keep
+// the strict preflight assertion synchronous, but let post-shutdown callers
+// observe the owned bundle for a bounded interval before declaring a leak.
+export async function waitForNativeBrowserFixtureStopped(storage, { timeoutMs = 10_000, pollMs = 100 } = {}) {
+ assert(Number.isInteger(timeoutMs) && timeoutMs >= 0 && timeoutMs <= 60_000, "Invalid candidate shutdown timeout.");
+ assert(Number.isInteger(pollMs) && pollMs > 0 && pollMs <= 1_000, "Invalid candidate shutdown polling interval.");
+ const deadline = Date.now() + timeoutMs;
+ for (;;) {
+  try {
+   assertNativeBrowserFixtureStopped(storage);
+   return;
+  } catch (error) {
+   if (error?.code !== "KESTREL_CANDIDATE_RUNNING" || Date.now() >= deadline) throw error;
+  }
+  await delay(Math.min(pollMs, Math.max(1, deadline - Date.now())));
+ }
 }
 async function profileInfo(profile) {
  assert.equal(typeof profile, "string");

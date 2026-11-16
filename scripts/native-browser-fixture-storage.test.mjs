@@ -14,7 +14,7 @@ import { validateVaultCanaryCandidate } from "./native-vault-canary-candidate.mj
 import { execFileSync } from "node:child_process";
 import { selectNativeBrowserFixtureStorage, prepareNativeBrowserFixtureProfile, adoptRetainedNativeBrowserFixtureProfile, nativeBrowserFixtureStorageArgs,
  nativeBrowserFixtureStorageEnv, captureNativeBrowserFixtureStorage, validateRetainedNativeBrowserFixtureStorage,
- assertNativeBrowserFixtureStopped } from "./native-browser-fixture-storage.mjs";
+ assertNativeBrowserFixtureStopped, waitForNativeBrowserFixtureStopped } from "./native-browser-fixture-storage.mjs";
 
 const magic = Buffer.from([0x4b,0x53,0x54,0x56,0x4c,0x54,1,0,1,2,3]);
 let candidate, profile, cleanup = [], previous;
@@ -189,6 +189,19 @@ describe("generated native browser fixture storage", () => {
   expect(() => assertNativeBrowserFixtureStopped(f.storage)).not.toThrow();
   vi.mocked(execFileSync).mockImplementation(() => { throw Error("process inventory unavailable"); });
   expect(() => assertNativeBrowserFixtureStopped(f.storage)).toThrow("process inventory unavailable");
+ });
+ it("waits for an owned Chromium helper to exit after the browser process stops", async () => {
+  const f = await fixture();
+  vi.mocked(execFileSync)
+   .mockReturnValueOnce(` 123 ${candidate}/Contents/Frameworks/Kestrel Helper.app/Contents/MacOS/Kestrel Helper\n`)
+   .mockReturnValueOnce(" 1 /sbin/launchd\n");
+  await expect(waitForNativeBrowserFixtureStopped(f.storage, { timeoutMs: 100, pollMs: 1 })).resolves.toBeUndefined();
+ });
+ it("fails closed when an owned Chromium helper remains after the shutdown deadline", async () => {
+  const f = await fixture();
+  vi.mocked(execFileSync).mockReturnValue(` 123 ${candidate}/Contents/Frameworks/Kestrel Helper.app/Contents/MacOS/Kestrel Helper\n`);
+  await expect(waitForNativeBrowserFixtureStopped(f.storage, { timeoutMs: 5, pollMs: 1 }))
+   .rejects.toThrow(/candidate process is still running.*123/);
  });
  it("rejects changed candidate and vault", async () => {
   const f = await fixture();

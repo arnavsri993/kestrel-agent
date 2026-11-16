@@ -12,7 +12,8 @@ import { tsImport } from "tsx/esm/api";
 import { candidateDigest } from "./native-retirement-evidence.mjs";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
 import { selectNativeBrowserFixtureStorage, prepareNativeBrowserFixtureProfile, nativeBrowserFixtureStorageArgs,
-	nativeBrowserFixtureStorageEnv, captureNativeBrowserFixtureStorage, assertNativeBrowserFixtureStopped } from "./native-browser-fixture-storage.mjs";
+	nativeBrowserFixtureStorageEnv, captureNativeBrowserFixtureStorage, assertNativeBrowserFixtureStopped,
+	waitForNativeBrowserFixtureStopped } from "./native-browser-fixture-storage.mjs";
 import { observeNativeTabOwnership } from "./native-tab-ownership-observation.mjs";
 
 /**
@@ -144,7 +145,7 @@ if (storage.mode === "production-vault") {
 		assert(outcome, "Production-vault profile initializer did not stop.");
 		assert.deepEqual(outcome, { code: 0, signal: null }, initializerOutput);
 		await initializerBrowser.close().catch(() => {}); initializerBrowser = undefined;
-		assertNativeBrowserFixtureStopped(storage);
+		await waitForNativeBrowserFixtureStopped(storage);
 		storageInitialization = await captureNativeBrowserFixtureStorage({ profile, storage });
 		initializerCleanExit = true;
 	} finally {
@@ -153,7 +154,7 @@ if (storage.mode === "production-vault") {
 			initializer.kill("SIGKILL");
 			await Promise.race([exited, delay(15000)]);
 		}
-		try { assertNativeBrowserFixtureStopped(storage); }
+		try { await waitForNativeBrowserFixtureStopped(storage); }
 		catch (error) { process.stderr.write(`Retained generated profile because initializer shutdown is unconfirmed: ${profile}\n${String(error)}\n`); }
 		if (!initializerCleanExit) process.stderr.write(`Production-vault profile initialization failed; retained fixture: ${profile}\n${initializerOutput}\n`);
 	}
@@ -626,7 +627,7 @@ try {
 		await browser.close().catch(() => {});
 		browser = undefined;
 		child = undefined;
-		assertNativeBrowserFixtureStopped(storage);
+		await waitForNativeBrowserFixtureStopped(storage);
 		stops.push({ launch, code: result.code, signal: result.signal, candidateProcessesStopped: true });
 	}
 	console.log(
@@ -699,7 +700,7 @@ try {
 	await new Promise((resolveClose) => server.close(resolveClose));
 	if (storage.mode === "production-vault") {
 		try {
-			assertNativeBrowserFixtureStopped(storage);
+			await waitForNativeBrowserFixtureStopped(storage);
 			if (resultPassed && stops.length === 2) await rm(profile, { recursive: true, force: true });
 			else process.stderr.write(`Retained generated production-vault profile for failed-run review: ${profile}\n`);
 		} catch (error) {
