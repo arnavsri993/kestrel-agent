@@ -7,10 +7,14 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from '@playwright/test';
 import { candidateDigest } from './native-retirement-evidence.mjs';
-import { markDisposableNativeTestProfile } from './native-test-profile.mjs';
+import { selectNativeBrowserFixtureStorage, prepareNativeBrowserFixtureProfile, nativeBrowserFixtureStorageArgs,
+ nativeBrowserFixtureStorageEnv, captureNativeBrowserFixtureStorage, assertNativeBrowserFixtureStopped } from './native-browser-fixture-storage.mjs';
 
 assert(process.env.KESTREL_NATIVE_TEST_APP, 'Select the exact disposable native candidate.');
-const app = await realpath(resolve(process.env.KESTREL_NATIVE_TEST_APP));
+const selectedApp = await realpath(resolve(process.env.KESTREL_NATIVE_TEST_APP));
+const storage = await selectNativeBrowserFixtureStorage({ candidate: selectedApp, root: process.cwd() });
+const app = storage.candidate;
+assert.equal(app, selectedApp, 'Fixture storage must use the exact selected candidate.');
 assert(app.endsWith('.app') && !app.startsWith('/Applications/'), 'Use a disposable candidate.');
 const executable = await realpath(join(app, 'Contents/MacOS/Kestrel'));
 async function assertStopped() {
@@ -23,13 +27,13 @@ await assertStopped();
 const evidence = resolve(process.env.KESTREL_NATIVE_BOOKMARK_EVIDENCE || `.tmp/native-bookmarks-${Date.now()}`);
 await mkdir(evidence, { recursive: true, mode: 0o700 });
 assert.equal((await readdir(evidence)).length, 0, 'Use an empty evidence directory.');
-const profile = await realpath(await mkdtemp(join(tmpdir(), 'kestrel-native-bookmarks-')));
-await markDisposableNativeTestProfile(profile);
+const profile = await realpath(await mkdtemp(join(tmpdir(), 'kestrel-chromium-desktop-canary-')));
+await prepareNativeBrowserFixtureProfile({ profile, storage });
 const server = createServer((_request, response) => { response.writeHead(200, { 'content-type': 'text/html' }); response.end('<title>Generated bookmark page</title><h1>Generated bookmark page</h1>'); });
 await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen));
 const pageUrl = `http://127.0.0.1:${server.address().port}/generated-bookmark`;
-const receipt = { version: 1, startedAt: new Date().toISOString(), candidate: app, candidateSha256: await candidateDigest(app),
- scope: 'Generated normal native Chromium profile and loopback page; actual Kestrel Saved pages controls and Chrome bookmark APIs. No real profile, Keychain or permissions.', phases: [] };
+const receipt = { version: 1, startedAt: new Date().toISOString(), candidate: app, candidateSha256: storage.candidateSha256,
+ fixtureStorageMode: storage.mode, scope: 'Generated native Chromium profile and loopback page; actual Kestrel Saved pages controls and Chrome bookmark APIs. No real profile, Keychain or permissions. Fixture storage mode is recorded separately; this is not release acceptance.', phases: [], launches: [], stops: [] };
 let running, browser, home, library, endpoint, stopped = true, interrupted = false, stage = 'start';
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { interrupted = true; if (running?.child.exitCode === null) running.child.kill('SIGTERM'); });
 const phase = name => { receipt.phases.push({ phase: name, passed: true }); console.log(`PASS ${name}`); };
@@ -41,13 +45,28 @@ async function eventually(fn, message, timeout = 30000) {
 async function request(input) { return home.evaluate(input => window.kestrel.request(input), input); }
 async function state() { const result = await request({ type: 'browser-get-state' }); assert(result.ok); return result.browserState; }
 async function start() {
- await assertStopped(); const state = { output: '' };
- state.child = spawn(executable, ['--kestrel-chromium-desktop', '--kestrel-cache-path', profile, '--kestrel-durable-profile', '--kestrel-test-profile-key', '--remote-debugging-port=0'], { stdio: ['ignore', 'pipe', 'pipe'] });
+ await assertStopped(); assertNativeBrowserFixtureStopped(storage); const state = { output: '' };
+ const storageArgs = nativeBrowserFixtureStorageArgs(storage);
+ if (storage.mode === 'production-vault') assert.deepEqual(storageArgs, [], 'Production storage must not use test or mock flags.');
+ state.child = spawn(executable, ['--kestrel-chromium-desktop', '--kestrel-cache-path', profile, '--kestrel-durable-profile', ...storageArgs, ...(storage.mode === 'production-vault' ? ['--enable-automation'] : []), '--remote-debugging-port=0'], { stdio: ['ignore', 'pipe', 'pipe'], env: nativeBrowserFixtureStorageEnv(storage) });
  state.exited = new Promise(resolveExit => state.child.once('exit', (code, signal) => resolveExit({ code, signal })));
  running = state; stopped = false; endpoint = undefined;
- for (const stream of [state.child.stdout, state.child.stderr]) stream.on('data', bytes => { state.output = (state.output + bytes).slice(-200000); });
- await eventually(() => { assert.equal(state.child.exitCode, null, 'Owned app exited.'); endpoint = state.output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+)/)?.[1]; return endpoint; }, 'Owned native endpoint missing.');
+ for (const stream of [state.child.stdout, state.child.stderr]) stream.on('data', bytes => {
+  state.output = (state.output + bytes).slice(-200000);
+  state.systemPolicy ||= state.output.includes('KESTREL_NATIVE_KEYCHAIN_POLICY selected=system');
+  state.mockPolicy ||= state.output.includes('KESTREL_NATIVE_KEYCHAIN_POLICY selected=mock');
+ });
+ await eventually(() => { assert.equal(state.child.exitCode, null, 'Owned app exited.'); if (storage.mode === 'production-vault') assert(!state.mockPolicy, 'Mock storage selected.'); endpoint = state.output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+)/)?.[1]; return endpoint && (storage.mode !== 'production-vault' || state.systemPolicy); }, 'Owned native endpoint or production policy missing.');
  browser = await chromium.connectOverCDP(endpoint, { noDefaults: true });
+ if (storage.mode === 'production-vault') {
+  const session = await browser.newBrowserCDPSession();
+  try {
+   const { arguments: args } = await session.send('Browser.getBrowserCommandLine');
+   assert(Array.isArray(args) && args.includes('--kestrel-durable-profile'), 'Effective durable profile switch missing.');
+   assert(!args.some(arg => /^--(?:use-mock-keychain|kestrel-real-keychain|kestrel-test-profile-key)(?:=|$)/.test(arg)), 'Non-production storage switch present.');
+  } finally { await session.detach(); }
+ }
+ receipt.launches.push({ pid: state.child.pid, ...(storage.mode === 'production-vault' ? { nativePolicy: 'system', effectiveProductionStorageSwitches: true } : {}) });
  await eventually(async () => {
   home = browser.contexts().flatMap(context => context.pages()).find(item => /chrome-extension:\/\/[^/]+\/index.html$/.test(item.url()));
   if (home) return true;
@@ -64,8 +83,11 @@ async function stop() {
  const current = running; running = undefined;
  if (current.child.exitCode === null && current.child.signalCode === null) current.child.kill('SIGTERM');
  const result = await Promise.race([current.exited, delay(15000, undefined, { ref: false }).then(() => { current.child.kill('SIGKILL'); throw Error('Owned app shutdown unconfirmed.'); })]);
- stopped = true; assert.deepEqual(result, { code: 0, signal: null });
+ assert.deepEqual(result, { code: 0, signal: null });
  await browser?.close().catch(() => {}); browser = undefined; library = undefined;
+ if (storage.mode === 'production-vault') assert(current.systemPolicy && !current.mockPolicy, 'Production policy was not retained.');
+ await eventually(() => { try { assertNativeBrowserFixtureStopped(storage); return true; } catch { return false; } }, 'Candidate processes did not stop.', 10000);
+ stopped = true; receipt.stops.push({ pid: current.child.pid, ...result, candidateProcessesStopped: true });
 }
 async function openLibrary() {
  const result = await request({ type: 'browser-create-tab', input: 'kestrel://bookmarks' }); assert(result.ok);
@@ -168,7 +190,10 @@ try {
  const file = JSON.parse(await readFile(join(profile, 'Default/Bookmarks'), 'utf8'));
  const persisted = flatten(Object.values(file.roots)).find(item => item.url === pageUrl);
  assert.equal(persisted?.name, ''); assert.equal(persisted.id, nativeBefore.id);
- phase('Chromium-bookmarks-file-confirms-final-data-after-clean-exit'); receipt.result = 'passed';
+ phase('Chromium-bookmarks-file-confirms-final-data-after-clean-exit');
+ receipt.fixtureStorage = await captureNativeBrowserFixtureStorage({ profile, storage });
+ assert.equal(receipt.fixtureStorage.mode, storage.mode);
+ receipt.result = 'passed';
 } catch (error) {
  receipt.result = 'failed'; receipt.failedStage = stage; receipt.error = String(error?.message || error).slice(0, 500); process.exitCode = 1;
  await library?.screenshot({ path: join(evidence, 'failed-saved-pages.png') }).catch(() => {});

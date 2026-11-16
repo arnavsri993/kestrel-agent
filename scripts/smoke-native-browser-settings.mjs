@@ -10,12 +10,15 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from '@playwright/test';
 import { candidateDigest } from './native-retirement-evidence.mjs';
 import { selectSettingsSection } from './desktop-browser-test-helpers.mjs';
-import { markDisposableNativeTestProfile } from './native-test-profile.mjs';
+import { selectNativeBrowserFixtureStorage, prepareNativeBrowserFixtureProfile, nativeBrowserFixtureStorageArgs,
+ nativeBrowserFixtureStorageEnv, captureNativeBrowserFixtureStorage, assertNativeBrowserFixtureStopped } from './native-browser-fixture-storage.mjs';
 
 // This test launches only a caller-selected, noncanonical candidate with a new
 // private profile. Never use it to exercise the user's installed application.
 assert(process.env.KESTREL_NATIVE_TEST_APP, 'Set KESTREL_NATIVE_TEST_APP to the exact disposable candidate.');
-const app = await realpath(resolve(process.env.KESTREL_NATIVE_TEST_APP));
+const storage = await selectNativeBrowserFixtureStorage({ candidate: resolve(process.env.KESTREL_NATIVE_TEST_APP), root: process.cwd() });
+const app = storage.candidate;
+assert.equal(storage.mode, process.env.KESTREL_TEST_NATIVE_LOCAL_VAULT === '1' ? 'production-vault' : 'test-key');
 const canonical = await realpath('/Applications/Kestrel.app').catch(() => '/Applications/Kestrel.app');
 assert.notEqual(app, canonical, 'The canonical app cannot be used by this canary.');
 assert(app.endsWith('.app'), 'Candidate must be an app bundle.');
@@ -29,14 +32,14 @@ for (const row of processRows) {
  const existing = await realpath(match[2]).catch(() => '');
  assert.notEqual(existing, candidateExecutable, 'The candidate is already running; the canary requires its own single instance.');
 }
-const profile = await mkdtemp(join(tmpdir(), 'kestrel-settings-canary-'));
-await markDisposableNativeTestProfile(profile);
+const profile = await realpath(await mkdtemp(join(tmpdir(), 'kestrel-chromium-desktop-canary-')));
+await prepareNativeBrowserFixtureProfile({ profile, storage });
 const helper = join(profile, 'send-external-url');
 try { execFileSync('/usr/bin/xcrun', ['clang++', '-std=c++17', '-fobjc-arc', '-framework', 'Foundation', resolve('apps/native-chromium-host/tests/send_external_url.mm'), '-o', helper], { timeout: 30000, stdio: 'pipe' }); }
 catch (error) { await rm(profile, { recursive: true, force: true }); throw error; }
 const evidence = resolve(process.env.KESTREL_NATIVE_SETTINGS_EVIDENCE || '.tmp/native-browser-settings-evidence');
 await mkdir(evidence, { recursive: true, mode: 0o700 });
-const receipt = { version: 1, startedAt: new Date().toISOString(), candidate: app, candidateSha256: await candidateDigest(app), phases: [] };
+const receipt = { version: 1, startedAt: new Date().toISOString(), candidate: app, candidateSha256: await candidateDigest(app), storageMode: storage.mode, launches: [], stops: [], phases: [] };
 const server = createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<!doctype html><title>Owned URL canary</title><h1>Owned URL canary</h1>'); });
 await new Promise(done => server.listen(0, '127.0.0.1', done));
 const origin = `http://127.0.0.1:${server.address().port}`;
@@ -81,9 +84,16 @@ async function installIdentityFault(page) {
 }
 async function start(coldUrl) {
  output = '';
- const args = ['--kestrel-chromium-desktop', '--kestrel-cache-path', profile, '--kestrel-durable-profile', '--kestrel-test-profile-key', '--remote-debugging-port=0'];
+ assertNativeBrowserFixtureStopped(storage);
+ assert.equal(await candidateDigest(app), receipt.candidateSha256);
+ const args = ['--kestrel-chromium-desktop', '--kestrel-cache-path', profile, '--kestrel-durable-profile', ...nativeBrowserFixtureStorageArgs(storage), '--remote-debugging-port=0'];
+ if (storage.mode === 'production-vault') {
+  assert(!args.some(arg => /test-profile-key|mock-keychain|real-keychain/i.test(arg)));
+  args.push('--enable-automation');
+ }
  if (coldUrl) args.push(coldUrl);
- child = spawn(executable, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+ child = spawn(executable, args, { stdio: ['ignore', 'pipe', 'pipe'], env: nativeBrowserFixtureStorageEnv(storage) });
+ receipt.launches.push({ pid: child.pid });
  child.stdout.on('data', b => { output += b; }); child.stderr.on('data', b => { output += b; });
  endpoint = await eventually(() => {
   assert.equal(child.exitCode, null, output);
@@ -94,6 +104,15 @@ async function start(coldUrl) {
   return output.includes('KESTREL_CHROMIUM_DESKTOP_DOCUMENT_LOADED') && output.includes('KESTREL_CHROMIUM_DESKTOP_BRIDGE_READY');
  }, 'Owned UI document and authenticated bridge were not ready');
  browser = await chromium.connectOverCDP(endpoint, { noDefaults: true });
+ if (storage.mode === 'production-vault') {
+  const session = await browser.newBrowserCDPSession();
+  try {
+   const { arguments: effective } = await session.send('Browser.getBrowserCommandLine');
+   assert(Array.isArray(effective) && effective.includes('--kestrel-durable-profile'));
+   assert(!effective.some(arg => /^--(?:use-mock-keychain|kestrel-real-keychain|kestrel-test-profile-key)(?:=|$)/.test(arg)));
+   assert(!output.includes('KESTREL_NATIVE_KEYCHAIN_POLICY selected=mock'));
+  } finally { await session.detach(); }
+ }
  home = await pageFor(url => /^chrome-extension:\/\/[^/]+\/index\.html$/.test(url));
  await home.waitForFunction(() => typeof window.kestrel?.request === 'function', undefined, { polling: 100 });
  await home.evaluate(() => { localStorage.setItem('kestrel:onboarded', 'yes'); localStorage.setItem('kestrel:default-browser-prompted', 'yes'); });
@@ -104,13 +123,22 @@ async function start(coldUrl) {
  return home;
 }
 async function stop() {
- if (!child || child.exitCode !== null || child.signalCode !== null) return;
- const exited = new Promise(done => child.once('exit', (code, signal) => done({ code, signal })));
- child.kill('SIGTERM');
+ if (!child) return;
+ const current = child;
+ assert(current.exitCode === null && current.signalCode === null, 'Owned candidate exited before clean shutdown');
+ const exited = new Promise(done => current.once('exit', (code, signal) => done({ code, signal })));
+ current.kill('SIGTERM');
  const result = await Promise.race([exited, delay(15000).then(() => null)]);
- if (!result) { child.kill('SIGKILL'); throw new Error('Owned candidate did not shut down.'); }
+ if (!result) { current.kill('SIGKILL'); await exited; throw new Error('Owned candidate did not shut down.'); }
  assert.deepEqual(result, { code: 0, signal: null }, output);
- await browser?.close().catch(() => {}); browser = undefined; child = undefined;
+ await browser?.close().catch(() => {}); browser = undefined;
+ const deadline = Date.now() + 10000;
+ for (;;) {
+  try { assertNativeBrowserFixtureStopped(storage); break; }
+  catch (error) { if (Date.now() >= deadline) throw error; await delay(100); }
+ }
+ receipt.stops.push({ pid: current.pid, ...result });
+ child = undefined;
 }
 function crc32(bytes) { let c = 0xffffffff; for (const b of bytes) { c ^= b; for (let i = 0; i < 8; i++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)); } return (c ^ 0xffffffff) >>> 0; }
 function chunk(type, data) { const name = Buffer.from(type); const size = Buffer.alloc(4); size.writeUInt32BE(data.length); const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(Buffer.concat([name, data]))); return Buffer.concat([size, name, data, crc]); }
@@ -421,7 +449,9 @@ try {
  assert(reopenedSessions.ok && reopenedSessions.sessions?.some(item => item.id === sessionId), 'Core session was lost after all windows closed');
  assert.equal(ownedCorePid(), corePid, 'Closing and reopening windows must reuse the same Core process');
  phase('external-url-reopens-last-window-and-preserves-Core-session', { windowId: reopenedWindow, sessionId, corePid, backgroundHomeBridgeVerified: true, visibleHomeSidebarVerified: true });
- await stop(); receipt.result = 'passed';
+ await stop();
+ receipt.fixtureStorage = await captureNativeBrowserFixtureStorage({ profile, storage });
+ receipt.result = 'passed';
 } catch (error) {
  receipt.result = 'failed'; receipt.error = String(error?.stack || error);
  try { if (home && !home.isClosed()) receipt.documentAtFailure = await home.evaluate(() => ({ bridgeReady: typeof window.kestrel?.request === 'function', identityAttempts: window.__nativeIdentityAttempts, injectedFailure: sessionStorage.getItem('kestrel-test-document-id'), visibility: document.visibilityState, text: document.body.innerText.slice(0, 2000) })); } catch {}
@@ -444,6 +474,10 @@ try {
  await new Promise(done => server.close(done));
  try { receipt.candidateSha256After = await candidateDigest(app); if (receipt.candidateSha256After !== receipt.candidateSha256) { receipt.result = 'failed'; receipt.candidateChanged = true; process.exitCode = 1; } } catch (error) { receipt.result = 'failed'; receipt.digestError = String(error); process.exitCode = 1; }
  receipt.finishedAt = new Date().toISOString();
- await writeFile(join(evidence, 'runtime.log'), output); await writeFile(join(evidence, 'receipt.json'), JSON.stringify(receipt, null, 2));
- await rm(profile, { recursive: true, force: true });
+ await writeFile(join(evidence, 'runtime.log'), output);
+ if (!child || (child.exitCode !== null || child.signalCode !== null)) {
+  try { assertNativeBrowserFixtureStopped(storage); await rm(profile, { recursive: true, force: true }); receipt.generatedProfileRemoved = true; }
+  catch (error) { receipt.generatedProfileRemoved = false; receipt.result = 'failed'; receipt.cleanupError = String(error); process.exitCode = 1; }
+ } else { receipt.generatedProfileRemoved = false; receipt.result = 'failed'; process.exitCode = 1; }
+ await writeFile(join(evidence, 'receipt.json'), JSON.stringify(receipt, null, 2));
 }

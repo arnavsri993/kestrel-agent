@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -9,8 +9,10 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "@playwright/test";
 import { tsImport } from "tsx/esm/api";
+import { candidateDigest } from "./native-retirement-evidence.mjs";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
-import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
+import { selectNativeBrowserFixtureStorage, prepareNativeBrowserFixtureProfile, nativeBrowserFixtureStorageArgs,
+	nativeBrowserFixtureStorageEnv, captureNativeBrowserFixtureStorage, assertNativeBrowserFixtureStopped } from "./native-browser-fixture-storage.mjs";
 import { observeNativeTabOwnership } from "./native-tab-ownership-observation.mjs";
 
 /**
@@ -20,13 +22,26 @@ import { observeNativeTabOwnership } from "./native-tab-ownership-observation.mj
  */
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const configuredApp = process.env.KESTREL_NATIVE_TEST_APP?.trim();
-const app = configuredApp || (await buildNativeChromiumHost());
+const suppliedApp = configuredApp || (await buildNativeChromiumHost());
+const storage = await selectNativeBrowserFixtureStorage({ candidate: suppliedApp, root });
+const app = storage.candidate;
+assert.equal(storage.mode, process.env.KESTREL_TEST_NATIVE_LOCAL_VAULT === "1" ? "production-vault" : "test-key");
 const executable = join(app, "Contents/MacOS/Kestrel");
 const executableSha256 = createHash("sha256").update(await readFile(executable)).digest("hex");
+const candidateSha256 = storage.candidateSha256;
 const fixture = join(root, "tests/fixtures/native-extension");
 const requireParity = process.argv.includes("--require-extension-parity");
 const normalTabModel = requireParity || process.argv.includes("--chrome-tab-model");
-const evidenceRoot = join(root, normalTabModel ? ".tmp/native-chrome-tab-model-evidence" : ".tmp/native-user-extension-evidence");
+const evidenceRoot = resolve(process.env.KESTREL_NATIVE_USER_EXTENSION_EVIDENCE ||
+	join(root, normalTabModel ? ".tmp/native-chrome-tab-model-evidence" : ".tmp/native-user-extension-evidence"));
+if (storage.mode === "production-vault") {
+	await mkdir(evidenceRoot, { recursive: true, mode: 0o700 });
+	const evidenceInfo = await lstat(evidenceRoot);
+	assert(evidenceInfo.isDirectory() && !evidenceInfo.isSymbolicLink() && evidenceInfo.uid === process.getuid() &&
+		(evidenceInfo.mode & 0o777) === 0o700 && await realpath(evidenceRoot) === evidenceRoot,
+		"Production-vault evidence directory must be owned, private and canonical.");
+	assert.equal((await readdir(evidenceRoot)).length, 0, "Production-vault evidence directory must be fresh and empty.");
+}
 const { createFileChromiumExtensionHostPort } = await tsImport(
 	"../apps/desktop/src/main/file-chromium-extension-host-port.ts", import.meta.url,
 );
@@ -72,8 +87,77 @@ assert.match(
 	/requires --kestrel-user-extensions/i,
 );
 
-const profile = await mkdtemp(join(tmpdir(), "kestrel-native-user-extensions-"));
-await markDisposableNativeTestProfile(profile);
+const profile = await realpath(await mkdtemp(join(tmpdir(), "kestrel-chromium-desktop-canary-")));
+await prepareNativeBrowserFixtureProfile({ profile, storage });
+let storageInitialization;
+if (storage.mode === "production-vault") {
+	// Provision Chromium's production vault while the generated browser profile
+	// is still empty. The extension registry is written only after that first
+	// owned launch, since a populated unsealed profile must fail closed.
+	let initializer;
+	let initializerBrowser;
+	let initializerOutput = "";
+	let initializerCleanExit = false;
+	const args = [
+		"--kestrel-cache-path", profile,
+		"--kestrel-user-extensions",
+		...(normalTabModel ? ["--kestrel-chrome-tab-model"] : ["--kestrel-chrome-extension-view"]),
+		"--kestrel-ephemeral-core", "--kestrel-renderer", "--kestrel-durable-profile",
+		"--enable-automation", "--remote-debugging-port=0",
+	];
+	assert(!args.some((arg) => /test-profile-key|mock-keychain|real-keychain/i.test(arg)));
+	assertNativeBrowserFixtureStopped(storage);
+	assert.equal(await candidateDigest(app), candidateSha256, "Selected native candidate changed before profile initialization.");
+	initializer = spawn(executable, args, { stdio: ["ignore", "pipe", "pipe"], env: nativeBrowserFixtureStorageEnv(storage) });
+	initializer.stdout.setEncoding("utf8"); initializer.stderr.setEncoding("utf8");
+	for (const stream of [initializer.stdout, initializer.stderr]) stream.on("data", (chunk) => { initializerOutput += chunk; });
+	const exited = new Promise((resolveExit) => initializer.once("exit", (code, signal) => resolveExit({ code, signal })));
+	try {
+		let endpoint;
+		for (let attempt = 0; attempt < 600; attempt++) {
+			assert.equal(initializer.exitCode, null, initializerOutput);
+			endpoint = initializerOutput.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[0-9a-f-]+)/i)?.[1];
+			if (!endpoint) {
+				try {
+					const [port, path] = (await readFile(join(profile, "DevToolsActivePort"), "utf8")).trim().split("\n");
+					if (port && path) endpoint = `ws://127.0.0.1:${port}${path}`;
+				} catch {}
+			}
+			if (endpoint) break;
+			await delay(100);
+		}
+		assert(endpoint, `Production-vault profile initialization had no DevTools endpoint: ${initializerOutput}`);
+		for (let attempt = 0; attempt < 600 && !initializerOutput.includes("KESTREL_NATIVE_CHROMIUM_RENDERER_BRIDGE_READY"); attempt++) {
+			assert.equal(initializer.exitCode, null, initializerOutput);
+			await delay(100);
+		}
+		assert.match(initializerOutput, /KESTREL_NATIVE_CHROMIUM_RENDERER_BRIDGE_READY/, initializerOutput);
+		initializerBrowser = await chromium.connectOverCDP(endpoint);
+		const session = await initializerBrowser.newBrowserCDPSession();
+		try {
+			const { arguments: effective } = await session.send("Browser.getBrowserCommandLine");
+			assert(Array.isArray(effective) && effective.includes("--kestrel-durable-profile"));
+			assert(!effective.some((arg) => /^--(?:use-mock-keychain|kestrel-real-keychain|kestrel-test-profile-key)(?:=|$)/.test(arg)));
+			await session.send("Browser.close");
+		} finally { await session.detach().catch(() => {}); }
+		const outcome = await Promise.race([exited, delay(15000).then(() => null)]);
+		assert(outcome, "Production-vault profile initializer did not stop.");
+		assert.deepEqual(outcome, { code: 0, signal: null }, initializerOutput);
+		await initializerBrowser.close().catch(() => {}); initializerBrowser = undefined;
+		assertNativeBrowserFixtureStopped(storage);
+		storageInitialization = await captureNativeBrowserFixtureStorage({ profile, storage });
+		initializerCleanExit = true;
+	} finally {
+		await initializerBrowser?.close().catch(() => {});
+		if (initializer && initializer.exitCode === null && initializer.signalCode === null) {
+			initializer.kill("SIGKILL");
+			await Promise.race([exited, delay(15000)]);
+		}
+		try { assertNativeBrowserFixtureStopped(storage); }
+		catch (error) { process.stderr.write(`Retained generated profile because initializer shutdown is unconfirmed: ${profile}\n${String(error)}\n`); }
+		if (!initializerCleanExit) process.stderr.write(`Production-vault profile initialization failed; retained fixture: ${profile}\n${initializerOutput}\n`);
+	}
+}
 const registeredFixture = join(profile, 'extension with "quotes" and spaces');
 await cp(fixture, registeredFixture, { recursive: true });
 // Verified CRX installs retain a manifest public key. Check that registry IDs
@@ -106,6 +190,8 @@ let extensionId;
 let tabsQuerySupported = true;
 let tabOwnership;
 let toolbarActionPopup = false;
+const stops = [];
+let resultPassed = false;
 
 // Chrome action bubbles have real page targets but are not consistently
 // surfaced as Playwright pages by CEF. Attach to the actual opened target;
@@ -274,6 +360,10 @@ try {
 		// Both processes load only the registration written by the actual host port.
 		output = "";
 		await rm(join(profile, "DevToolsActivePort"), { force: true });
+		assertNativeBrowserFixtureStopped(storage);
+		assert.equal(await candidateDigest(app), candidateSha256, "Selected native candidate changed before launch.");
+		const storageArgs = nativeBrowserFixtureStorageArgs(storage);
+		if (storage.mode === "production-vault") assert(!storageArgs.some((arg) => /test-profile-key|mock-keychain|real-keychain/i.test(arg)));
 		child = spawn(
 			executable,
 			[
@@ -284,12 +374,13 @@ try {
 				"--kestrel-ephemeral-core",
 				"--kestrel-renderer",
 				"--kestrel-durable-profile",
-				"--kestrel-test-profile-key",
+				...storageArgs,
+				...(storage.mode === "production-vault" ? ["--enable-automation"] : []),
 				"--remote-debugging-port=0",
 				"--kestrel-smoke-user-browser-url",
 				probeUrl,
 			],
-			{ stdio: ["ignore", "pipe", "pipe"] },
+			{ stdio: ["ignore", "pipe", "pipe"], env: nativeBrowserFixtureStorageEnv(storage) },
 		);
 		child.stdout.setEncoding("utf8");
 		child.stderr.setEncoding("utf8");
@@ -352,6 +443,16 @@ try {
 		assert.match(output, /KESTREL_NATIVE_CHROMIUM_USER_BROWSER_LOAD_OK/, output);
 
 		browser = await chromium.connectOverCDP(endpoint);
+		if (storage.mode === "production-vault") {
+			assert(!output.includes("KESTREL_NATIVE_KEYCHAIN_POLICY selected=mock"), "Mock browser storage was selected.");
+			const browserSession = await browser.newBrowserCDPSession();
+			try {
+				const { arguments: effective } = await browserSession.send("Browser.getBrowserCommandLine");
+				assert(Array.isArray(effective) && effective.includes("--kestrel-durable-profile"));
+				assert(!effective.some((arg) => /^--(?:use-mock-keychain|kestrel-real-keychain|kestrel-test-profile-key)(?:=|$)/.test(arg)),
+					"Production-vault run received a test or Keychain storage switch.");
+			} finally { await browserSession.detach(); }
+		}
 		const context = browser.contexts()[0];
 		assert(context, "Expected a CDP browser context");
 
@@ -525,6 +626,8 @@ try {
 		await browser.close().catch(() => {});
 		browser = undefined;
 		child = undefined;
+		assertNativeBrowserFixtureStopped(storage);
+		stops.push({ launch, code: result.code, signal: result.signal, candidateProcessesStopped: true });
 	}
 	console.log(
 		"Native user extension checks passed: same-window Chrome-style user view with Alloy Kestrel shell, real renderer/Core, MV3 messaging, tabs.get/tabs.query, scripting, actual DNR blocking, bridge isolation, extension identity/storage after a full app restart without reloading the extension, and clean shutdown.",
@@ -564,20 +667,26 @@ try {
 	};
 	const missing = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name);
 	const evidence = evidenceRoot;
-	assert.equal(createHash("sha256").update(await readFile(executable)).digest("hex"), executableSha256,
+	assert.equal(await candidateDigest(app), candidateSha256,
 		"The native app candidate changed while its extension checks were running");
 	await writeFile(join(evidence, "compatibility.json"), JSON.stringify({
 		version: 1,
 		app: resolve(app),
 		executableSha256,
+		candidateSha256,
 		checkedAt: new Date().toISOString(),
 		normalTabModel,
+		fixtureStorageMode: storage.mode,
+		storageInitialization,
+		stops,
+		fixtureStorage: await captureNativeBrowserFixtureStorage({ profile, storage }),
 		checks,
 		missing,
 		fullExtensionParity: missing.length === 0,
 	}, null, 2) + "\n");
 	console.log(`Native extension parity ${missing.length === 0 ? "passed" : "BLOCKED"}: ${missing.join(", ") || "all checks passed"}.`);
 	if (requireParity) assert.deepEqual(missing, [], "Electron retirement requires complete Chrome extension acceptance; fixture success alone is insufficient.");
+	resultPassed = true;
 } catch (error) {
 	console.error(output);
 	throw error;
@@ -588,5 +697,13 @@ try {
 		await new Promise((resolveKill) => child.once("exit", resolveKill));
 	}
 	await new Promise((resolveClose) => server.close(resolveClose));
-	await rm(profile, { recursive: true, force: true });
+	if (storage.mode === "production-vault") {
+		try {
+			assertNativeBrowserFixtureStopped(storage);
+			if (resultPassed && stops.length === 2) await rm(profile, { recursive: true, force: true });
+			else process.stderr.write(`Retained generated production-vault profile for failed-run review: ${profile}\n`);
+		} catch (error) {
+			process.stderr.write(`Retained generated profile because candidate shutdown is unconfirmed: ${profile}\n${String(error)}\n`);
+		}
+	} else await rm(profile, { recursive: true, force: true });
 }
