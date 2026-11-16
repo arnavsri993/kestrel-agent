@@ -225,6 +225,20 @@ async function inspectActionPopup(endpoint, expectedUrl){
   return{observed:true,targetId:target.targetId,url:target.url,title:value?.title,isolated,bridgeTypes:value};
  }finally{if(popupTargetId)await send('Target.closeTarget',{targetId:popupTargetId}).catch(()=>{});for(const waiter of pending.values()){clearTimeout(waiter.timer);waiter.reject(Error('Popup inspector closed'));}socket.close();}
 }
+async function extensionTabWindowId(endpoint,targetId,url){
+ const socket=new WebSocket(endpoint),pending=new Map();let nextId=0;
+ socket.addEventListener('message',event=>{const message=JSON.parse(event.data),waiter=pending.get(message.id);if(!waiter)return;pending.delete(message.id);clearTimeout(waiter.timer);if(message.error)waiter.reject(Error(message.error.message));else waiter.resolve(message.result);});
+ const send=(method,params={},sessionId)=>new Promise((resolve,reject)=>{const id=++nextId,timer=setTimeout(()=>{pending.delete(id);reject(Error(`CDP ${method} timed out`));},5000);pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})}));});
+ try{
+  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Window inspector connection timed out.')),5000);socket.addEventListener('open',()=>{clearTimeout(timer);resolve();},{once:true});socket.addEventListener('error',error=>{clearTimeout(timer);reject(error);},{once:true});});
+  const attached=await send('Target.attachToTarget',{targetId,flatten:true});
+  try{
+   const expression=`new Promise(resolve=>chrome.tabs.query({url:${JSON.stringify(url)}},tabs=>resolve(tabs[0]?.windowId)))`;
+   const evaluated=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},attached.sessionId);
+   return evaluated.result?.value;
+  }finally{await send('Target.detachFromTarget',{sessionId:attached.sessionId}).catch(()=>{});}
+ }finally{for(const waiter of pending.values()){clearTimeout(waiter.timer);waiter.reject(Error('Window inspector closed'));}socket.close();}
+}
 try{
  let {context,home,endpoint}=await start();
  if(fixtureStorage.mode==='production-vault'){
@@ -406,6 +420,7 @@ try{
  uiActionPage=undefined;
  const settings=await createdPage(url=>url.includes('index.html?app=settings'));await settings.waitForURL(/index.html\?app=settings/);
  await settings.locator('[data-app-page="settings"]').waitFor();
+ const settingsWindowId=await settings.evaluate(()=>new Promise(resolve=>chrome.tabs.getCurrent(tab=>resolve(tab?.windowId))));
  if(process.env.KESTREL_TEST_NATIVE_WORKSPACE==='1'||workspaceFixture)workspaceEvidence=await nativeWorkspaceCanary({settings,getHome:()=>home,profile,evidence,receipt,origin:`http://127.0.0.1:${server.address().port}`,fixtures:isolationFixtures,fixtureGranted:workspaceFixture});
  if(providers)providerEvidence=await nativeProviderCanary({settings,home,profile,evidence,receipt,endpoint});
  if(process.env.KESTREL_TEST_REAL_CODEX==='1')codexEvidence=await nativeCodexCanary({settings,home,evidence,receipt});
@@ -469,9 +484,8 @@ try{
   let panel;
   for(let i=0;i<100;i++){panel=(await session.send('Target.getTargets')).targetInfos.find(t=>t.url.includes('/index.html?surface=panel'));if(panel)break;await delay(100);}
   assert(panel,'Opening Store from Kestrel must retain the actual native agent side panel.');
-  const homeWindowId=await home.evaluate(async()=> (await chrome.windows.getCurrent()).id);
-  const settingsWindowId=await settings.evaluate(()=>new Promise(resolve=>chrome.tabs.getCurrent(tab=>resolve(tab?.windowId))));
-  const storeWindowId=await home.evaluate(url=>new Promise(resolve=>chrome.tabs.query({url},tabs=>resolve(tabs[0]?.windowId))),listing.url());
+  const homeWindowId=receipt.settingsActivationAfter.windowId;
+  const storeWindowId=await extensionTabWindowId(endpoint,panel.targetId,listing.url());
   const windowIds=[homeWindowId,settingsWindowId,storeWindowId];
   assert(windowIds.every(Number.isSafeInteger),'Home, Settings and Store must expose their real Chromium window IDs.');
   assert.equal(new Set(windowIds).size,1,'Home, Settings and Store must share one native browser window.');
