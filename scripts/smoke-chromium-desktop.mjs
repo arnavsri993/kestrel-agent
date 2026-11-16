@@ -469,9 +469,11 @@ try{
   let panel;
   for(let i=0;i<100;i++){panel=(await session.send('Target.getTargets')).targetInfos.find(t=>t.url.includes('/index.html?surface=panel'));if(panel)break;await delay(100);}
   assert(panel,'Opening Store from Kestrel must retain the actual native agent side panel.');
-  const windowIds=[];
-  const targets=(await session.send('Target.getTargets')).targetInfos;
-  for(const url of [home.url(),settings.url(),listing.url()]){const target=targets.find(target=>target.type==='page'&&target.url===url);assert(target);windowIds.push((await session.send('Browser.getWindowForTarget',{targetId:target.targetId})).windowId);}
+  const homeWindowId=await home.evaluate(async()=> (await chrome.windows.getCurrent()).id);
+  const settingsWindowId=await settings.evaluate(()=>new Promise(resolve=>chrome.tabs.getCurrent(tab=>resolve(tab?.windowId))));
+  const storeWindowId=await home.evaluate(url=>new Promise(resolve=>chrome.tabs.query({url},tabs=>resolve(tabs[0]?.windowId))),listing.url());
+  const windowIds=[homeWindowId,settingsWindowId,storeWindowId];
+  assert(windowIds.every(Number.isSafeInteger),'Home, Settings and Store must expose their real Chromium window IDs.');
   assert.equal(new Set(windowIds).size,1,'Home, Settings and Store must share one native browser window.');
   assert.equal(await listing.evaluate(()=>typeof window.kestrel),'undefined');
   await listing.screenshot({path:join(evidence,'store.png')});
