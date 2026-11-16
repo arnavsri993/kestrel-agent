@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { browserStorageProtocolDiagnostic, browserStorageProtocolError, recordBrowserStorageDiagnostic, waitForBrowserStorageHome } from "./native-browser-storage-readiness.mjs";
 
 const homeUrl = `chrome-extension://${"a".repeat(32)}/index.html`;
+const frameHomeUrl = `${homeUrl}?surface=frame`;
 const home = targetId => ({ targetId, type: "page", url: homeUrl });
 function fixture() {
  const f = { time: 0, targets: [home("first")], calls: [], operations: [], diagnostics: [], values: [], hook: () => {} };
@@ -37,6 +38,14 @@ function fixture() {
 }
 
 describe("cookie canary Home readiness", () => {
+ it("accepts the exact Kestrel browser-frame surface while retaining live-target confirmation", async () => {
+  const f = fixture();
+  f.targets = [{ ...home("frame"), url: frameHomeUrl }];
+  const result = await f.wait({ homeUrl: frameHomeUrl });
+  expect(result).toEqual({ ...home("frame"), url: frameHomeUrl });
+  expect(f.calls.filter(method => method === "Target.getTargets")).toHaveLength(2);
+ });
+
  it("re-enumerates and selects a replacement after the selected target disappears", async () => {
   const f = fixture();
   f.hook = (method, params) => {
@@ -90,6 +99,16 @@ describe("cookie canary Home readiness", () => {
   await expect(f.wait({ timeout: 250 })).rejects.toThrow("Timed out in recorded stage.");
   expect(f.time).toBe(250);
   expect(f.calls).not.toContain("Target.attachToTarget");
+ });
+
+ it.each([
+  `${homeUrl}?app=settings`,
+  `${homeUrl}?surface=frame&app=settings`,
+  `${homeUrl}#home`,
+ ])("rejects an unsupported requested Home URL %s", async invalidHomeUrl => {
+  const f = fixture();
+  await expect(f.wait({ homeUrl: invalidHomeUrl, timeout: 250 })).rejects.toThrow("Invalid first-party Home URL.");
+  expect(f.calls).toEqual([]);
  });
 
  it("keeps one deadline despite repeated transient errors", async () => {

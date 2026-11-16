@@ -1,33 +1,138 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "@playwright/test";
-import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
+import { candidateDigest } from "./native-retirement-evidence.mjs";
+import {
+	assertNativeBrowserFixtureStopped,
+	captureNativeBrowserFixtureStorage,
+	nativeBrowserFixtureStorageArgs,
+	nativeBrowserFixtureStorageEnv,
+	prepareNativeBrowserFixtureProfile,
+	selectNativeBrowserFixtureStorage,
+	waitForNativeBrowserFixtureStopped,
+} from "./native-browser-fixture-storage.mjs";
 
 // Explicit candidate selection prevents this integration check from racing a
 // native build or touching the canonical app/profile. The TCP CDP endpoint is
 // inspection-only; product operations use the real renderer request boundary.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 assert(process.env.KESTREL_NATIVE_TEST_APP?.trim(), "Set KESTREL_NATIVE_TEST_APP to the completed candidate Kestrel.app");
-const app = resolve(process.env.KESTREL_NATIVE_TEST_APP.trim());
+const storage = await selectNativeBrowserFixtureStorage({
+	candidate: resolve(process.env.KESTREL_NATIVE_TEST_APP.trim()),
+	root,
+});
+const app = storage.candidate;
+const formatterOnly = process.env.KESTREL_TEST_STORE_FORMATTER_ONLY === "1";
+assert.equal(storage.mode, process.env.KESTREL_TEST_NATIVE_LOCAL_VAULT === "1" ? "production-vault" : "test-key");
+const candidateSha256 = storage.candidateSha256;
 const executable = join(app, "Contents/MacOS/Kestrel");
 const id = "bcjindcccaagfpapjjmafapmmgkkhgoa";
 const listingUrl = `https://chromewebstore.google.com/detail/json-formatter/${id}`;
-const evidence = join(root, ".tmp/native-live-extension-evidence");
-await mkdir(evidence, { recursive: true });
-const profile = await mkdtemp(join(tmpdir(), "kestrel-live-extension-smoke-"));
-await markDisposableNativeTestProfile(profile);
+const configuredEvidence = process.env.KESTREL_NATIVE_LIVE_EXTENSION_EVIDENCE?.trim();
+const evidence = resolve(configuredEvidence || join(root, ".tmp/native-live-extension-evidence"));
+await mkdir(evidence, { recursive: true, mode: 0o700 });
+const evidenceInfo = await lstat(evidence);
+assert(evidenceInfo.isDirectory() && !evidenceInfo.isSymbolicLink() && evidenceInfo.uid === process.getuid() &&
+	(evidenceInfo.mode & 0o777) === 0o700 && await realpath(evidence) === evidence,
+	"Live extension evidence directory must be owned, private, and canonical.");
+if (configuredEvidence) {
+	assert.equal((await readdir(evidence)).length, 0, "Configured live extension evidence directory must be fresh and empty.");
+}
+const profile = await realpath(await mkdtemp(join(tmpdir(), "kestrel-chromium-desktop-canary-live-extensions-")));
+await prepareNativeBrowserFixtureProfile({ profile, storage });
+let preserveProfile = false;
 const sentinel = randomUUID();
 const report = {
 	app, executableSha256: createHash("sha256").update(await readFile(executable)).digest("hex"),
+	candidateSha256, candidateSha256After: null, fixtureStorageMode: storage.mode,
+	storageInitialization: null,
 	extensionId: id, requests: [], launches: [], checks: {}, startedAt: new Date().toISOString(),
+	workerCoverage: formatterOnly
+		? { status: "skipped", reason: "KESTREL_TEST_STORE_FORMATTER_ONLY=1; Google Translate worker canary was not installed." }
+		: { status: "pending", extension: "Google Translate" },
 };
+if (storage.mode === "production-vault") {
+	// Initialize the native local vault while the generated profile is empty.
+	// Store-managed extension state is added only after this sealed first launch.
+	let initializer;
+	let initializerBrowser;
+	let initializerOutput = "";
+	let initialized = false;
+	const args = [
+		"--kestrel-cache-path", profile,
+		"--kestrel-user-extensions", "--kestrel-chrome-tab-model",
+		"--kestrel-ephemeral-core", "--kestrel-renderer", "--kestrel-durable-profile",
+		"--enable-automation", "--remote-debugging-port=0",
+	];
+	args.push(...nativeBrowserFixtureStorageArgs(storage));
+	assert(!args.some((arg) => /test-profile-key|mock-keychain|real-keychain/i.test(arg)));
+	assertNativeBrowserFixtureStopped(storage);
+	assert.equal(await candidateDigest(app), candidateSha256, "Selected native candidate changed before profile initialization.");
+	initializer = spawn(executable, args, {
+		stdio: ["ignore", "pipe", "pipe"], env: nativeBrowserFixtureStorageEnv(storage),
+	});
+	initializer.stdout.setEncoding("utf8");
+	initializer.stderr.setEncoding("utf8");
+	for (const stream of [initializer.stdout, initializer.stderr]) stream.on("data", (chunk) => { initializerOutput += chunk; });
+	const exited = new Promise((resolveExit) => initializer.once("exit", (code, signal) => resolveExit({ code, signal })));
+	try {
+		let endpoint;
+		for (let attempt = 0; attempt < 600; attempt++) {
+			assert.equal(initializer.exitCode, null, initializerOutput);
+			endpoint = initializerOutput.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[0-9a-f-]+)/i)?.[1];
+			if (!endpoint) {
+				try {
+					const [port, path] = (await readFile(join(profile, "DevToolsActivePort"), "utf8")).trim().split("\n");
+					if (port && path) endpoint = `ws://127.0.0.1:${port}${path}`;
+				} catch {}
+			}
+			if (endpoint) break;
+			await delay(100);
+		}
+		assert(endpoint, `Production-vault profile initialization had no DevTools endpoint: ${initializerOutput}`);
+		for (let attempt = 0; attempt < 600 && !initializerOutput.includes("KESTREL_NATIVE_CHROMIUM_RENDERER_BRIDGE_READY"); attempt++) {
+			assert.equal(initializer.exitCode, null, initializerOutput);
+			await delay(100);
+		}
+		assert.match(initializerOutput, /KESTREL_NATIVE_CHROMIUM_RENDERER_BRIDGE_READY/, initializerOutput);
+		initializerBrowser = await chromium.connectOverCDP(endpoint);
+		const session = await initializerBrowser.newBrowserCDPSession();
+		try {
+			const { arguments: effective } = await session.send("Browser.getBrowserCommandLine");
+			assert(Array.isArray(effective) && effective.includes("--kestrel-durable-profile"));
+			assert(!effective.some((arg) => /^--(?:use-mock-keychain|kestrel-real-keychain|kestrel-test-profile-key)(?:=|$)/.test(arg)));
+			await session.send("Browser.close");
+		} finally { await session.detach().catch(() => {}); }
+		const outcome = await Promise.race([exited, delay(15_000).then(() => null)]);
+		assert(outcome, "Production-vault profile initializer did not stop.");
+		assert.deepEqual(outcome, { code: 0, signal: null }, initializerOutput);
+		await initializerBrowser.close().catch(() => {});
+		initializerBrowser = undefined;
+		await waitForNativeBrowserFixtureStopped(storage);
+		report.storageInitialization = await captureNativeBrowserFixtureStorage({ profile, storage });
+		initialized = true;
+	} finally {
+		await initializerBrowser?.close().catch(() => {});
+		if (initializer && initializer.exitCode === null && initializer.signalCode === null) {
+			initializer.kill("SIGKILL");
+			await Promise.race([exited, delay(15_000)]);
+		}
+		if (!initialized) {
+			try { await waitForNativeBrowserFixtureStopped(storage); }
+			catch (error) {
+				preserveProfile = true;
+				process.stderr.write(`Retained generated profile because initializer shutdown is unconfirmed: ${profile}\n${String(error)}\n`);
+			}
+		}
+	}
+}
 const server = createServer((request, response) => {
 	if (request.url?.startsWith("/probe.json")) {
 		response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
@@ -152,13 +257,17 @@ async function clickShell(selector) {
 async function start() {
 	launch++;
 	output = "";
+	assertNativeBrowserFixtureStopped(storage);
+	assert.equal(await candidateDigest(app), candidateSha256, "Selected native candidate changed before launch.");
 	await rm(join(profile, "DevToolsActivePort"), { force: true });
+	const storageArgs = nativeBrowserFixtureStorageArgs(storage);
+	if (storage.mode === "production-vault") assert(!storageArgs.some((arg) => /test-profile-key|mock-keychain|real-keychain/i.test(arg)));
 	child = spawn(executable, [
 		"--kestrel-cache-path", profile, "--kestrel-live-extensions",
 		"--kestrel-user-extensions", "--kestrel-chrome-tab-model",
-		"--kestrel-ephemeral-core", "--kestrel-renderer", "--kestrel-durable-profile", "--kestrel-test-profile-key",
+		"--kestrel-ephemeral-core", "--kestrel-renderer", "--kestrel-durable-profile", ...storageArgs,
 		"--remote-debugging-port=0", "--kestrel-smoke-user-browser-url", `${base}/`,
-	], { stdio: ["ignore", "pipe", "pipe"] });
+	], { stdio: ["ignore", "pipe", "pipe"], env: nativeBrowserFixtureStorageEnv(storage) });
 	for (const stream of [child.stdout, child.stderr]) stream.on("data", (chunk) => {
 		// Keep diagnostics bounded even if a renderer emits repeated messages.
 		output = (output + chunk).slice(-2_000_000);
@@ -196,6 +305,7 @@ async function stop() {
 	shellSocket?.close(); shellSocket = undefined;
 	browser = context = shell = undefined;
 	child = undefined;
+	if (launch) await waitForNativeBrowserFixtureStopped(storage);
 }
 
 async function userPage(url) {
@@ -328,26 +438,29 @@ try {
 	assert.deepEqual((await request({ type: "browser-list-extensions" })).extensions, []);
 	await formatted(false, "uninstalled");
 	await shell.screenshot({ path: join(evidence, "shell-after-uninstall.png") });
-	// An official worker-based package exercises readiness beyond JSON
-	// Formatter's content scripts. No translation/account request is made.
-	const workerId = "aapbdbdomjkkjkaonfhkkikfgjllcleb";
-	const workerReview = await request({ type: "browser-inspect-extension-url", urlOrId: workerId });
-	assert.equal(workerReview.extensionInspection.compatibility.manifest.background, "service_worker");
-	const workerInstall = await request({ type: "browser-install-extension-url", inspectionId: workerReview.extensionInspection.inspectionId });
-	assert.equal(workerInstall.extension.compatibility.runtime.backgroundServiceWorker, "passed");
-	const { targetInfos } = await shell.send("Target.getTargets", { filter: [{}] });
-	const workerTarget = targetInfos.find((target) => target.type === "service_worker" && target.url.startsWith(`chrome-extension://${workerId}/`));
-	assert(workerTarget, "The installed extension must have a real worker target");
-	const { sessionId: workerSession } = await shell.send("Target.attachToTarget", { targetId: workerTarget.targetId, flatten: true });
-	try {
-		const workerReply = await shell.send("Runtime.evaluate", {
-			expression: "({id:chrome.runtime.id,bridge:typeof globalThis.kestrel,nativeQuery:typeof globalThis.__kestrelNativeQuery})", returnByValue: true,
-		}, workerSession);
-		assert(!workerReply.exceptionDetails);
-		report.checks.officialMv3Worker = workerReply.result.value;
-		assert.deepEqual(report.checks.officialMv3Worker, { id: workerId, bridge: "undefined", nativeQuery: "undefined" });
-	} finally { await shell.send("Target.detachFromTarget", { sessionId: workerSession }); }
-	await request({ type: "browser-uninstall-extension", extensionId: workerId });
+	// The worker canary is retained for the default mode. Formatter-only runs
+	// isolate Store lifecycle acceptance from a second Store package install.
+	if (!formatterOnly) {
+		const workerId = "aapbdbdomjkkjkaonfhkkikfgjllcleb";
+		const workerReview = await request({ type: "browser-inspect-extension-url", urlOrId: workerId });
+		assert.equal(workerReview.extensionInspection.compatibility.manifest.background, "service_worker");
+		const workerInstall = await request({ type: "browser-install-extension-url", inspectionId: workerReview.extensionInspection.inspectionId });
+		assert.equal(workerInstall.extension.compatibility.runtime.backgroundServiceWorker, "passed");
+		const { targetInfos } = await shell.send("Target.getTargets", { filter: [{}] });
+		const workerTarget = targetInfos.find((target) => target.type === "service_worker" && target.url.startsWith(`chrome-extension://${workerId}/`));
+		assert(workerTarget, "The installed extension must have a real worker target");
+		const { sessionId: workerSession } = await shell.send("Target.attachToTarget", { targetId: workerTarget.targetId, flatten: true });
+		try {
+			const workerReply = await shell.send("Runtime.evaluate", {
+				expression: "({id:chrome.runtime.id,bridge:typeof globalThis.kestrel,nativeQuery:typeof globalThis.__kestrelNativeQuery})", returnByValue: true,
+			}, workerSession);
+			assert(!workerReply.exceptionDetails);
+			report.checks.officialMv3Worker = workerReply.result.value;
+			assert.deepEqual(report.checks.officialMv3Worker, { id: workerId, bridge: "undefined", nativeQuery: "undefined" });
+		} finally { await shell.send("Target.detachFromTarget", { sessionId: workerSession }); }
+		await request({ type: "browser-uninstall-extension", extensionId: workerId });
+		report.workerCoverage = { status: "passed", extension: "Google Translate", id: workerId, ...report.checks.officialMv3Worker };
+	}
 	report.ok = true;
 } catch (error) {
 	if (browser) try {
@@ -361,8 +474,19 @@ try {
 } finally {
 	await stop();
 	await new Promise((done) => server.close(done));
-	await rm(profile, { recursive: true, force: true });
+	if (!preserveProfile) await rm(profile, { recursive: true, force: true });
 	report.finishedAt = new Date().toISOString();
+	try { report.candidateSha256After = await candidateDigest(app); }
+	catch (error) {
+		report.ok = false;
+		process.exitCode = 1;
+		report.error = `Could not fingerprint candidate after verification: ${String(error)}`;
+	}
+	if (report.candidateSha256After !== candidateSha256) {
+		report.ok = false;
+		process.exitCode = 1;
+		report.error = "The candidate bundle changed during verification.";
+	}
 	report.executableUnchanged = createHash("sha256").update(await readFile(executable)).digest("hex") === report.executableSha256;
 	if (!report.executableUnchanged) { report.ok = false; process.exitCode = 1; report.error = "The candidate executable changed during verification."; }
 	await writeFile(join(evidence, "report.json"), JSON.stringify(report, null, 2));

@@ -38,7 +38,7 @@ assert.deepEqual(await readdir(profile), []);
 // Do not markDisposableNativeTestProfile: that helper creates a raw test key.
 const homeId = [...createHash("sha256").update(join(profile, "kestrel-ui-bundle")).digest("hex").slice(0, 32)]
  .map(digit => "abcdefghijklmnop"[parseInt(digit, 16)]).join("");
-const homeUrl = `chrome-extension://${homeId}/index.html`;
+const homeUrl = `chrome-extension://${homeId}/index.html?surface=frame`;
 const cookieName = `kestrel_canary_${randomBytes(12).toString("hex")}`;
 const cookieValue = randomBytes(32).toString("hex");
 const coreValue = `kestrel-vault-message:${randomBytes(32).toString("hex")}`;
@@ -184,14 +184,18 @@ async function openTab(home, url) {
   { bridge: "undefined", nativeQuery: "undefined" });
  return page;
 }
-async function passwordManager(home) {
- setStage("builtin-password-manager");
+async function passwordManager(sameWindowPage) {
+ setStage("password-manager-create-target");
  const { targetId } = await browser.send("Target.createTarget", { url: "chrome://password-manager/passwords", newWindow: false });
+ setStage("password-manager-target-ready");
  const page = await eventually(async () => (await browser.send("Target.getTargets")).targetInfos.find(target =>
   target.type === "page" && target.targetId === targetId && target.url.startsWith("chrome://password-manager/")));
- const ownWindow = await browser.send("Browser.getWindowForTarget", { targetId: home.targetId });
+ setStage("password-manager-same-window-check");
+ const ownWindow = await browser.send("Browser.getWindowForTarget", { targetId: sameWindowPage.targetId });
  assert.equal((await browser.send("Browser.getWindowForTarget", { targetId })).windowId, ownWindow.windowId, "Built-in manager opened outside the native Kestrel window.");
+ setStage("password-manager-api-ready");
  await eventually(async () => await evaluate(page, "typeof chrome.passwordsPrivate?.addPassword==='function' && typeof chrome.passwordsPrivate?.getSavedPasswordList==='function'"));
+ setStage("password-manager-bridge-isolation");
  assert.deepEqual(await evaluate(page, "({bridge:typeof window.kestrel,nativeQuery:typeof window.__kestrelNativeQuery})"), { bridge: "undefined", nativeQuery: "undefined" });
  return page;
 }
@@ -314,7 +318,8 @@ try {
  await new Promise((ok, fail) => { server.once("error", fail); server.listen(0, "127.0.0.1", () => { serverListening = true; ok(); }); });
  const base = `http://127.0.0.1:${server.address().port}`;
  let home = await start();
- const manager = await passwordManager(home);
+ const sameWindowPage = await openTab(home, `${base}/`);
+ const manager = await passwordManager(sameWindowPage);
  setStage("generated-password-device-store-write");
  await evaluate(manager, `chrome.passwordsPrivate.addPassword(${JSON.stringify({ url: base, username: loginUsername, password: loginPassword, note: "", useAccountStore: false })}).then(()=>true)`);
  await listedGeneratedPassword(manager); phase("builtin-device-password-created");
@@ -329,7 +334,8 @@ try {
  setStage("first-clean-stop"); await stop();
  setStage("first-storage-inspection"); await inspectStorage(); phase("first-start-core-message-and-v99-cookie-password");
  home = await start();
- const reopenedManager = await passwordManager(home);
+ const reopenedSameWindowPage = await openTab(home, `${base}/`);
+ const reopenedManager = await passwordManager(reopenedSameWindowPage);
  await listedGeneratedPassword(reopenedManager);
  await verifyGeneratedPasswordAutofill(home, `${base}/login`);
  phase("native-generated-password-autofilled-after-restart");

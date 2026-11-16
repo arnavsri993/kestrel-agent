@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 
 const protocolDiagnostics = new WeakMap();
-const methods = new Set(["Target.getTargets", "Target.attachToTarget", "Target.detachFromTarget", "Runtime.evaluate", "Browser.getBrowserCommandLine"]);
+const methods = new Set(["Target.getTargets", "Target.attachToTarget", "Target.detachFromTarget", "Target.createTarget", "Runtime.evaluate", "Browser.getBrowserCommandLine", "Browser.getWindowForTarget"]);
 const transientMethods = new Set(["Target.attachToTarget", "Runtime.evaluate"]);
 
 // Keep protocol text and payloads out of errors and receipts. Only exact known
@@ -29,7 +29,7 @@ export function recordBrowserStorageDiagnostic(diagnostics, error) {
 }
 
 export async function waitForBrowserStorageHome({ send, evaluateHome, homeUrl, checkInterrupt = () => {}, onOperation = () => {}, now = Date.now, sleep = delay, timeout = 30000 }) {
- if (!/^chrome-extension:\/\/[a-p]{32}\/index\.html$/.test(homeUrl)) throw Error("Invalid first-party Home URL.");
+ if (!/^chrome-extension:\/\/[a-p]{32}\/index\.html(?:\?surface=frame)?$/.test(homeUrl)) throw Error("Invalid first-party Home URL.");
  const deadline = now() + timeout;
  while (now() < deadline) {
   checkInterrupt();
