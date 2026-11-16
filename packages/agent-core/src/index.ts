@@ -4524,19 +4524,26 @@ export class AgentCore {
 	}
 
 	async close(): Promise<void> {
+		const failures: string[] = [];
+		const closeSafely = async (name: string, close: () => unknown) => {
+			try { await close(); } catch { failures.push(name); }
+		};
 		if (this.memoryConsolidationTimer) clearInterval(this.memoryConsolidationTimer);
-		await this.memoryConsolidationWork;
-        for (const controller of this.sourceReviews.values()) controller.abort(new Error("Agent Core is shutting down."));
+		await closeSafely("memory consolidation", () => this.memoryConsolidationWork);
+		for (const controller of this.sourceReviews.values()) controller.abort(new Error("Agent Core is shutting down."));
 		for (const active of this.activeStreams.values())
 			active.controller.abort(new Error("Agent Core is shutting down."));
 		this.activeStreams.clear();
-		await this.pluginMcpManager?.close();
-		await this.honchoMemory.flush();
-		await this.observability.shutdown();
-		await this.providerPool.close();
-		await this.memorySubstrate.close();
-		this.runtime.close();
-		this.deps.database.close();
+		await closeSafely("plugin servers", () => this.pluginMcpManager?.close());
+		await closeSafely("memory flush", () => this.honchoMemory.flush());
+		await closeSafely("observability", () => this.observability.shutdown());
+		await closeSafely("model providers", () => this.providerPool.close());
+		await closeSafely("memory store", () => this.memorySubstrate.close());
+		await closeSafely("command runner", () => this.runtime.close());
+		await closeSafely("database", () => this.deps.database.close());
+		if (failures.length) {
+			throw new Error(`Agent Core shutdown was incomplete: ${failures.join(", ")}.`);
+		}
 	}
 }
 

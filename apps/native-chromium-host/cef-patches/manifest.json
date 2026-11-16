@@ -48,7 +48,7 @@
     {
       "repository": "chromium",
       "file": "chromium-kestrel-vault.patch",
-      "sha256": "aef75146da004dc38c70807a3ee1a85e1aea7db331fce85635a40ba14dd2b859",
+      "sha256": "c4962cdfea5e7a90a71c2ec7be65eae53a6ebe7af18e7cc65305af7eaf958bca",
       "targets": [
         "chrome/browser/browser_process_impl.cc",
         "components/os_crypt/async/browser/BUILD.gn",

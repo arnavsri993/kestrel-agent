@@ -31,6 +31,30 @@ function createCore() {
 }
 
 describe("fresh application state", () => {
+	it("finishes Core cleanup and closes the database after a provider close failure", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const provider: ModelProvider = {
+			id: "shutdown-fixture",
+			capabilities: { streaming: false, tools: false, images: false, audio: false, documents: false, local: true },
+			complete: async (request) => ({
+				providerId: "shutdown-fixture",
+				model: request.model,
+				text: "unused",
+				toolCalls: [],
+				usage: { inputTokens: 0, outputTokens: 0 },
+				finishReason: "stop",
+			}),
+			close: async () => { throw new Error("fixture close failed"); },
+		};
+		const core = new AgentCore({ database, modelProviders: [provider] });
+		const runtimeClose = vi.spyOn(core.runtime, "close").mockResolvedValue();
+		const databaseClose = vi.spyOn(database, "close");
+
+		await expect(core.close()).rejects.toThrow("model providers");
+		expect(runtimeClose).toHaveBeenCalledOnce();
+		expect(databaseClose).toHaveBeenCalledOnce();
+	});
+
 	it("preserves stored Honcho namespaces for unavailable and symlinked non-pending roots", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-honcho-root-"));
 		const alias = join(root, "alias");

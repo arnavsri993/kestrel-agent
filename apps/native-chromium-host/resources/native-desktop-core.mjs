@@ -388,7 +388,7 @@ async function shutdown(code = 0) {
 	await communications.close();
 	// Interrupt a long maintenance stop on Quit. Cancellation closes the copy
 	// first; the same Core stop confirms exit and cannot resurrect a new owner.
-	const coreStopping = core.stop({ gracefulTimeoutMs: (backupReservation || embeddingRecoveryReservation) && configuration.changing ? 0 : 2_000 });
+	const coreStopping = core.stop({ requireCleanExit: true, gracefulTimeoutMs: (backupReservation || embeddingRecoveryReservation) && configuration.changing ? 0 : 2_000 });
 	const backupOutcomes = await Promise.allSettled([backupClosing, providerClosing, embeddingRecoveryClosing, coreStopping]);
 	if (backupOutcomes.some(result => result.status === "rejected")) {
 		process.stderr.write("KESTREL_NATIVE_BACKUP_SHUTDOWN_INCOMPLETE\n"); code = code || 1;
@@ -397,7 +397,7 @@ async function shutdown(code = 0) {
 	await diagnostics.close();
 	await workspaces.close();
 	await plugins.close();
-	try { await core.stop(); }
+	try { if (core.hasProcess) await core.stop({ requireCleanExit: true }); }
 	catch { process.stderr.write("KESTREL_NATIVE_CORE_SHUTDOWN_INCOMPLETE\n"); code = code || 1; }
 	// Core may still be reading a just-approved paste when Quit arrives. Stop
 	// that owner before removing this launch's temporary attachment files.

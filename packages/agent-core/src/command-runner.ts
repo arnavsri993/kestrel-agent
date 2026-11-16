@@ -131,10 +131,10 @@ function sandboxProfile(
 }
 
 function killChildProcess(child: ChildProcess): void {
-	if (child.exitCode !== null) return;
+	if (child.exitCode !== null || child.signalCode !== null) return;
 	child.kill("SIGTERM");
 	setTimeout(() => {
-		if (child.exitCode === null) child.kill("SIGKILL");
+		if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 	}, 1_000).unref();
 }
 
@@ -157,6 +157,31 @@ function cancelledHandle(signal: AbortSignal): SandboxedCommandHandle {
 }
 
 export class SandboxedCommandRunner {
+	private readonly active = new Set<{ stop(): void; exited: Promise<void> }>();
+	private closing = false;
+	private interrupted = false;
+
+	/** Stop direct children and wait for their close notifications before Core exits.
+	 * A child interrupted during shutdown makes that shutdown unclean: its own
+	 * detached descendants cannot be established from a Node child handle. */
+	async close(): Promise<void> {
+		this.closing = true;
+		const active = [...this.active];
+		for (const child of active) child.stop();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			await Promise.race([
+				Promise.all(active.map((child) => child.exited)),
+				new Promise<never>((_, reject) => {
+					timer = setTimeout(() => reject(new Error("Command child shutdown was not confirmed.")), 5_000);
+				}),
+			]);
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
+		if (this.interrupted) throw new Error("Command children were interrupted; descendant shutdown is unconfirmed.");
+	}
+
 	start(
 		input: SandboxedCommandInput,
 		options: {
@@ -165,6 +190,7 @@ export class SandboxedCommandRunner {
 			onProgress(payload: { stream: "stdout" | "stderr"; chunk: string }): void;
 		},
 	): SandboxedCommandHandle {
+		if (this.closing) throw new Error("Command runner is shutting down.");
 		if (process.platform !== "darwin")
 			throw new Error(
 				"The current Kestrel command sandbox is implemented only for macOS.",
@@ -197,6 +223,16 @@ export class SandboxedCommandRunner {
 			},
 			stdio: [options.interactive ? "pipe" : "ignore", "pipe", "pipe"],
 		});
+		let resolveExit!: () => void;
+		const exited = new Promise<void>((resolve) => { resolveExit = resolve; });
+		const stopChild = () => {
+			if (child.exitCode !== null || child.signalCode !== null) return;
+			this.interrupted = true;
+			killChildProcess(child);
+		};
+		const owned = { stop: stopChild, exited };
+		this.active.add(owned);
+		child.once("close", () => { this.active.delete(owned); resolveExit(); });
 
 		let stdout = "";
 		let stderr = "";
@@ -208,7 +244,7 @@ export class SandboxedCommandRunner {
 			outputBytes += chunk.byteLength;
 			if (outputBytes > maximumOutputBytes) {
 				overflowed = true;
-				killChildProcess(child);
+				stopChild();
 				return;
 			}
 			if (stream === "stdout") stdout += text;
@@ -218,13 +254,13 @@ export class SandboxedCommandRunner {
 		child.stdout?.on("data", (chunk: Buffer) => capture("stdout", chunk));
 		child.stderr?.on("data", (chunk: Buffer) => capture("stderr", chunk));
 
-		const abort = () => killChildProcess(child);
+		const abort = () => stopChild();
 		if (options.signal?.aborted) abort();
 		options.signal?.addEventListener("abort", abort, { once: true });
 		let timedOut = false;
 		const timeout = setTimeout(() => {
 			timedOut = true;
-			killChildProcess(child);
+			stopChild();
 		}, timeoutMs);
 
 		let running = true;
@@ -278,7 +314,7 @@ export class SandboxedCommandRunner {
 				child.stdin.write(data);
 			},
 			stop: () => {
-				if (running) killChildProcess(child);
+				if (running) stopChild();
 			},
 			snapshot: () => ({
 				running,

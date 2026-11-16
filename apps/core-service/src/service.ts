@@ -524,8 +524,13 @@ export function startCoreService(port: CoreParentPort): void {
 			await browserMcp?.stop();
 			browserMcp = undefined;
 			await languageServer?.close();
-			await core?.close();
-			process.exit(0);
+			try {
+				await core?.close();
+				process.exit(0);
+			} catch (error) {
+				console.error("Kestrel Agent Core shutdown was not confirmed:", error);
+				process.exit(1);
+			}
 		}
 	});
 

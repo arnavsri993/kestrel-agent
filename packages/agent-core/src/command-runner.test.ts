@@ -77,6 +77,7 @@ describe("SandboxedCommandRunner", () => {
       kill,
       pid: 12345,
       exitCode: null,
+      signalCode: null,
     }) as unknown as child_process.ChildProcess & {
       stdout: EventEmitter;
       stderr: EventEmitter;
@@ -220,5 +221,69 @@ describe("SandboxedCommandRunner", () => {
     expect(child_process.spawn).not.toHaveBeenCalled();
     expect(handle.snapshot()).toMatchObject({ running: false, stdout: "", stderr: "" });
     await expect(handle.completion).rejects.toThrow("already cancelled");
+  });
+
+  it("waits for the owned child close before reporting an interrupted shutdown", async () => {
+    vi.mocked(fs.accessSync).mockImplementation(() => {});
+    const child = mockSpawn();
+    const handle = runner.start(defaultInput, { interactive: true, onProgress: vi.fn() });
+    const completion = handle.completion.catch(() => undefined);
+    let settled = false;
+    const closing = runner.close().finally(() => { settled = true; });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(() => runner.start(defaultInput, { onProgress: vi.fn() })).toThrow("shutting down");
+    child.emit("close", null, "SIGTERM");
+    await expect(closing).rejects.toThrow("descendant shutdown is unconfirmed");
+    await completion;
+  });
+
+  it("permits a clean shutdown after a child has closed", async () => {
+    vi.mocked(fs.accessSync).mockImplementation(() => {});
+    const child = mockSpawn();
+    const handle = runner.start(defaultInput, { onProgress: vi.fn() });
+    child.emit("close", 0, null);
+    await handle.completion;
+    await expect(runner.close()).resolves.toBeUndefined();
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it("keeps shutdown clean when stop races an already exited child", async () => {
+    vi.mocked(fs.accessSync).mockImplementation(() => {});
+    const child = mockSpawn();
+    const handle = runner.start(defaultInput, { onProgress: vi.fn() });
+    Object.defineProperty(child, "exitCode", { value: 0, configurable: true });
+    child.emit("close", 0, null);
+    handle.stop();
+    await handle.completion;
+    await expect(runner.close()).resolves.toBeUndefined();
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it("remembers an interrupted child after its direct process closes", async () => {
+    vi.mocked(fs.accessSync).mockImplementation(() => {});
+    const child = mockSpawn();
+    const handle = runner.start(defaultInput, { interactive: true, onProgress: vi.fn() });
+    handle.stop();
+    child.emit("close", null, "SIGTERM");
+    await handle.completion;
+    await expect(runner.close()).rejects.toThrow("descendant shutdown is unconfirmed");
+  });
+
+  it("fails closed if a signalled child never reports close", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(fs.accessSync).mockImplementation(() => {});
+      const child = mockSpawn();
+      const handle = runner.start(defaultInput, { onProgress: vi.fn() });
+      void handle.completion.catch(() => undefined);
+      const closing = runner.close();
+      const assertion = expect(closing).rejects.toThrow("shutdown was not confirmed");
+      await vi.advanceTimersByTimeAsync(5_000);
+      await assertion;
+      child.emit("close", null, "SIGKILL");
+      await handle.completion.catch(() => undefined);
+    } finally { vi.useRealTimers(); }
   });
 });

@@ -1657,9 +1657,11 @@ export class AgentRuntime extends EventEmitter {
 		return { mutationId: mutation.id, path: mutation.path, restored: true };
 	}
 
-	close(): void {
-		for (const process of this.backgroundProcesses.values())
-			process.handle.stop();
+	async close(): Promise<void> {
+		// Keep records available to completion handlers until direct children have
+		// actually closed. A signalled child makes close reject as unclean.
+		await this.commandRunner.close();
+		await Promise.allSettled([...this.backgroundProcesses.values()].map((process) => process.handle.completion));
 		this.backgroundProcesses.clear();
 	}
 

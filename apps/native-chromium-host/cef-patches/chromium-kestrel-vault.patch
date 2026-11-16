@@ -195,36 +195,68 @@ index 0000000000000000000000000000000000000000..31c37c8ca205719a4c1df9eb7d285356
 +#endif  // COMPONENTS_OS_CRYPT_ASYNC_BROWSER_KESTREL_VAULT_KEY_PROVIDER_H_
 
 diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
-index b68f089..fac76ba 100644
+index b68f089..a4e053f 100644
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
-@@ -22,0 +23 @@
+@@ -22,2 +22,3 @@
+ #include "base/feature_list.h"
 +#include "base/files/file_path.h"
-@@ -26,0 +28 @@
+ #include "base/functional/bind.h"
+@@ -26,2 +27,3 @@
+ #include "base/location.h"
 +#include "base/logging.h"
-@@ -52,0 +55,2 @@
+ #include "base/memory/raw_ptr.h"
+@@ -52,2 +54,4 @@
+ #include "chrome/browser/extensions/browser_extension_window_controller.h"
 +#include "chrome/browser/extensions/extension_view_host.h"
 +#include "chrome/browser/extensions/extension_view_host_factory.h"
-@@ -157,0 +162 @@
+ #include "chrome/browser/extensions/extension_util.h"
+@@ -157,2 +161,4 @@
+ #include "chrome/browser/ui/views/extensions/extensions_toolbar_desktop.h"
 +#include "chrome/browser/ui/views/extensions/extension_view_views.h"
-@@ -296,0 +302,2 @@
++#include "chrome/common/chrome_isolated_world_ids.h"
+ #include "chrome/browser/ui/views/eye_dropper/eye_dropper.h"
+@@ -296,2 +302,4 @@
+ #include "content/public/browser/desktop_capture_pip_utils.h"
 +#include "content/public/browser/navigation_handle.h"
 +#include "content/public/browser/web_contents_observer.h"
-@@ -310,0 +318,2 @@
+ #include "content/public/browser/download_manager.h"
+@@ -310,3 +318,6 @@
+ #include "content/public/common/drop_data.h"
 +#include "extensions/browser/extension_registry.h"
 +#include "extensions/browser/extension_registry_observer.h"
-@@ -311,0 +321 @@
+ #include "extensions/common/command.h"
 +#include "extensions/common/extension.h"
-@@ -365,0 +376 @@
+ #include "media/capture/capture_switches.h"
+@@ -365,2 +376,3 @@
+ #include "ui/views/views_features.h"
 +#include "url/gurl.h"
-@@ -426,0 +438,65 @@ using web_modal::WebContentsModalDialogHost;
+ #include "ui/views/widget/native_widget.h"
+@@ -425,3 +437,83 @@ using web_modal::WebContentsModalDialogHost;
+ using web_modal::WebContentsModalDialogHost;
+-
++
 +class KestrelBrowserFrameLoadObserver final
 +    : public content::WebContentsObserver {
 + public:
 +  KestrelBrowserFrameLoadObserver(content::WebContents* contents,
-+                                  GURL expected_url)
++                                  GURL expected_url,
++                                  base::RepeatingClosure invalidate)
 +      : content::WebContentsObserver(contents),
-+        expected_url_(std::move(expected_url)) {}
++        expected_url_(std::move(expected_url)),
++        invalidate_(std::move(invalidate)) {}
++
++  void DidStartNavigation(content::NavigationHandle* navigation) override {
++    if (navigation->IsInPrimaryMainFrame() && !navigation->IsSameDocument())
++      invalidate_.Run();
++  }
++  void DidFailLoad(content::RenderFrameHost* frame, const GURL&, int) override {
++    if (frame == web_contents()->GetPrimaryMainFrame()) invalidate_.Run();
++  }
++  void PrimaryMainFrameRenderProcessGone(base::TerminationStatus) override {
++    invalidate_.Run();
++  }
++  void WebContentsDestroyed() override { invalidate_.Run(); }
 +
 +  void DidFinishNavigation(
 +      content::NavigationHandle* navigation_handle) override {
@@ -241,6 +273,7 @@ index b68f089..fac76ba 100644
 +
 + private:
 +  const GURL expected_url_;
++  base::RepeatingClosure invalidate_;
 +  bool reported_ = false;
 +};
 +
@@ -283,9 +316,15 @@ index b68f089..fac76ba 100644
 +      observation_{this};
 +};
 +
-@@ -4889,0 +4966,35 @@ void BrowserView::Layout(PassKey) {
-+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-+          "kestrel-browser-frame")) {
+ namespace {
+@@ -4888,3 +4980,37 @@ void BrowserView::Layout(PassKey) {
+   LayoutSuperclass<views::View>(this);
+-
++
++  if (kestrel_frame_view_) {
++    kestrel_frame_view_->SetBounds(0, 0, width(), 82);
++  }
++  if (kestrel_frame_ready_) {
 +    constexpr int kKestrelFrameHeight = 82;
 +    if (top_container_) {
 +      top_container_->SetVisible(false);
@@ -295,9 +334,6 @@ index b68f089..fac76ba 100644
 +    }
 +    if (vertical_tab_strip_region_view_) {
 +      vertical_tab_strip_region_view_->SetVisible(false);
-+    }
-+    if (kestrel_frame_view_) {
-+      kestrel_frame_view_->SetBounds(0, 0, width(), kKestrelFrameHeight);
 +    }
 +    const int infobar_height =
 +        infobar_container_ ? infobar_container_->height() : 0;
@@ -319,9 +355,13 @@ index b68f089..fac76ba 100644
 +    }
 +  }
 +
-@@ -4987,0 +5099 @@ void BrowserView::AddedToWidget() {
+   // TODO(jamescook): Why was this in the middle of layout code?
+@@ -4987,2 +5113,3 @@ void BrowserView::AddedToWidget() {
+   if (initialized_) {
 +    MaybeCreateKestrelBrowserFrame();
-@@ -5179,0 +5292,87 @@ void BrowserView::AddedToWidget() {
+     return;
+@@ -5179,2 +5306,165 @@ void BrowserView::AddedToWidget() {
+   initialized_ = true;
 +  MaybeCreateKestrelBrowserFrame();
 +}
 +
@@ -352,6 +392,18 @@ index b68f089..fac76ba 100644
 +    return;
 +  }
 +
++  if (!kestrel_frame_extension_observer_) {
++    kestrel_frame_extension_observer_ =
++        std::make_unique<KestrelBrowserFrameExtensionObserver>(
++            registry, extension_id,
++            base::BindRepeating(
++                &BrowserView::MaybeCreateKestrelBrowserFrame,
++                weak_ptr_factory_.GetWeakPtr()),
++            base::BindRepeating(&BrowserView::DestroyKestrelBrowserFrame,
++                                weak_ptr_factory_.GetWeakPtr()));
++    LOG(INFO) << "Kestrel browser frame is waiting for its bundled UI extension.";
++  }
++
 +  const extensions::Extension* extension =
 +      registry->enabled_extensions().GetByID(extension_id);
 +  if (extension) {
@@ -376,30 +428,94 @@ index b68f089..fac76ba 100644
 +
 +    kestrel_frame_load_observer_ =
 +        std::make_unique<KestrelBrowserFrameLoadObserver>(
-+            kestrel_frame_host_->web_contents(), frame_url);
++            kestrel_frame_host_->web_contents(), frame_url,
++            base::BindRepeating(&BrowserView::InvalidateKestrelBrowserFrame,
++                                weak_ptr_factory_.GetWeakPtr()));
 +    auto frame_view = std::make_unique<ExtensionViewViews>(
 +        GetProfile(), kestrel_frame_host_.get());
 +    frame_view->Init();
 +    kestrel_frame_view_ = AddChildView(std::move(frame_view));
-+    kestrel_frame_view_->SetVisible(true);
++    kestrel_frame_view_->SetVisible(false);
++    kestrel_frame_timer_.Start(
++        FROM_HERE, base::Seconds(1),
++        base::BindRepeating(&BrowserView::PollKestrelBrowserFrame,
++                            weak_ptr_factory_.GetWeakPtr()));
++    PollKestrelBrowserFrame();
 +    DeprecatedLayoutImmediately();
 +    return;
 +  }
 +
-+  if (!kestrel_frame_extension_observer_) {
-+    kestrel_frame_extension_observer_ =
-+        std::make_unique<KestrelBrowserFrameExtensionObserver>(
-+            registry, extension_id,
-+            base::BindRepeating(
-+                &BrowserView::MaybeCreateKestrelBrowserFrame,
-+                weak_ptr_factory_.GetWeakPtr()),
-+            base::BindRepeating(&BrowserView::DestroyKestrelBrowserFrame,
-+                                weak_ptr_factory_.GetWeakPtr()));
-+    LOG(INFO) << "Kestrel browser frame is waiting for its bundled UI extension.";
++}
++
++void BrowserView::SetKestrelBrowserFrameReady(bool ready) {
++  if (ready == kestrel_frame_ready_) return;
++  kestrel_frame_ready_ = ready;
++  if (ready) {
++    kestrel_top_was_visible_ = top_container_ && top_container_->GetVisible();
++    kestrel_horizontal_was_visible_ = horizontal_tab_strip_region_view_ &&
++                                      horizontal_tab_strip_region_view_->GetVisible();
++    kestrel_vertical_was_visible_ = vertical_tab_strip_region_view_ &&
++                                    vertical_tab_strip_region_view_->GetVisible();
++    if (top_container_) top_container_->SetVisible(false);
++    if (horizontal_tab_strip_region_view_) horizontal_tab_strip_region_view_->SetVisible(false);
++    if (vertical_tab_strip_region_view_) vertical_tab_strip_region_view_->SetVisible(false);
++  } else {
++    if (top_container_) top_container_->SetVisible(kestrel_top_was_visible_);
++    if (horizontal_tab_strip_region_view_) horizontal_tab_strip_region_view_->SetVisible(kestrel_horizontal_was_visible_);
++    if (vertical_tab_strip_region_view_) vertical_tab_strip_region_view_->SetVisible(kestrel_vertical_was_visible_);
 +  }
++  if (kestrel_frame_view_) kestrel_frame_view_->SetVisible(ready);
++  DeprecatedLayoutImmediately();
++}
++
++void BrowserView::InvalidateKestrelBrowserFrame() {
++  ++kestrel_frame_probe_generation_;
++  kestrel_frame_probe_pending_ = false;
++  SetKestrelBrowserFrameReady(false);
++}
++
++void BrowserView::PollKestrelBrowserFrame() {
++  if (!kestrel_frame_host_) return;
++  if (kestrel_frame_probe_pending_) {
++    if (base::TimeTicks::Now() < kestrel_frame_probe_deadline_) return;
++    InvalidateKestrelBrowserFrame();
++  }
++  content::WebContents* contents = kestrel_frame_host_->web_contents();
++  const std::string id = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("kestrel-shell-extension-id");
++  const GURL expected("chrome-extension://" + id + "/index.html?surface=frame");
++  if (!contents || !contents->GetPrimaryMainFrame() ||
++      contents->GetLastCommittedURL() != expected) {
++    InvalidateKestrelBrowserFrame();
++    return;
++  }
++  kestrel_frame_probe_pending_ = true;
++  kestrel_frame_probe_deadline_ = base::TimeTicks::Now() + base::Seconds(3);
++  const uint64_t generation = ++kestrel_frame_probe_generation_;
++  // Fixed code, restricted to the validated private extension host. The
++  // marker is a lease renewed by the real UI only after a bridge round trip.
++  contents->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
++      u"(()=>{const d=document.documentElement;const t=Number(d.dataset.kestrelFrameReady);"
++      u"return d.dataset.nativeSurface==='frame'&&Number.isFinite(t)&&t<=Date.now()&&"
++      u"Date.now()-t<15000&&!!document.querySelector('.browser-workspace-native-frame-shell .browser-tab-row')&&"
++      u"!!document.querySelector('.browser-workspace-native-frame-shell .browser-toolbar')})()",
++      base::BindOnce(&BrowserView::OnKestrelBrowserFrameProbe,
++                     weak_ptr_factory_.GetWeakPtr(), generation, expected),
++      ISOLATED_WORLD_ID_CHROME_INTERNAL);
++}
++
++void BrowserView::OnKestrelBrowserFrameProbe(uint64_t generation,
++                                              const GURL& expected,
++                                              base::Value result) {
++  if (!kestrel_frame_probe_pending_ || generation != kestrel_frame_probe_generation_) return;
++  kestrel_frame_probe_pending_ = false;
++  const bool matches = kestrel_frame_host_ && kestrel_frame_host_->web_contents() &&
++      kestrel_frame_host_->web_contents()->GetLastCommittedURL() == expected;
++  SetKestrelBrowserFrameReady(matches && result.is_bool() && result.GetBool());
 +}
 +
 +void BrowserView::DestroyKestrelBrowserFrame() {
++  kestrel_frame_timer_.Stop();
++  InvalidateKestrelBrowserFrame();
 +  kestrel_frame_load_observer_.reset();
 +  if (kestrel_frame_view_) {
 +    views::View* parent = kestrel_frame_view_->parent();
@@ -409,13 +525,23 @@ index b68f089..fac76ba 100644
 +    kestrel_frame_view_ = nullptr;
 +  }
 +  kestrel_frame_host_.reset();
-@@ -5182,0 +5382 @@ void BrowserView::RemovedFromWidget() {
+ }
+@@ -5182,2 +5472,3 @@ void BrowserView::AddedToWidget() {
+ void BrowserView::RemovedFromWidget() {
 +  DestroyKestrelBrowserFrame();
+   CHECK(GetFocusManager());
 diff --git a/chrome/browser/ui/views/frame/browser_view.h b/chrome/browser/ui/views/frame/browser_view.h
-index 6c4807b..d838984 100644
+index 6c4807b..6c5654a 100644
 --- a/chrome/browser/ui/views/frame/browser_view.h
 +++ b/chrome/browser/ui/views/frame/browser_view.h
-@@ -105,0 +106,7 @@ class WebAppFrameToolbarView;
+@@ -21,2 +21,4 @@
+ #include "base/timer/timer.h"
++#include "base/values.h"
++#include "url/gurl.h"
+ #include "build/build_config.h"
+@@ -105,3 +107,10 @@ class VerticalTabStripRegionView;
+ class WebAppFrameToolbarView;
+-
 +class ExtensionViewViews;
 +class KestrelBrowserFrameLoadObserver;
 +class KestrelBrowserFrameExtensionObserver;
@@ -423,10 +549,22 @@ index 6c4807b..d838984 100644
 +namespace extensions {
 +class ExtensionViewHost;
 +}  // namespace extensions
-@@ -1076,0 +1084,2 @@ class BrowserView : public BrowserWindow,
++
+ namespace gfx {
+@@ -1076,2 +1085,9 @@ class BrowserView : public BrowserWindow,
+   void UpdateAccessibleNameForRootView();
 +  void MaybeCreateKestrelBrowserFrame();
 +  void DestroyKestrelBrowserFrame();
-@@ -1410,0 +1420,9 @@ class BrowserView : public BrowserWindow,
++  void SetKestrelBrowserFrameReady(bool ready);
++  void InvalidateKestrelBrowserFrame();
++  void PollKestrelBrowserFrame();
++  void OnKestrelBrowserFrameProbe(uint64_t generation, const GURL& expected,
++                                  base::Value result);
+   void UpdateAccessibleURLForRootView(const GURL& url);
+@@ -1409,3 +1425,20 @@ class BrowserView : public BrowserWindow,
+   base::CallbackListSubscription zoom_changed_subscription_;
+-
++
 +  // Kestrel owns the visible browser frame; Chromium still owns the window,
 +  // BrowserView, TabStripModel, extension hosts, and web contents.
 +  std::unique_ptr<extensions::ExtensionViewHost> kestrel_frame_host_;
@@ -435,4 +573,13 @@ index 6c4807b..d838984 100644
 +  std::unique_ptr<KestrelBrowserFrameExtensionObserver>
 +      kestrel_frame_extension_observer_;
 +  raw_ptr<ExtensionViewViews> kestrel_frame_view_ = nullptr;
++  base::RepeatingTimer kestrel_frame_timer_;
++  base::TimeTicks kestrel_frame_probe_deadline_;
++  uint64_t kestrel_frame_probe_generation_ = 0;
++  bool kestrel_frame_probe_pending_ = false;
++  bool kestrel_frame_ready_ = false;
++  bool kestrel_top_was_visible_ = false;
++  bool kestrel_horizontal_was_visible_ = false;
++  bool kestrel_vertical_was_visible_ = false;
 +
+   // Bitmask of current combination of reparenting states, e.g. immersive and
