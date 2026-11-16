@@ -17,7 +17,9 @@ const executable = join(app, "Contents", "MacOS", "Kestrel");
 // prove that the bundled runtime remains quiet after its UI and Core relay are
 // both active.
 const backgroundRegistrationObservationMs = 15_000;
-const missingProfile = spawnSync(executable, [], {
+// Select the explicit desktop route so a no-profile probe fails closed instead
+// of opening Kestrel's first-run default-profile chooser.
+const missingProfile = spawnSync(executable, ["--kestrel-chromium-desktop"], {
 	encoding: "utf8",
 	timeout: 10_000,
 });
@@ -28,7 +30,7 @@ assert.equal(
 );
 assert.match(
 	`${missingProfile.stdout}${missingProfile.stderr}`,
-	/requires an explicit isolated profile path/,
+	/Native Chromium requires an explicit isolated profile/,
 );
 const directProfile = await mkdtemp(
 	join(tmpdir(), "kestrel-native-chromium-direct-profile-"),
