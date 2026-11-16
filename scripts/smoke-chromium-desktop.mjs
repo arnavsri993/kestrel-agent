@@ -401,7 +401,7 @@ try{
   'The native browser window is hidden. Unlock the Mac before exercising Store controls.');
  if(new URL(home.url()).searchParams.get('surface')==='frame'){
   await home.getByRole('button',{name:'Browser menu',exact:true}).click();
-  await home.getByRole('menuitem',{name:'All browser settings',exact:true}).click();
+  await home.getByRole('menuitem',{name:'Settings',exact:true}).click();
  }else await home.getByRole('button',{name:'Open settings',exact:true}).click();
  uiActionPage=undefined;
  const settings=await createdPage(url=>url.includes('index.html?app=settings'));await settings.waitForURL(/index.html\?app=settings/);

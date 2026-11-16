@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import type { MemoryRecallStatus, UserBrowserFile } from "@kestrel/shared-types";
 import { BrowserWorkspace } from "./components/browser/BrowserWorkspace";
 import { useUserBrowser } from "./browser/useUserBrowser";
@@ -23,12 +23,17 @@ const EMPTY_MEMORY_RECALL: MemoryRecallStatus = {
 export function NativeChromiumFrameApp() {
 	const browser = useUserBrowser();
 	const companionOpen = useNativeCompanionOpen();
+	const [actionError, setActionError] = useState("");
 	const openPage = useCallback((page: string) => {
-		const extensionId = (globalThis as typeof globalThis & {
-			chrome?: { runtime?: { id?: string } };
-		}).chrome?.runtime?.id;
-		if (!extensionId) return;
-		void browser.createTab(`chrome-extension://${extensionId}/index.html?app=${encodeURIComponent(page)}`);
+		const pages = ["settings", "projects", "history", "downloads", "bookmarks"];
+		if (!pages.includes(page)) {
+			setActionError("That Kestrel page is not available.");
+			return;
+		}
+		setActionError("");
+		void browser.createTab(`kestrel://${page}`).catch(() => {
+			setActionError(`Could not open Kestrel ${page}. Try again.`);
+		});
 	}, [browser.createTab]);
 	const toggleAgent = useCallback(() => {
 		void (companionOpen ? closeNativeAgentPanel() : openNativeAgentPanel());
@@ -37,6 +42,11 @@ export function NativeChromiumFrameApp() {
 
 	return (
 		<main className="ai-browser-app kestrel-chromium-frame-app">
+			{actionError && (
+				<p className="native-frame-action-error" role="alert">
+					{actionError}
+				</p>
+			)}
 			<BrowserWorkspace
 				browser={browser}
 				agentName="Kestrel"

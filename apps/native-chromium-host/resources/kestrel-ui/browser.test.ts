@@ -412,6 +412,11 @@ describe("native first-party browser adapter", () => {
 		await adapter.request({ type: "browser-navigate", tabId, input: "kestrel://settings" }, sender);
 		expect(tabs[0].url).toBe(`${uiUrl}?app=settings`);
 		expect((await adapter.request({ type: "browser-get-state" }, sender)).browserState.tabs[0].url).toBe("kestrel://settings");
+		await adapter.request({ type: "browser-create-tab", input: "kestrel://projects" }, sender);
+		expect(tabs.at(-1)?.url).toBe(`${uiUrl}?app=projects`);
+		const beforeRejectedExtension = tabs.length;
+		expect((await adapter.request({ type: "browser-create-tab", input: `chrome-extension://${"b".repeat(32)}/index.html?app=settings` }, sender)).ok).toBe(false);
+		expect(tabs).toHaveLength(beforeRejectedExtension);
 		await adapter.request({ type: "browser-create-tab", input: "cats and dogs" }, sender);
 		expect(tabs.at(-1)?.url).toBe("https://native-provider.example/search?q=cats%20and%20dogs");
 		expect(chrome.search.query.mock.calls[0]?.[0]).toEqual({ text: "cats and dogs", tabId: tabs.at(-1)?.id });
