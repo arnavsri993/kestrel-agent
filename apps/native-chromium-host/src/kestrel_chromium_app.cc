@@ -202,6 +202,7 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     // testing trials can request helper bundle types Kestrel does not ship.
     command_line->AppendSwitch("disable-field-trial-config");
     if (!desktop_ui_path_.empty()) {
+#if defined(KESTREL_NATIVE_BROWSER_FRAME) && KESTREL_NATIVE_BROWSER_FRAME
       if (desktop_ui_extension_id_.size() != 32 ||
           desktop_ui_extension_id_.find_first_not_of("abcdefghijklmnop") !=
               std::string::npos) {
@@ -209,13 +210,16 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
                   << std::endl;
         return;
       }
+#endif
       command_line->RemoveSwitch("disable-extensions");
       command_line->AppendSwitchWithValue("load-extension", desktop_ui_path_);
+#if defined(KESTREL_NATIVE_BROWSER_FRAME) && KESTREL_NATIVE_BROWSER_FRAME
       command_line->AppendSwitch("kestrel-browser-frame");
       command_line->AppendSwitchWithValue("kestrel-shell-extension-id",
                                           desktop_ui_extension_id_);
       command_line->AppendSwitchWithValue("kestrel-shell-extension-path",
                                           desktop_ui_path_);
+#endif
     }
     const bool mock_keychain =
         kestrel::ConfigureKeychainPolicy(*command_line);

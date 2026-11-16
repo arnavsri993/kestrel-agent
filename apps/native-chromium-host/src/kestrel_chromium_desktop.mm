@@ -53,6 +53,12 @@
 #include "kestrel_native_profile_transfer.h"
 
 namespace {
+#if defined(KESTREL_NATIVE_BROWSER_FRAME) && KESTREL_NATIVE_BROWSER_FRAME
+constexpr bool kNativeBrowserFrameEnabled = true;
+#else
+constexpr bool kNativeBrowserFrameEnabled = false;
+#endif
+
 bool RequestNativeWindow(bool dock_activation);
 class OpenKestrelNewTabTask final : public CefTask {
  public:
@@ -770,7 +776,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     if (!bytes || bytes.length > 1'048'576) return;
     NSMutableData* line = [bytes mutableCopy]; [line appendBytes:"\n" length:1];
     @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) { /* Broker shutdown settles its pending requests. */ }
-  }, true);
+  }, kNativeBrowserFrameEnabled);
   desktop_broker_input = input.fileHandleForWriting;
   const std::string key_profile(core_profile.fileSystemRepresentation);
   const auto key_owner = native_core_key_dispatcher.BeginOwner(

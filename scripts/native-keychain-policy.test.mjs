@@ -4,7 +4,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { nativeChromiumBuildModeCompileFlag } from "./build-native-chromium-host.mjs";
+import { nativeChromiumBrowserFrameCompileFlag, nativeChromiumBuildModeCompileFlag } from "./build-native-chromium-host.mjs";
 
 describe.skipIf(process.platform !== "darwin")("native Chromium Keychain policy compile matrix", () => {
 	let temporary;
@@ -49,6 +49,12 @@ describe.skipIf(process.platform !== "darwin")("native Chromium Keychain policy 
 	it("uses the builder's explicit 0/1 release-mode compile flags", () => {
 		expect(nativeChromiumBuildModeCompileFlag(false)).toBe("-DKESTREL_NATIVE_RELEASE_BUILD=0");
 		expect(nativeChromiumBuildModeCompileFlag(true)).toBe("-DKESTREL_NATIVE_RELEASE_BUILD=1");
+	});
+
+	it("enables the Kestrel BrowserView only for a reviewed custom CEF runtime", () => {
+		expect(nativeChromiumBrowserFrameCompileFlag(false)).toBe("-DKESTREL_NATIVE_BROWSER_FRAME=0");
+		expect(nativeChromiumBrowserFrameCompileFlag(true)).toBe("-DKESTREL_NATIVE_BROWSER_FRAME=1");
+		expect(() => nativeChromiumBrowserFrameCompileFlag(undefined)).toThrow();
 	});
 
 	it.each([undefined, "-DKESTREL_NATIVE_RELEASE_BUILD=2"])("refuses an unspecified or invalid compile policy (%s)", flag => {

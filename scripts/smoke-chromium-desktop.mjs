@@ -30,6 +30,7 @@ const cancellation=createNativeDesktopCancellation({onCancel:error=>{
 const onInt=()=>{if(!terminalSealed)cancellation.cancel('SIGINT');},onTerm=()=>{if(!terminalSealed)cancellation.cancel('SIGTERM');};
 process.on('SIGINT',onInt);process.on('SIGTERM',onTerm);
 const delay=(...args)=>cancellation.delay(...args);
+const isKestrelHomeUrl=url=>/^chrome-extension:\/\/[^/]+\/index\.html(?:\?surface=frame)?$/.test(url);
 async function connect(endpoint){
  cancellation.check();
  return cancellation.wait(chromium.connectOverCDP(endpoint,{noDefaults:true,timeout:15_000}).then(value=>cancellation.bindTransport(value)));
@@ -124,11 +125,11 @@ async function start(){
  let context=browser.contexts()[0];
  let home;
  for(let i=0;i<200;i++){
-  home=context.pages().find(page=>/chrome-extension:\/\/[^/]+\/index.html$/.test(page.url()));if(home)break;
+  home=context.pages().find(page=>isKestrelHomeUrl(page.url()));if(home)break;
   if(i%10===0){
    const session=await browser.newBrowserCDPSession();
    const targets=await session.send('Target.getTargets');await session.detach();
-   if(targets.targetInfos.some(target=>target.type==='page'&&/chrome-extension:\/\/[^/]+\/index.html$/.test(target.url))){
+   if(targets.targetInfos.some(target=>target.type==='page'&&isKestrelHomeUrl(target.url))){
     // Chrome may have created the first page between Playwright's discovery
     // and auto-attach setup. Reconnect only when that real target exists.
     await browser.close();browser=await connect(endpoint);context=browser.contexts()[0];
@@ -137,7 +138,10 @@ async function start(){
   await delay(100);
  }
  assert(home,'Authenticated native Home did not open: '+output);
- await home.waitForFunction(()=>typeof window.kestrel?.request==='function');
+ // ExtensionViewViews is rendered inside the native BrowserView. Its
+ // animation-frame callbacks can be throttled while the host window attaches,
+ // so wait for the bridge with a steady browser-context poll instead.
+ await home.waitForFunction(()=>typeof window.kestrel?.request==='function',undefined,{polling:100,timeout:30_000});
  console.log('NATIVE_DESKTOP_PROBE_READY '+JSON.stringify({pid:child.pid,profile,evidence}));
  return {context,home,endpoint};
 }
@@ -161,29 +165,34 @@ async function waitForCandidateStop(){
 }
 async function ownedUiDiagnostics(page) {
  return Promise.race([page.evaluate(async () => {
-  const button=document.querySelector('button[aria-label="Open settings"]');
+  const browserFrame=new URLSearchParams(location.search).get('surface')==='frame';
+  const button=document.querySelector(browserFrame?'button[aria-label="Browser menu"]':'button[aria-label="Open settings"]');
   const bounds=button?.getBoundingClientRect(),style=button&&getComputedStyle(button);
   const hit=bounds&&document.elementFromPoint(bounds.x+bounds.width/2,bounds.y+bounds.height/2);
-  const current=await chrome.tabs.getCurrent();
-  const active=current&&await chrome.tabs.query({active:true,windowId:current.windowId});
-  const window=current&&await chrome.windows.get(current.windowId);
+  const window=browserFrame?await chrome.windows.getCurrent():undefined;
+  const current=browserFrame?(await chrome.tabs.query({active:true,windowId:window?.id}))[0]:await chrome.tabs.getCurrent();
+  const active=current&&await chrome.tabs.query({active:true,windowId:browserFrame?window?.id:current.windowId});
+  const currentWindow=browserFrame?window:current&&await chrome.windows.get(current.windowId);
   const rafTicks=await new Promise(resolveTicks=>{
    let ticks=0;const timer=setTimeout(()=>resolveTicks(ticks),750);
    const tick=()=>{if(++ticks===2){clearTimeout(timer);resolveTicks(ticks);}else requestAnimationFrame(tick);};requestAnimationFrame(tick);
   });
-  return {visibility:document.visibilityState,hasFocus:document.hasFocus(),rafTicks,
-   tabId:current?.id,windowId:current?.windowId,ownTabActive:active?.length===1&&active[0].id===current.id,windowFocused:window?.focused,
+  return {visibility:document.visibilityState,hasFocus:document.hasFocus(),rafTicks,browserFrame,
+   tabId:current?.id,windowId:browserFrame?window?.id:current?.windowId,ownTabActive:active?.length===1&&active[0].id===current.id,windowFocused:currentWindow?.focused,
    button:button?{disabled:button.disabled,width:bounds.width,height:bounds.height,x:bounds.x,y:bounds.y,
     display:style.display,visibility:style.visibility,opacity:style.opacity,centerHitsButton:hit===button||button.contains(hit)}:null};
  }).catch(()=>({unavailable:true})),delay(2000,{diagnosticTimeout:true},{ref:false})]);
 }
 async function activateOwnedUi(page) {
  const tab=await page.evaluate(async()=>{
-  const current=await chrome.tabs.getCurrent();
-  if(!Number.isInteger(current?.id)||!Number.isInteger(current?.windowId))throw Error('Owned UI has no native tab.');
-  await chrome.tabs.update(current.id,{active:true});
-  await chrome.windows.update(current.windowId,{focused:true});
-  return{id:current.id,windowId:current.windowId};
+  const browserFrame=new URLSearchParams(location.search).get('surface')==='frame';
+  const currentWindow=await chrome.windows.getCurrent();
+  const current=browserFrame?(await chrome.tabs.query({active:true,windowId:currentWindow?.id}))[0]:await chrome.tabs.getCurrent();
+  const windowId=browserFrame?currentWindow?.id:current?.windowId;
+  if(!Number.isInteger(current?.id)||!Number.isInteger(windowId))throw Error('Owned UI has no active native browser tab/window.');
+  if(!browserFrame)await chrome.tabs.update(current.id,{active:true});
+  await chrome.windows.update(windowId,{focused:true});
+  return{id:current.id,windowId,browserFrame};
  });
  await page.bringToFront();
  await page.waitForFunction(async({id,windowId})=>{
@@ -240,7 +249,7 @@ try{
   // CEF's browser target does not auto-attach every native-created tab.
   // Reconnect to its existing targets; the product tab/window stays intact.
   await browser.close();browser=await connect(endpoint);context=browser.contexts()[0];
-  home=context.pages().find(page=>/chrome-extension:\/\/[^/]+\/index.html$/.test(page.url()));
+  home=context.pages().find(page=>isKestrelHomeUrl(page.url()));
   for(let i=0;i<100;i++){page=browser.contexts().flatMap(context=>context.pages()).find(page=>predicate(page.url()));if(page)return page;await delay(100);}
   throw Error('Native-created target could not be attached by the test connection.');
  }
@@ -262,8 +271,15 @@ try{
  UserBrowserStateSchema.parse((await home.evaluate(()=>window.kestrel.request({type:'browser-get-state'}))).browserState);
  // Only this disposable canary bypasses setup to isolate the browser flow.
  await home.evaluate(()=>{localStorage.setItem('kestrel:onboarded','yes');localStorage.setItem('kestrel:default-browser-prompted','yes');});
- await home.reload();await home.locator('.kestrel-sidebar').waitFor();
- assert.equal(await home.locator('.browser-toolbar,.browser-tab-row').count(),0,'Native Chrome must own its browser controls.');
+ await home.reload();
+ if(new URL(home.url()).searchParams.get('surface')==='frame'){
+  await home.waitForFunction(()=>document.documentElement.dataset.nativeSurface==='frame'&&document.querySelector('.browser-workspace-native-frame-shell .browser-tab-row')&&document.querySelector('.browser-workspace-native-frame-shell .browser-toolbar'),undefined,{polling:100,timeout:30_000});
+  assert.equal(await home.locator('.browser-workspace-native-frame-shell .browser-tab-row').count(),1,'Kestrel must own the native browser tab strip.');
+  assert.equal(await home.locator('.browser-workspace-native-frame-shell .browser-toolbar').count(),1,'Kestrel must own the native address and page toolbar.');
+ }else{
+  await home.locator('.kestrel-sidebar').waitFor();
+  assert.equal(await home.locator('.browser-toolbar,.browser-tab-row').count(),0,'The stock Chromium fixture must retain its existing native browser controls.');
+ }
  const grants=await home.evaluate(()=>window.kestrel.request({type:'get-workspace-grants'}));assert.equal(grants.ok,true);
  const nativeSystem=await home.evaluate(()=>window.kestrel.request({type:'get-system-state'}));assert.equal(nativeSystem.ok,true);assert.equal(typeof nativeSystem.launchAtLogin,'boolean');
  const created=await home.evaluate(()=>window.kestrel.request({type:'runtime-create-session',title:'Chromium restart canary',kind:'conversation'}));assert.equal(created.ok,true);savedSession=created.session?.id;assert(savedSession);
@@ -362,8 +378,12 @@ try{
  assert(!['failed','blocked'].includes(navigated.status),JSON.stringify(navigated));
  await coreTab.waitForURL(navigatedUrl);
  const uiState=(await home.evaluate(()=>window.kestrel.request({type:'browser-get-state'}))).browserState;
- const protectedTab=uiState.tabs.find(tab=>!tab.url);assert(protectedTab);
- const denied=await coreTool('browser.close-tab',{tabId:protectedTab.id});assert(['failed','blocked'].includes(denied.status),'Core must not control Kestrel UI pages.');
+ if(new URL(home.url()).searchParams.get('surface')==='frame'){
+  assert(!uiState.tabs.some(tab=>tab.url===home.url()),'The native Kestrel BrowserView frame must stay outside the user-tab model.');
+ }else{
+  const protectedTab=uiState.tabs.find(tab=>!tab.url);assert(protectedTab);
+  const denied=await coreTool('browser.close-tab',{tabId:protectedTab.id});assert(['failed','blocked'].includes(denied.status),'Core must not control Kestrel UI pages.');
+ }
  assert.equal(home.isClosed(),false);
  const closing=coreTab.waitForEvent('close');
  const closed=await coreTool('browser.close-tab',{tabId:opened.output.tabId});assert(!['failed','blocked'].includes(closed.status),JSON.stringify(closed));
@@ -372,12 +392,17 @@ try{
  // A native-created target may have required a CDP reconnect above. Close
  // through a fresh handle rather than a disconnected Playwright object.
  await (await createdPage(url=>url===fixtureUrl)).close();
- home=await createdPage(url=>/^chrome-extension:\/\/[^/]+\/index\.html$/.test(url));
+ home=await createdPage(isKestrelHomeUrl);
  uiActionPage=home;
  receipt.settingsActivationBefore=await ownedUiDiagnostics(home);
  receipt.settingsActivation=await activateOwnedUi(home);
  receipt.settingsActivationAfter=await ownedUiDiagnostics(home);
- await home.getByRole('button',{name:'Open settings',exact:true}).click();
+ assert(receipt.settingsActivationAfter.visibility==='visible'&&receipt.settingsActivationAfter.hasFocus&&receipt.settingsActivationAfter.windowFocused,
+  'The native browser window is hidden. Unlock the Mac before exercising Store controls.');
+ if(new URL(home.url()).searchParams.get('surface')==='frame'){
+  await home.getByRole('button',{name:'Browser menu',exact:true}).click();
+  await home.getByRole('menuitem',{name:'All browser settings',exact:true}).click();
+ }else await home.getByRole('button',{name:'Open settings',exact:true}).click();
  uiActionPage=undefined;
  const settings=await createdPage(url=>url.includes('index.html?app=settings'));await settings.waitForURL(/index.html\?app=settings/);
  await settings.locator('[data-app-page="settings"]').waitFor();
@@ -406,15 +431,19 @@ try{
   for(let i=0;i<2400;i++){
    assert.equal(child.exitCode,null,output);
    const session=await browser.newBrowserCDPSession();const targets=await session.send('Target.getTargets');await session.detach();
-   if(targets.targetInfos.some(target=>target.type==='page'&&/chrome-extension:\/\/[^/]+\/index.html$/.test(target.url))){restored=await createdPage(url=>/chrome-extension:\/\/[^/]+\/index.html$/.test(url));break;}
+   if(targets.targetInfos.some(target=>target.type==='page'&&isKestrelHomeUrl(target.url))){restored=await createdPage(isKestrelHomeUrl);break;}
    await delay(100);
   }
   assert(restored,'Native window did not reopen.');home=restored;
-  await home.waitForFunction(()=>typeof window.kestrel?.request==='function');
-  await home.locator('.kestrel-sidebar').waitFor();
-  await home.locator('#new-tab-title').waitFor();
+  await home.waitForFunction(()=>typeof window.kestrel?.request==='function',undefined,{polling:100,timeout:30_000});
+  if(new URL(home.url()).searchParams.get('surface')==='frame'){
+   await home.waitForFunction(()=>document.querySelector('.browser-workspace-native-frame-shell .browser-tab-row'),undefined,{polling:100,timeout:30_000});
+  }else{
+   await home.locator('.kestrel-sidebar').waitFor();
+   await home.locator('#new-tab-title').waitFor();
+  }
   const reopenedTargets=await browser.newBrowserCDPSession();
-  const reopenedHomes=(await reopenedTargets.send('Target.getTargets')).targetInfos.filter(target=>target.type==='page'&&/chrome-extension:\/\/[^/]+\/index.html$/.test(target.url));
+  const reopenedHomes=(await reopenedTargets.send('Target.getTargets')).targetInfos.filter(target=>target.type==='page'&&isKestrelHomeUrl(target.url));
   await reopenedTargets.detach();
   assert.equal(reopenedHomes.length,1,'Native New Window must not duplicate restored Kestrel Home');
   assert((await home.evaluate(()=>window.kestrel.request({type:'runtime-list-sessions'}))).sessions.some(session=>session.id===savedSession));
@@ -477,7 +506,7 @@ try{
     extensionWorker=context.serviceWorkers().find(item=>item.url().startsWith(`chrome-extension://${actionExtension}/`));
     if(!extensionWorker&&i%20===0){
      const discovery=await browser.newBrowserCDPSession();const targets=await discovery.send('Target.getTargets');await discovery.detach();
-     if(targets.targetInfos.some(target=>target.type==='service_worker'&&target.url.startsWith(`chrome-extension://${actionExtension}/`))){await browser.close();browser=await connect(endpoint);context=browser.contexts()[0];home=context.pages().find(page=>/chrome-extension:\/\/[^/]+\/index.html$/.test(page.url()));}
+     if(targets.targetInfos.some(target=>target.type==='service_worker'&&target.url.startsWith(`chrome-extension://${actionExtension}/`))){await browser.close();browser=await connect(endpoint);context=browser.contexts()[0];home=context.pages().find(page=>isKestrelHomeUrl(page.url()));}
     }
     if(!extensionWorker)await delay(100);
    }
