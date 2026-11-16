@@ -13,7 +13,7 @@ export const RETIREMENT_GATES = Object.freeze([
   "native-local-vault", "native-browser-local-vault", "isolated-automation-session",
   "existing-ui-and-onboarding", "provider-sign-in", "local-models", "agents-and-tools",
   "approvals", "workspace-and-files", "settings", "autofill", "restart-recovery",
-  "developer-id-signing-and-notarization", "profile-transfer-and-rollback",
+  "developer-id-signing-and-notarization", "profile-transfer-and-rollback", "native-app-update",
   "canonical-dock-app-on-screen",
 ]);
 
@@ -66,6 +66,36 @@ export async function candidateDigest(candidate) {
   }
   await visit(candidate, "");
   return hash.digest("hex");
+}
+
+// A generic passed wrapper is not evidence of an actual application upgrade.
+// The attested run must use two signed native bundles and a disposable profile.
+async function validateNativeAppUpdateArtifact(wrapper, wrapperPath, candidate, candidateSha256) {
+  const artifacts = wrapper.artifacts.filter(item => item?.kind === "native-app-update-canary");
+  if (artifacts.length !== 1) throw new Error("expected exactly one native-app-update-canary artifact");
+  const artifact = artifacts[0];
+  if (typeof artifact.path !== "string" || !artifact.path || isAbsolute(artifact.path) || !SHA256.test(artifact.sha256 ?? "")) throw new Error("invalid update canary artifact reference");
+  const receiptDirectory = resolve(dirname(wrapperPath));
+  const artifactPath = resolve(receiptDirectory, artifact.path);
+  if (!isContainedPath(receiptDirectory, artifactPath)) throw new Error("update canary artifact escapes receipt directory");
+  const canonicalReceiptDirectory = await realpath(receiptDirectory);
+  const canonicalArtifactPath = await realpath(artifactPath);
+  if (!isContainedPath(canonicalReceiptDirectory, canonicalArtifactPath)) throw new Error("update canary artifact escapes through a symlink");
+  const stat = await lstat(artifactPath);
+  if (!stat.isFile() || stat.size > MAX_RECEIPT_BYTES) throw new Error("invalid update canary artifact");
+  const bytes = await readFile(canonicalArtifactPath);
+  if (digest().update(bytes).digest("hex") !== artifact.sha256) throw new Error("update canary artifact digest mismatch");
+  const proof = JSON.parse(bytes.toString("utf8"));
+  const infoPath = join(candidate, "Contents", "Info.plist");
+  const infoStat = await lstat(infoPath);
+  if (!infoStat.isFile() || infoStat.size > MAX_RECEIPT_BYTES) throw new Error("candidate Info.plist is invalid");
+  const info = await readFile(infoPath, "utf8");
+  const bundleVersion = info.match(/<key>CFBundleVersion<\/key>\s*<(string|integer)>([0-9]+)<\/\1>/)?.[2];
+  const integer = value => typeof value === "string" && /^[1-9][0-9]{0,14}$/.test(value);
+  const checks = ["isolatedProfile", "developerIdSignedBoth", "notarizedBoth", "sameSigningTeam", "nativeRuntimeBoth", "signatureVerified", "httpsFeed", "orderlyQuit", "cleanRestart", "profileContinuity", "vaultReadback", "candidateInstalled"];
+  if (proof?.version !== 1 || proof.kind !== "native-app-update-canary" || proof.gate !== "native-app-update" || proof.result !== "passed" || proof.candidateSha256 !== candidateSha256 || proof.candidateSha256After !== candidateSha256 || !SHA256.test(proof.previousCandidateSha256 ?? "") || proof.previousCandidateSha256 === candidateSha256 || !integer(proof.previousVersion) || !integer(proof.installedVersion) || proof.installedVersion !== bundleVersion || BigInt(proof.installedVersion) <= BigInt(proof.previousVersion) || checks.some(check => proof.checks?.[check] !== true)) {
+    throw new Error("update canary does not establish a signed native two-version upgrade and profile continuity");
+  }
 }
 
 // A generic passed wrapper cannot substitute for a production-mode vault
@@ -153,6 +183,7 @@ async function validateEvidencePhase(candidate, manifestPath, pendingCanonical) 
           typeof receipt.summary !== "string" || !receipt.summary.trim() || !Array.isArray(receipt.artifacts) || !receipt.artifacts.length) {
         throw new Error("receipt is invalid, unverified, or for a different candidate");
       }
+      if (gate === "native-app-update") await validateNativeAppUpdateArtifact(receipt, path, candidate, candidateSha256);
       if (gate === "native-local-vault" || gate === "native-browser-local-vault") {
         await validateLocalVaultArtifact(gate, receipt, path, candidateSha256);
       }

@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cerrno>
+#include <csignal>
 #include <cmath>
 #include <cctype>
 #include <cstdint>
@@ -66,7 +68,7 @@
                  terminationHandler:(void (^)(NSString* error))terminationHandler;
 - (BOOL)start:(NSError**)error;
 - (BOOL)sendLine:(NSString*)line;
-- (void)shutdown;
+- (BOOL)shutdown;
 @end
 
 @interface KestrelNativeCoreRelay ()
@@ -79,7 +81,7 @@
 @property(nonatomic, strong) NSFileHandle* input;
 @property(nonatomic, strong) NSFileHandle* output;
 @property(nonatomic, strong) NSMutableData* outputBuffer;
-@property(nonatomic) BOOL stopping;
+@property(atomic) BOOL stopping;
 @end
 
 @implementation KestrelNativeCoreRelay
@@ -148,7 +150,9 @@
       handle.readabilityHandler = nil;
       return;
     }
-    [strongSelf consumeOutput:data];
+    // Keep draining after shutdown starts: Core can flush more than a pipe
+    // buffer while the UI thread waits for its relay to exit.
+    if (!strongSelf.stopping) [strongSelf consumeOutput:data];
   };
   self.task.terminationHandler = ^(NSTask* task) {
     KestrelNativeCoreRelay* strongSelf = weakSelf;
@@ -194,16 +198,47 @@
   }
 }
 
-- (void)shutdown {
-  if (self.stopping) return;
+- (BOOL)shutdown {
   self.stopping = YES;
-  self.output.readabilityHandler = nil;
   self.task.terminationHandler = nil;
   @try {
     [self.input closeFile];
   } @catch (NSException*) {
   }
+  const pid_t relay = self.task.processIdentifier;
+  if (relay <= 0) return YES;
+  // NSTask puts the relay (and its Node children) in a separate process group.
+  // Waiting only for the CEF host or even the relay leader misses live Core
+  // children. Preserve the output reader until this entire group has exited.
+  const auto stopped = [&]() {
+    if (self.task.isRunning) return false;
+    errno = 0;
+    return kill(-relay, 0) == -1 && errno == ESRCH;
+  };
+  const auto wait = [&](int milliseconds) {
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(milliseconds);
+    while (!stopped() && std::chrono::steady_clock::now() < deadline)
+      [NSThread sleepForTimeInterval:0.01];
+    return stopped();
+  };
   if (self.task.isRunning) [self.task terminate];
+  BOOL confirmed = wait(8000);
+  if (!confirmed) {
+    kill(-relay, SIGTERM);
+    confirmed = wait(2000);
+  }
+  if (!confirmed) {
+    kill(-relay, SIGKILL);
+    confirmed = wait(2000);
+  }
+  if (!confirmed) return NO;
+  self.output.readabilityHandler = nil;
+  @try {
+    [self.output closeFile];
+  } @catch (NSException*) {
+  }
+  return YES;
 }
 
 @end
@@ -5655,7 +5690,11 @@ class KestrelClient : public CefClient,
 
   void StopCoreRelay() {
     if (core_relay_) {
-      [core_relay_ shutdown];
+      if (![core_relay_ shutdown]) {
+        std::cerr << "KESTREL_NATIVE_CORE_SHUTDOWN_UNCONFIRMED: "
+                  << "Core relay process group remains alive." << std::endl;
+        std::exit(1);
+      }
       core_relay_ = nil;
     }
     core_ready_ = false;

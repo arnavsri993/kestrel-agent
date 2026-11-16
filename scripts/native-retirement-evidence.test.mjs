@@ -15,6 +15,7 @@ async function fixture(t) {
   await mkdir(join(candidate, "Contents", "MacOS"), { recursive: true });
   await mkdir(join(candidate, "Contents", "Resources"));
   await writeFile(join(candidate, "Contents", "MacOS", "Kestrel"), "executable");
+  await writeFile(join(candidate, "Contents", "Info.plist"), "<?xml version=\"1.0\"?><plist><dict><key>CFBundleVersion</key><string>2</string></dict></plist>");
   await writeFile(join(candidate, "Contents", "Resources", "ui"), "ui version 1");
   await symlink("ui", join(candidate, "Contents", "Resources", "ui-link"));
   const candidateSha256 = await candidateDigest(candidate);
@@ -27,6 +28,12 @@ async function fixture(t) {
       // Synthetic unit fixtures exercise the validator only; they are not release evidence.
       const kind = `${gate}-canary`;
       const proof = Buffer.from(JSON.stringify({ version: 1, kind, gate, result: "passed", provider: gate === "native-local-vault" ? "secure-enclave-local-vault" : "chromium-local-vault", candidateSha256, candidateSha256After: candidateSha256, checks: { freshGeneratedProfile: true, productionProvider: true, cleanRestart: true, sameProfileRestartReadback: true, encryptedDataVerified: true, plaintextAbsent: true, noMockProvider: true, noTestKey: true, noKeychainItemAPIs: true, persistentCookieReadback: true, encryptedCookieRow: true, tamperedCookieRejected: true, persistentPasswordReadback: true, encryptedPasswordRow: true, nativePasswordAutofill: true } }));
+      await writeFile(join(root, `${kind}.json`), proof);
+      artifacts.push({ kind, path: `${kind}.json`, sha256: sha(proof) });
+    }
+    if (gate === "native-app-update") {
+      const kind = "native-app-update-canary";
+      const proof = Buffer.from(JSON.stringify({ version: 1, kind, gate, result: "passed", candidateSha256, candidateSha256After: candidateSha256, previousCandidateSha256: "a".repeat(64), previousVersion: "1", installedVersion: "2", checks: Object.fromEntries(["isolatedProfile", "developerIdSignedBoth", "notarizedBoth", "sameSigningTeam", "nativeRuntimeBoth", "signatureVerified", "httpsFeed", "orderlyQuit", "cleanRestart", "profileContinuity", "vaultReadback", "candidateInstalled"].map(key => [key, true])) }));
       await writeFile(join(root, `${kind}.json`), proof);
       artifacts.push({ kind, path: `${kind}.json`, sha256: sha(proof) });
     }
@@ -357,4 +364,49 @@ test("CLI rejects acceptance alone and does not run parity for incomplete eviden
   const noAcceptance = spawnSync(process.execPath, ["scripts/check-electron-retirement-gates.mjs", f.candidate], { env: { ...env, KESTREL_ACCEPT_ELECTRON_RETIREMENT: "0", KESTREL_NATIVE_RETIREMENT_EVIDENCE: f.manifestPath }, encoding: "utf8" });
   assert.notEqual(noAcceptance.status, 0);
   assert.match(noAcceptance.stderr, /Explicit retirement acceptance/);
+});
+
+test("native app update gate rejects missing and downgraded or incomplete upgrade proof", async t => {
+  const f = await fixture(t);
+  const proofPath = join(f.root, "native-app-update-canary.json");
+  const wrapperPath = join(f.root, "native-app-update.json");
+  const wrapper = JSON.parse(await readFile(wrapperPath));
+  const artifact = wrapper.artifacts.find(item => item.kind === "native-app-update-canary");
+  const original = JSON.parse(await readFile(proofPath));
+  for (const mutate of [p => { p.installedVersion = p.previousVersion; }, p => { p.installedVersion = "3"; }, p => { p.checks.profileContinuity = false; }, p => { p.checks.nativeRuntimeBoth = false; }, p => { p.candidateSha256After = "0".repeat(64); }]) {
+    const proof = structuredClone(original); mutate(proof);
+    const bytes = Buffer.from(JSON.stringify(proof)); await writeFile(proofPath, bytes); artifact.sha256 = sha(bytes);
+    const receipt = Buffer.from(JSON.stringify(wrapper)); await writeFile(wrapperPath, receipt); f.manifest.gates["native-app-update"].sha256 = sha(receipt); await f.save();
+    assert((await validateRetirementEvidence(f.candidate, f.manifestPath)).problems.some(p => p.startsWith("native-app-update:")));
+  }
+  delete f.manifest.gates["native-app-update"]; await f.save();
+  assert((await validateRetirementEvidence(f.candidate, f.manifestPath)).problems.some(p => p.includes("native-app-update: missing")));
+});
+
+test("native app update proof cannot read artifacts outside its receipt directory", async t => {
+  const f = await fixture(t);
+  const proofPath = join(f.root, "native-app-update-canary.json");
+  const wrapperPath = join(f.root, "native-app-update.json");
+  const wrapper = JSON.parse(await readFile(wrapperPath));
+  const artifact = wrapper.artifacts.find(item => item.kind === "native-app-update-canary");
+  async function pointArtifact(path) {
+    artifact.path = path;
+    const receipt = Buffer.from(JSON.stringify(wrapper));
+    await writeFile(wrapperPath, receipt);
+    f.manifest.gates["native-app-update"].sha256 = sha(receipt);
+    await f.save();
+  }
+
+  await pointArtifact("../native-app-update-canary.json");
+  let result = await validateRetirementEvidence(f.candidate, f.manifestPath);
+  assert(result.problems.some(problem => problem.includes("update canary artifact escapes receipt directory")));
+
+  const outside = `${f.root}-outside.json`;
+  t.onTestFinished(() => rm(outside, { force: true }));
+  await writeFile(outside, await readFile(proofPath));
+  const link = join(f.root, "canary-link.json");
+  await symlink(outside, link);
+  await pointArtifact("canary-link.json");
+  result = await validateRetirementEvidence(f.candidate, f.manifestPath);
+  assert(result.problems.some(problem => problem.includes("update canary artifact escapes through a symlink")));
 });

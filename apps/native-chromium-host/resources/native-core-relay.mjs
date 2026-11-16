@@ -217,12 +217,32 @@ async function shutdown(exitCode = 0) {
 	} catch {
 		// The process is torn down below if IPC has already closed.
 	}
-	const exited = new Promise((resolveExit) => {
-		core.once("exit", resolveExit);
-		setTimeout(resolveExit, 2_000).unref();
-	});
-	await exited;
-	if (core.exitCode === null) core.kill();
+	const hasExited = () => core.exitCode !== null || core.signalCode !== null;
+	const waitForExit = async (milliseconds) => {
+		if (hasExited()) return true;
+		return new Promise((resolveExit) => {
+			const onExit = () => { clearTimeout(timer); resolveExit(true); };
+			const timer = setTimeout(() => {
+				core.off("exit", onExit);
+				resolveExit(hasExited());
+			}, milliseconds);
+			core.once("exit", onExit);
+		});
+	};
+	let confirmed = await waitForExit(2_000);
+	if (!confirmed) {
+		core.kill("SIGTERM");
+		confirmed = await waitForExit(2_000);
+	}
+	if (!confirmed) {
+		core.kill("SIGKILL");
+		confirmed = await waitForExit(2_000);
+	}
+	if (!confirmed) {
+		console.error("KESTREL_NATIVE_CORE_SHUTDOWN_UNCONFIRMED: Core child remains alive; preserving its profile.");
+		process.exit(1);
+	}
+
 	await coreProfile.close();
 	process.exit(exitCode);
 }
