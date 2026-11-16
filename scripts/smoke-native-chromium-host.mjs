@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
+import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const app = process.env.KESTREL_NATIVE_TEST_APP
@@ -90,6 +91,21 @@ function processTree(rootPid) {
 	return rows.filter((row) => descendants.has(row.pid));
 }
 const activeChildren = new Set();
+
+function waitForExit(child, timeoutMs) {
+	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+	return new Promise((resolvePromise) => {
+		const timer = setTimeout(() => {
+			child.removeListener("exit", onExit);
+			resolvePromise(false);
+		}, timeoutMs);
+		function onExit() {
+			clearTimeout(timer);
+			resolvePromise(true);
+		}
+		child.once("exit", onExit);
+	});
+}
 
 async function startNativeHost(args, requiredMarkers, label) {
 	let output = "";
@@ -198,11 +214,14 @@ function assertFullRendererSetupStatus(output) {
 }
 
 try {
+	await markDisposableNativeTestProfile(directProfile);
 	const direct = await startNativeHost(
 		[
 			"--kestrel-cache-path",
 			directProfile,
 			"--kestrel-ephemeral-core",
+			"--kestrel-durable-profile",
+			"--kestrel-test-profile-key",
 			"--kestrel-renderer",
 			"--kestrel-smoke-user-browser-url",
 			directUserBrowserUrl,
@@ -236,12 +255,15 @@ try {
 	assertFullRendererSetupStatus(directOutput);
 
 	for (const [index, bridgeProfile] of bridgeProfiles.entries()) {
+		await markDisposableNativeTestProfile(bridgeProfile);
 		const label = `the static-shell bridge browser smoke #${index + 1}`;
 		const bridge = await startNativeHost(
 		[
 			"--kestrel-cache-path",
 			bridgeProfile,
 			"--kestrel-ephemeral-core",
+			"--kestrel-durable-profile",
+			"--kestrel-test-profile-key",
 			"--kestrel-smoke-bridge-user-browser-url",
 			bridgeUserBrowserUrl,
 			"--kestrel-exit-after-ready-ms",
@@ -280,10 +302,21 @@ try {
 	}
 	console.log("Native Chromium host: bundled CEF, isolated profiles, standalone Node Core relay, full Kestrel renderer, bridge-created user tab, sandbox-default process tree, and orderly shutdown passed.");
 } finally {
-	for (const child of activeChildren) {
-		if (child.exitCode === null) child.kill("SIGTERM");
+	const children = [...activeChildren];
+	let shutdownError;
+	for (const child of children) {
+		if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+	}
+	for (const child of children) {
+		const graceful = await waitForExit(child, 5_000);
+		if (!graceful) {
+			child.kill("SIGKILL");
+			const stopped = await waitForExit(child, 5_000);
+			if (!stopped) shutdownError ??= new Error("Native Chromium smoke process did not exit; preserving its generated profiles.");
+		}
 	}
 	await new Promise((resolvePromise) => userBrowserServer.close(resolvePromise));
+	if (shutdownError) throw shutdownError;
 	await rm(directProfile, { recursive: true, force: true });
 	await Promise.all(
 		bridgeProfiles.map((profile) => rm(profile, { recursive: true, force: true })),
