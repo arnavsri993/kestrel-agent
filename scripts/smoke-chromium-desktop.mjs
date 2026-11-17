@@ -304,11 +304,11 @@ try{
  }catch(error){
   receipt.homeReadiness=await home.evaluate(()=>{
    const input=document.querySelector('#new-tab-chat-input'),bounds=input?.getBoundingClientRect(),style=input&&getComputedStyle(input);
-   const loading=[...document.querySelectorAll('.loading-screen')].map(element=>({className:element.className,text:element.textContent?.trim().slice(0,120),opacity:getComputedStyle(element).opacity,display:getComputedStyle(element).display}));
-   return{url:location.href,title:document.title,visibility:document.visibilityState,hasFocus:document.hasFocus(),viewport:{width:innerWidth,height:innerHeight},document:{width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight},input:input?{width:bounds.width,height:bounds.height,display:style.display,visibility:style.visibility,opacity:style.opacity,disabled:input.disabled}:null,loading};
+   const loading=[...document.querySelectorAll('.loading-screen')].map(element=>{const rect=element.getBoundingClientRect(),style=getComputedStyle(element);return{className:element.className,text:element.textContent?.trim().slice(0,120),x:rect.x,y:rect.y,width:rect.width,height:rect.height,opacity:style.opacity,display:style.display,visibility:style.visibility};});
+   return{url:location.href,title:document.title,visibility:document.visibilityState,hasFocus:document.hasFocus(),viewport:{width:innerWidth,height:innerHeight},document:{width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight},input:input?{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,display:style.display,visibility:style.visibility,opacity:style.opacity,disabled:input.disabled}:null,loading};
   }).catch(cause=>({diagnosticError:String(cause)}));
   await home.screenshot({path:join(evidence,'failed-home-readiness.png'),timeout:5000}).catch(()=>{});
-  throw new Error(`Kestrel Home did not become visibly ready: ${JSON.stringify(receipt.homeReadiness)}; ${String(error)}`);
+  throw new Error(`Kestrel Home composer did not acquire layout: ${JSON.stringify(receipt.homeReadiness)}; ${String(error)}`);
  }
  const frameTargets=await browser.newBrowserCDPSession();
  const hasFrame=(await frameTargets.send('Target.getTargets')).targetInfos.some(target=>target.type==='page'&&isKestrelFrameUrl(target.url));
@@ -322,7 +322,7 @@ try{
  }else{
   assert.equal(await home.locator('.browser-toolbar,.browser-tab-row').count(),0,'The stock Chromium fixture must retain its existing native browser controls.');
  }
- receipt.phases.push({phase:'native-kestrel-home-and-browser-frame',passed:true,homeUrl:home.url(),homeComposerVisible:true,customBrowserFrame:hasFrame,frameUrl:nativeFrame?.url(),frameTabs:hasFrame?1:undefined,frameToolbar:hasFrame});
+ receipt.phases.push({phase:'native-kestrel-home-and-browser-frame-dom',passed:true,homeUrl:home.url(),homeComposerInDocument:true,customBrowserFrame:hasFrame,frameUrl:nativeFrame?.url(),frameTabs:hasFrame?1:undefined,frameToolbar:hasFrame});
  const grants=await home.evaluate(()=>window.kestrel.request({type:'get-workspace-grants'}));assert.equal(grants.ok,true);
  const nativeSystem=await home.evaluate(()=>window.kestrel.request({type:'get-system-state'}));assert.equal(nativeSystem.ok,true);assert.equal(typeof nativeSystem.launchAtLogin,'boolean');
  const created=await home.evaluate(()=>window.kestrel.request({type:'runtime-create-session',title:'Chromium restart canary',kind:'conversation'}));assert.equal(created.ok,true);savedSession=created.session?.id;assert(savedSession);
