@@ -223,19 +223,65 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
   }
   void MaybeQuit() { if (closing_ && browsers_.empty() && automation_closed_) CefQuitMessageLoop(); }
   void PresentFirstWindow(CefRefPtr<CefBrowser> browser) {
-    if (initial_window_presented_) return;
+    if (initial_window_presented_ || initial_window_presentation_pending_ || !browser) return;
+    initial_window_presentation_pending_ = true;
+    CefRefPtr<DesktopClient> self = this;
+    KestrelDispatchToMainRunLoop(^{
+      self->AttemptFirstWindowPresentation(browser, 0);
+    });
+  }
+  void AttemptFirstWindowPresentation(CefRefPtr<CefBrowser> browser, int attempt) {
+    if (initial_window_presented_ || !initial_window_presentation_pending_) return;
+    if (!browser || !browser->IsValid() || !first_browser_ ||
+        !browser->IsSame(first_browser_)) {
+      initial_window_presentation_pending_ = false;
+      initial_window_activation_requested_ = false;
+      if (first_browser_ && first_browser_->IsValid()) PresentFirstWindow(first_browser_);
+      return;
+    }
+
     NSView* view = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
     NSWindow* window = view.window;
-    if (!window) return;
-    initial_window_presented_ = true;
-    KestrelDispatchToMainRunLoop(^{
+    if (!window) {
+      RetryFirstWindowPresentation(browser, attempt);
+      return;
+    }
+
+    if (!initial_window_activation_requested_) {
+      initial_window_activation_requested_ = true;
       if (window.miniaturized) [window deminiaturize:nil];
       // A normal LaunchServices or Dock launch carries user intent. Request
       // activation without the focus-stealing option, then make our own first
       // browser window key and visible once AppKit accepts the activation.
-      [[NSRunningApplication currentApplication] activateWithOptions:0];
+      const BOOL activation_requested =
+          [[NSRunningApplication currentApplication] activateWithOptions:0];
       [window makeKeyAndOrderFront:nil];
-    });
+      std::cout << "KESTREL_CHROMIUM_WINDOW_PRESENTATION_REQUESTED activation="
+                << (activation_requested ? 1 : 0) << std::endl;
+    }
+
+    if (window.isVisible && NSApp.isActive && window.isKeyWindow) {
+      initial_window_presentation_pending_ = false;
+      initial_window_presented_ = true;
+      std::cout << "KESTREL_CHROMIUM_WINDOW_PRESENTED visible=1 key=1 active=1"
+                << std::endl;
+      return;
+    }
+    RetryFirstWindowPresentation(browser, attempt);
+  }
+  void RetryFirstWindowPresentation(CefRefPtr<CefBrowser> browser, int attempt) {
+    constexpr int kMaxPresentationAttempts = 30;
+    if (attempt >= kMaxPresentationAttempts) {
+      initial_window_presentation_pending_ = false;
+      std::cerr << "Kestrel's first Chromium window did not become visible and active."
+                << std::endl;
+      return;
+    }
+    CefRefPtr<DesktopClient> self = this;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC),
+        dispatch_get_main_queue(), ^{
+          self->AttemptFirstWindowPresentation(browser, attempt + 1);
+        });
   }
   void OpenUiWhenReady() {
     if (!document_ready_ || ui_opened_ || !first_browser_) return;
@@ -268,6 +314,8 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
   bool ui_opened_ = false;
   CefRefPtr<CefBrowser> first_browser_;
   bool closing_ = false;
+  bool initial_window_presentation_pending_ = false;
+  bool initial_window_activation_requested_ = false;
   int active_id_ = -1;
   std::map<int, CefRefPtr<CefBrowser>> browsers_;
   IMPLEMENT_REFCOUNTING(DesktopClient);

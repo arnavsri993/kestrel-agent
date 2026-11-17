@@ -10,6 +10,7 @@ assert(effectStart >= 0 && effectEnd > effectStart, 'frame readiness effect must
 const effect = renderer.slice(effectStart + '\tuseEffect(() => {'.length, effectEnd);
 const patch = readFileSync(new URL('../cef-patches/chromium-kestrel-vault.patch', import.meta.url), 'utf8');
 const preparer = readFileSync(new URL('../../../scripts/prepare-native-vault-cef.mjs', import.meta.url), 'utf8');
+const desktop = readFileSync(new URL('../src/kestrel_chromium_desktop.mm', import.meta.url), 'utf8');
 
 function fixture() {
  let now = 1000, controls = false, resolveRequest, rejectRequest, tick, pagehide;
@@ -81,6 +82,22 @@ test('Chromium patch insertion offsets account for prior hunks', () => {
   assert.equal(newStart, oldStart + delta + (oldCount === 0 ? 1 : 0));
   delta += newCount - oldCount;
  }
+});
+
+test('first native window retries attachment and verifies activation before claiming presentation', () => {
+ const start = desktop.indexOf('void PresentFirstWindow(');
+ const end = desktop.indexOf('void OpenUiWhenReady()', start);
+ assert(start >= 0 && end > start, 'first-window presentation methods must be present');
+ const presentation = desktop.slice(start, end);
+ assert.match(presentation, /KestrelDispatchToMainRunLoop/);
+ assert.match(presentation, /if \(!window\) \{\n      RetryFirstWindowPresentation\(browser, attempt\);/);
+ assert.match(presentation, /window\.isVisible && NSApp\.isActive && window\.isKeyWindow/);
+ assert.match(presentation, /kMaxPresentationAttempts = 30/);
+ assert.match(presentation, /100 \* NSEC_PER_MSEC/);
+ assert.equal((presentation.match(/activateWithOptions:0/g) ?? []).length, 1,
+  'the initial app activation request must not repeat during retries');
+ assert(presentation.indexOf('if (!window)') < presentation.indexOf('activateWithOptions:0'));
+ assert(presentation.indexOf('activateWithOptions:0') < presentation.indexOf('window.isVisible'));
 });
 
 test('the CEF frame patch uses context anchors on apply and rollback', () => {
