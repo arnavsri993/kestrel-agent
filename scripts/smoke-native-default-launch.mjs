@@ -54,20 +54,33 @@ function frontmostApplication() {
   return Number.isSafeInteger(pid) && bundlePath ? { pid, bundlePath } : null;
 }
 
+function nativeWindowTitles(pid) {
+  const source = `import AppKit
+import CoreGraphics
+let pid = ${pid}
+let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+for window in windows where (window[kCGWindowOwnerPID as String] as? Int) == pid {
+  if let title = window[kCGWindowName as String] as? String { print(title) }
+}`;
+  const result = spawnSync("/usr/bin/swift", ["-e", source], { encoding: "utf8", timeout: 15000 });
+  if (result.error || result.status !== 0) return [];
+  return result.stdout.split(/\r?\n/).map(title => title.trim()).filter(Boolean);
+}
+
 async function launchOutput() {
   if (!launchLogPaths) return "";
   const [stdout, stderr] = await Promise.all(launchLogPaths.map(path => readFile(path, "utf8").catch(() => "")));
   return `${stdout}\n${stderr}`;
 }
 
-async function waitFor(check, timeout = 45000, failureMessage = "Default launch did not become ready.") {
+async function waitFor(check, timeout = 45000, failureMessage = "Default launch did not become ready.", intervalMs = 100) {
   const end = Date.now() + timeout;
   while (Date.now() < end) {
     if (child && child.exitCode !== null) throw new Error(`Candidate exited early: ${child.exitCode}`);
     if (launchServicesChild && launchServicesChild.exitCode !== null)
       throw new Error(`LaunchServices exited early: ${launchServicesChild.exitCode}\n${await launchOutput()}`);
     if (await check()) return;
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
   }
   throw new Error(`${failureMessage}\n${await launchOutput()}`);
 }
@@ -95,6 +108,8 @@ async function launch() {
     const front = frontmostApplication();
     return front?.pid === nativePid && front.bundlePath === candidate;
   }, 10000, "Kestrel's full shell loaded, but macOS kept another app in front.");
+  await waitFor(() => nativeWindowTitles(nativePid).includes("Kestrel"), 10000,
+    "Kestrel's native browser window did not expose its own Kestrel identity.", 500);
   console.log("PASS LaunchServices presented the native Kestrel browser frame and activated its process.");
   const exited = new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Candidate failed to quit cleanly.")), 15000);

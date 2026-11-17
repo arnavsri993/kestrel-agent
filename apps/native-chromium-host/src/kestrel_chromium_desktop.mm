@@ -98,6 +98,9 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
     else callback->Cancel();
     return true;
   }
+  void OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString&) override {
+    SetKestrelWindowTitle(browser);
+  }
   void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int http_status) override {
     if (frame->IsMain() && frame->GetURL() == ui_url_ && http_status >= 200 && http_status < 400)
       std::cout << "KESTREL_CHROMIUM_DESKTOP_DOCUMENT_LOADED" << std::endl;
@@ -122,10 +125,14 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
     if (frame->IsMain() && (url == "chrome://newtab/" || url == "chrome://new-tab-page/"))
       CefPostTask(TID_UI, new OpenKestrelNewTabTask(browser, url, ui_url_));
   }
-  void OnGotFocus(CefRefPtr<CefBrowser> browser) override { active_id_ = browser->GetIdentifier(); }
+  void OnGotFocus(CefRefPtr<CefBrowser> browser) override {
+    active_id_ = browser->GetIdentifier();
+    SetKestrelWindowTitle(browser);
+  }
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
     browsers_[browser->GetIdentifier()] = browser;
     browser->GetHost()->SetAccessibilityState(STATE_ENABLED);
+    SetKestrelWindowTitle(browser);
     if (!first_browser_) first_browser_ = browser;
     PresentFirstWindow(browser);
     OpenUiWhenReady();
@@ -208,6 +215,12 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
     else OpenWindow(ui_url_ + "?app=settings");
   }
  private:
+  static void SetKestrelWindowTitle(CefRefPtr<CefBrowser> browser) {
+    if (!browser || !browser->IsValid()) return;
+    NSView* view = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
+    NSWindow* window = view.window;
+    if (window && ![window.title isEqualToString:@"Kestrel"]) window.title = @"Kestrel";
+  }
   void MaybeQuit() { if (closing_ && browsers_.empty() && automation_closed_) CefQuitMessageLoop(); }
   void PresentFirstWindow(CefRefPtr<CefBrowser> browser) {
     if (initial_window_presented_) return;
