@@ -125,9 +125,10 @@ function sandboxProfile(
 	const escapedRoot = quoteProfilePath(root);
 	const userReadBoundary = `(deny file-read* (require-all (subpath "/Users") (require-not (subpath "${escapedRoot}"))))`;
 	const ptyDevices = `(require-not (regex #"^/dev/(ttys[0-9A-Fa-f]+|(pty|tty)[pqrsPQRS][0-9A-Fa-f])$"))`;
+	const denyNewSession = "(deny syscall-unix (syscall-number SYS_setsid))";
 	if (mode === "read_only")
-		return `(version 1) (allow default) (deny network*) ${userReadBoundary} (deny file-write* (require-all (require-not (literal "/dev/null")) (require-not (literal "/dev/ptmx")) ${ptyDevices}))`;
-	return `(version 1) (allow default) ${mode === "workspace_write" ? "(deny network*)" : ""} ${userReadBoundary} (deny file-write* (require-all (require-not (subpath "${escapedRoot}")) (require-not (literal "/dev/null")) (require-not (literal "/dev/ptmx")) ${ptyDevices}))`;
+		return `(version 1) (allow default) ${denyNewSession} (deny network*) ${userReadBoundary} (deny file-write* (require-all (require-not (literal "/dev/null")) (require-not (literal "/dev/ptmx")) ${ptyDevices}))`;
+	return `(version 1) (allow default) ${denyNewSession} ${mode === "workspace_write" ? "(deny network*)" : ""} ${userReadBoundary} (deny file-write* (require-all (require-not (subpath "${escapedRoot}")) (require-not (literal "/dev/null")) (require-not (literal "/dev/ptmx")) ${ptyDevices}))`;
 }
 
 function killChildProcess(child: ChildProcess): void {
@@ -162,8 +163,8 @@ export class SandboxedCommandRunner {
 	private interrupted = false;
 
 	/** Stop direct children and wait for their close notifications before Core exits.
-	 * A child interrupted during shutdown makes that shutdown unclean: its own
-	 * detached descendants cannot be established from a Node child handle. */
+	 * The sandbox denies setsid, but Node's close event only confirms the owned
+	 * child, so interrupted shutdown remains unconfirmed. */
 	async close(): Promise<void> {
 		this.closing = true;
 		const active = [...this.active];
@@ -173,13 +174,19 @@ export class SandboxedCommandRunner {
 			await Promise.race([
 				Promise.all(active.map((child) => child.exited)),
 				new Promise<never>((_, reject) => {
-					timer = setTimeout(() => reject(new Error("Command child shutdown was not confirmed.")), 5_000);
+					timer = setTimeout(
+						() => reject(new Error("Command child shutdown was not confirmed.")),
+						5_000,
+					);
 				}),
 			]);
 		} finally {
 			if (timer) clearTimeout(timer);
 		}
-		if (this.interrupted) throw new Error("Command children were interrupted; descendant shutdown is unconfirmed.");
+		if (this.interrupted)
+			throw new Error(
+				"Command children were interrupted; descendant shutdown is unconfirmed because Node only reports the owned child.",
+			);
 	}
 
 	start(

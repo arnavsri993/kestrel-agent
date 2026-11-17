@@ -4,11 +4,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <utility>
 
 #include "include/cef_request_context.h"
 #include "include/cef_task.h"
 #include "include/views/cef_browser_view.h"
+#include "kestrel_native_run_loop_dispatch.h"
 
 struct KestrelChromeWindowContainer::State
     : public std::enable_shared_from_this<State> {
@@ -258,6 +260,24 @@ void KestrelChromeWindowContainer::SetBrowserBounds(const CefRect& bounds,
 }
 
 void KestrelChromeWindowContainer::DetachShell() { state_->DetachShell(); }
+
+void KestrelChromeWindowContainer::Present() {
+  if (!state_->window || state_->closing || state_->cleaned_up) return;
+  __weak NSWindow* target = state_->window;
+  KestrelDispatchToMainRunLoop(^{
+    NSWindow* window = target;
+    if (!window) return;
+    if (window.miniaturized) [window deminiaturize:nil];
+    // This call follows a LaunchServices/Dock launch or Kestrel-owned reopen.
+    // It does not use the focus-stealing activation option.
+    const BOOL activated =
+        [[NSRunningApplication currentApplication] activateWithOptions:0];
+    [window makeKeyAndOrderFront:nil];
+    std::cout << "KESTREL_NATIVE_CHROMIUM_WINDOW_PRESENTED activated="
+              << activated << " visible=" << window.visible
+              << " key=" << window.keyWindow << std::endl;
+  });
+}
 
 void KestrelChromeWindowContainer::Minimize() {
   if (!state_->closing && state_->window) [state_->window miniaturize:nil];

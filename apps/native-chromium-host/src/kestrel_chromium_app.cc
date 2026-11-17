@@ -181,14 +181,16 @@ KestrelChromiumApp::KestrelChromiumApp(
     std::string isolated_profile_root,
     DefaultClient default_client,
     std::string desktop_ui_path,
-    std::string desktop_ui_extension_id)
+    std::string desktop_ui_extension_id,
+    bool live_extensions_enabled)
     : on_context_initialized_(std::move(on_context_initialized)),
       default_client_(std::move(default_client)),
       extension_workbench_(extension_workbench),
       user_extensions_enabled_(user_extensions_enabled),
       isolated_profile_root_(std::move(isolated_profile_root)),
       desktop_ui_path_(std::move(desktop_ui_path)),
-      desktop_ui_extension_id_(std::move(desktop_ui_extension_id)) {}
+      desktop_ui_extension_id_(std::move(desktop_ui_extension_id)),
+      live_extensions_enabled_(live_extensions_enabled) {}
 
 void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     const CefString& process_type,
@@ -201,6 +203,8 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     // shipped feature defaults, as Chromium recommends for other browsers;
     // testing trials can request helper bundle types Kestrel does not ship.
     command_line->AppendSwitch("disable-field-trial-config");
+    if (live_extensions_enabled_)
+      command_line->AppendSwitch("kestrel-live-extensions");
     if (!desktop_ui_path_.empty()) {
 #if defined(KESTREL_NATIVE_BROWSER_FRAME) && KESTREL_NATIVE_BROWSER_FRAME
       if (desktop_ui_extension_id_.size() != 32 ||

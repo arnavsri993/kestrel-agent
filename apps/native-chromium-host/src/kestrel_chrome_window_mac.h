@@ -32,6 +32,7 @@ class KestrelChromeWindowContainer final {
   // The Chrome surface starts hidden until the caller supplies its bounds.
   void SetBrowserBounds(const CefRect& bounds, bool visible);
   void DetachShell();
+  void Present();
   void Minimize();
   void ToggleZoom();
   int WindowNumber() const;

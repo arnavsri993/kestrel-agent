@@ -2,6 +2,7 @@
 #import <ImageIO/ImageIO.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cerrno>
 #include <csignal>
@@ -22,6 +23,7 @@
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -56,9 +58,13 @@
 #include "kestrel_extension_workbench.h"
 #include "kestrel_native_credentials.h"
 #include "kestrel_native_core_keychain.h"
+#include "kestrel_native_profile_transfer.h"
 #include "kestrel_browser_local_vault.h"
+#include "kestrel_profile_reservation.h"
 #include "kestrel_chrome_window_mac.h"
 #include "kestrel_live_extension_control.h"
+#include "kestrel_native_run_loop_dispatch.h"
+#include "native_external_url_validation.h"
 
 @interface KestrelNativeCoreRelay : NSObject
 - (instancetype)initWithProfileRoot:(NSString*)profileRoot
@@ -247,6 +253,7 @@ namespace {
 
 std::string shell_url;
 std::string isolated_profile_path;
+std::string isolated_core_profile_path;
 std::string renderer_resource_root;
 int exit_after_ready_ms = 0;
 bool ephemeral_core_enabled = false;
@@ -259,6 +266,11 @@ std::shared_ptr<KestrelLiveExtensionControl> live_extension_control;
 bool durable_profile_enabled = false;
 bool disposable_test_profile_key_enabled = false;
 bool real_keychain_enabled = false;
+bool native_default_shell_enabled = false;
+std::unique_ptr<kestrel::ProfileReservation> native_default_profile_reservation;
+std::unique_ptr<kestrel::ProfileReservation> native_default_core_profile_reservation;
+int native_default_profile_lock_fd = -1;
+KestrelNativeProfileTransferController* native_profile_transfer = nil;
 bool smoke_durable_library_seed = false;
 bool smoke_durable_library_verify = false;
 bool smoke_browser_backend = false;
@@ -663,6 +675,7 @@ class KestrelChromeBrowserViewDelegate final : public CefBrowserViewDelegate {
 };
 
 class KestrelClient;
+void DrainPendingNativeDefaultExternalURLs();
 KestrelClient* client_instance = nullptr;
 void schedule_close_after_ready();
 void post_bridge_teardown(CefRefPtr<KestrelClient> client);
@@ -1358,6 +1371,7 @@ class KestrelClient : public CefClient,
  public:
   KestrelClient(std::string allowed_shell_url,
                 NSString* isolated_profile_root,
+                NSString* isolated_core_profile_root,
                 bool enable_ephemeral_core,
                 bool enable_user_extensions,
                 bool enable_chrome_extension_view)
@@ -1393,6 +1407,9 @@ class KestrelClient : public CefClient,
           user_extensions_enabled_
               ? isolated_profile_root_
               : isolated_profile_root_ + "/user-browser";
+      isolated_core_profile_root_ = isolated_core_profile_root
+          ? std::string([isolated_core_profile_root fileSystemRepresentation] ?: "")
+          : isolated_profile_root_;
       if (durable_profile_enabled) {
         browser_library_.Load(isolated_profile_root_);
         std::cout << "KESTREL_NATIVE_CHROMIUM_DURABLE_LIBRARY_LOADED"
@@ -1441,7 +1458,7 @@ class KestrelClient : public CefClient,
                 << std::endl;
     }
     if (enable_ephemeral_core) {
-      StartEphemeralCore(isolated_profile_root);
+      StartEphemeralCore(isolated_core_profile_root ?: isolated_profile_root);
     }
   }
   ~KestrelClient() override {
@@ -1463,6 +1480,9 @@ class KestrelClient : public CefClient,
     browser_ = browser;
     if (chrome_window_) {
       chrome_window_->SetShellBrowser(browser);
+      chrome_window_->Present();
+      std::cout << "KESTREL_NATIVE_CHROMIUM_MAIN_WINDOW_READY pid=" << getpid()
+                << " window=" << chrome_window_->WindowNumber() << std::endl;
       std::cout << "KESTREL_NATIVE_CHROMIUM_EXTENSION_SAME_WINDOW_OK" << std::endl;
       std::cout << "KESTREL_NATIVE_CHROMIUM_EXTENSION_OS_WINDOW "
                 << chrome_window_->WindowNumber() << std::endl;
@@ -1490,6 +1510,27 @@ class KestrelClient : public CefClient,
 
   void SetChromeWindow(std::unique_ptr<KestrelChromeWindowContainer> window) {
     chrome_window_ = std::move(window);
+  }
+
+  void PresentMainWindow() {
+    if (chrome_window_) chrome_window_->Present();
+  }
+
+  bool OpenExternalURL(const std::string& input) {
+    if (!native_default_shell_enabled || closing_ ||
+        ![NSThread isMainThread]) {
+      return false;
+    }
+    std::string error;
+    if (!CreateUserBrowserTab(input, true, &error)) {
+      std::cerr << "Kestrel could not open an external URL"
+                << (error.empty() ? "." : ": " + error) << std::endl;
+      return false;
+    }
+    SyncUserBrowserViewVisibility();
+    PublishUserBrowserState();
+    PresentMainWindow();
+    return true;
   }
 
   void ChromeWindowClosing() {
@@ -1553,6 +1594,14 @@ class KestrelClient : public CefClient,
   void OnLoadEnd(CefRefPtr<CefBrowser> browser,
                  CefRefPtr<CefFrame> frame,
                  int http_status_code) override {
+    if (native_default_shell_enabled && browser && browser_ &&
+        browser->IsSame(browser_) && frame && frame->IsMain()) {
+      DrainPendingNativeDefaultExternalURLs();
+    }
+    if (browser && browser_ && browser->IsSame(browser_) && chrome_window_ &&
+        frame && frame->IsMain()) {
+      chrome_window_->Present();
+    }
     if (!frame || !frame->IsMain() || host_ready_logged_) {
       return;
     }
@@ -1705,7 +1754,7 @@ class KestrelClient : public CefClient,
                 std::string(NSBundle.mainBundle.bundlePath.fileSystemRepresentation ?: ""),
                 &key_base64, &error)
           : core_profile_key_store_.GetOrCreate(
-                isolated_profile_root_, &key_base64, &error);
+                isolated_core_profile_root_, &key_base64, &error);
       auto response = CefDictionaryValue::Create();
       response->SetString("type", "native-core-profile-key-response");
       response->SetString("requestId", request_id);
@@ -5780,6 +5829,7 @@ class KestrelClient : public CefClient,
   bool chrome_extension_view_enabled_ = false;
   bool chrome_extension_view_created_ = false;
   std::string isolated_profile_root_;
+  std::string isolated_core_profile_root_;
   std::string user_browser_cache_path_;
   DurableBrowserLibrary browser_library_;
   NativeCredentialStore credential_store_;
@@ -5926,6 +5976,29 @@ class BridgeRouterReleaseTask final : public CefTask {
 // keeps the bridge router from being released re-entrantly by the BrowserView
 // graph during window teardown.
 CefRefPtr<KestrelClient> main_client_owner;
+std::deque<std::string> pending_native_default_external_urls;
+
+bool RouteKestrelExternalURL(NSURL* url) {
+  if (!native_default_shell_enabled) return EnqueueKestrelExternalURL(url);
+  if (![NSThread isMainThread] || !IsAllowedKestrelExternalURL(url)) return false;
+  NSString* text = url.absoluteString;
+  const char* utf8 = text.UTF8String;
+  if (!utf8) return false;
+  if (main_client_owner) return main_client_owner->OpenExternalURL(utf8);
+  if (pending_native_default_external_urls.size() >= 32) return false;
+  pending_native_default_external_urls.emplace_back(utf8);
+  return true;
+}
+
+void DrainPendingNativeDefaultExternalURLs() {
+  if (!native_default_shell_enabled || !main_client_owner ||
+      ![NSThread isMainThread]) return;
+  while (!pending_native_default_external_urls.empty()) {
+    if (!main_client_owner->OpenExternalURL(
+            pending_native_default_external_urls.front())) return;
+    pending_native_default_external_urls.pop_front();
+  }
+}
 
 void post_bridge_teardown(CefRefPtr<KestrelClient> client) {
   CefPostTask(TID_UI, new BridgeTeardownTask(std::move(client)));
@@ -6124,6 +6197,13 @@ class KestrelWindowDelegate : public CefWindowDelegate {
 
 - (void)terminate:(id)sender {
   if (CloseKestrelChromiumDesktop()) return;
+  if (native_default_shell_enabled && native_profile_transfer) {
+    [native_profile_transfer shutdown];
+    if (![native_profile_transfer waitForShutdown:15]) {
+      std::cerr << "KESTREL_NATIVE_PROFILE_TRANSFER_SHUTDOWN_UNCONFIRMED" << std::endl;
+      return;
+    }
+  }
   if (extension_workbench_client) {
     extension_workbench_client->CloseAll();
     return;
@@ -6142,7 +6222,7 @@ class KestrelWindowDelegate : public CefWindowDelegate {
 - (void)application:(NSApplication*)application openURLs:(NSArray<NSURL*>*)urls {
   (void)application;
   if (!self.acceptsExternalURLs) return;
-  for (NSURL* url in urls) if (!EnqueueKestrelExternalURL(url))
+  for (NSURL* url in urls) if (!RouteKestrelExternalURL(url))
     std::cerr << "Kestrel could not accept an external URL." << std::endl;
 }
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
@@ -6152,10 +6232,21 @@ class KestrelWindowDelegate : public CefWindowDelegate {
 - (BOOL)applicationShouldHandleReopen:(NSApplication*)sender hasVisibleWindows:(BOOL)has_visible_windows {
   (void)sender;
   if (!has_visible_windows && ReopenKestrelChromiumDesktop()) return YES;
+  if (!has_visible_windows && native_default_shell_enabled && main_client_owner) {
+    main_client_owner->PresentMainWindow();
+    return YES;
+  }
   return YES;
 }
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
   if (CloseKestrelChromiumDesktop()) return NSTerminateCancel;
+  if (native_default_shell_enabled && native_profile_transfer) {
+    [native_profile_transfer shutdown];
+    if (![native_profile_transfer waitForShutdown:15]) {
+      std::cerr << "KESTREL_NATIVE_PROFILE_TRANSFER_SHUTDOWN_UNCONFIRMED" << std::endl;
+      return NSTerminateCancel;
+    }
+  }
   if (extension_workbench_client) {
     extension_workbench_client->CloseAll();
     return NSTerminateCancel;
@@ -6167,6 +6258,44 @@ class KestrelWindowDelegate : public CefWindowDelegate {
   return NSTerminateNow;
 }
 @end
+
+@interface KestrelNativeProfileMenuTarget : NSObject <NSMenuItemValidation>
+- (void)transferCore:(id)sender;
+- (void)recoverCore:(id)sender;
+- (void)previousCore:(id)sender;
+@end
+
+@implementation KestrelNativeProfileMenuTarget
+- (void)transferCore:(id)sender { [native_profile_transfer beginTransfer]; }
+- (void)recoverCore:(id)sender { [native_profile_transfer reviewInterruptedTransfers]; }
+- (void)previousCore:(id)sender { [native_profile_transfer restorePrevious]; }
+- (BOOL)validateMenuItem:(NSMenuItem*)item {
+  if (item.action == @selector(transferCore:) || item.action == @selector(recoverCore:) ||
+      item.action == @selector(previousCore:)) return [native_profile_transfer canBegin];
+  return YES;
+}
+@end
+
+static void InstallNativeProfileMenu() {
+  static KestrelNativeProfileMenuTarget* target;
+  target = [[KestrelNativeProfileMenuTarget alloc] init];
+  NSMenu* main = [[NSMenu alloc] init];
+  NSMenuItem* appItem = [[NSMenuItem alloc] initWithTitle:@"Kestrel" action:nil keyEquivalent:@""];
+  NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"Kestrel"];
+  appItem.submenu = appMenu;
+  [main addItem:appItem];
+  [appMenu addItemWithTitle:@"About Kestrel" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
+  NSMenuItem* transfer = [appMenu addItemWithTitle:@"Transfer Conversations & Memory…" action:@selector(transferCore:) keyEquivalent:@""];
+  transfer.target = target;
+  NSMenuItem* recovery = [appMenu addItemWithTitle:@"Review Interrupted Transfers…" action:@selector(recoverCore:) keyEquivalent:@""];
+  recovery.target = target;
+  NSMenuItem* previous = [appMenu addItemWithTitle:@"Use Previous Data Profile…" action:@selector(previousCore:) keyEquivalent:@""];
+  previous.target = target;
+  [appMenu addItem:NSMenuItem.separatorItem];
+  [appMenu addItemWithTitle:@"Hide Kestrel" action:@selector(hide:) keyEquivalent:@"h"];
+  [appMenu addItemWithTitle:@"Quit Kestrel" action:@selector(terminate:) keyEquivalent:@"q"];
+  NSApp.mainMenu = main;
+}
 
 std::string bundled_shell_url() {
   NSString* resource_path = [[NSBundle mainBundle] resourcePath];
@@ -6185,10 +6314,16 @@ std::string bundled_shell_url() {
 }
 
 int main(int argc, char* argv[]) {
-  if (has_argument(argc, argv, "--kestrel-live-extensions")) {
-    if (!has_argument(argc, argv, "--kestrel-user-extensions") ||
+  bool legacy_selector = false;
+  for (int i = 1; i < argc; ++i) {
+    if (std::string(argv[i]).rfind("--kestrel-", 0) == 0) legacy_selector = true;
+  }
+  const bool explicit_desktop = has_argument(argc, argv, "--kestrel-chromium-desktop");
+  const bool native_default_shell = !explicit_desktop && !legacy_selector;
+  if (has_argument(argc, argv, "--kestrel-live-extensions") || native_default_shell) {
+    if (!native_default_shell && (!has_argument(argc, argv, "--kestrel-user-extensions") ||
         !has_argument(argc, argv, "--kestrel-chrome-tab-model") ||
-        has_argument(argc, argv, "--remote-debugging-pipe")) {
+        has_argument(argc, argv, "--remote-debugging-pipe"))) {
       std::cerr << "Live extensions require Kestrel's private Chromium tab model." << std::endl;
       return 1;
     }
@@ -6216,31 +6351,38 @@ int main(int argc, char* argv[]) {
   CefMainArgs main_args(argc, argv);
   @autoreleasepool {
     [KestrelApplication sharedApplication];
-    // An explicit --kestrel-chromium-desktop selects the real desktop. Any
-    // other --kestrel-* switch keeps the historical explicit probe/workbench
-    // path (including a standalone --kestrel-cache-path). Finder/Dock launches
-    // have no Kestrel switches (Finder may add -psn) and open the real UI.
-    bool legacy_selector = false;
-    for (int i = 1; i < argc; ++i) {
-      if (std::string(argv[i]).rfind("--kestrel-", 0) == 0) legacy_selector = true;
-    }
-    const bool explicit_desktop = has_argument(argc, argv, "--kestrel-chromium-desktop");
-    if (explicit_desktop || !legacy_selector) {
+    if (explicit_desktop) {
       KestrelAppDelegate* desktop_delegate = [[KestrelAppDelegate alloc] init];
       desktop_delegate.acceptsExternalURLs = YES;
       [NSApp setDelegate:desktop_delegate];
-      return RunKestrelChromiumDesktop(argc, argv, !explicit_desktop);
+      return RunKestrelChromiumDesktop(argc, argv, false);
+    }
+    NSString* default_profile_root = nil;
+    if (native_default_shell) {
+      native_default_shell_enabled = true;
+      default_profile_root = KestrelNativeDefaultProfile();
+      if (!default_profile_root) {
+        std::cerr << "Native default profile is unavailable or setup was cancelled; existing data was preserved." << std::endl;
+        return 1;
+      }
+      user_extensions_enabled = true;
+      chrome_tab_model_enabled = true;
+      durable_profile_enabled = true;
+      ephemeral_core_enabled = true;
+      full_renderer_enabled = true;
+      if (NSApp.activationPolicy != NSApplicationActivationPolicyRegular &&
+          ![NSApp setActivationPolicy:NSApplicationActivationPolicyRegular]) {
+        std::cerr << "Kestrel could not enable its normal macOS app activation policy." << std::endl;
+      }
     }
     const bool extension_workbench =
         has_argument(argc, argv, "--kestrel-extension-workbench");
-    user_extensions_enabled =
-        has_argument(argc, argv, "--kestrel-user-extensions");
-    chrome_extension_view_enabled =
-        has_argument(argc, argv, "--kestrel-chrome-extension-view");
-    chrome_tab_model_enabled =
-        has_argument(argc, argv, "--kestrel-chrome-tab-model");
-    durable_profile_enabled =
-        has_argument(argc, argv, "--kestrel-durable-profile");
+    if (!native_default_shell) {
+      user_extensions_enabled = has_argument(argc, argv, "--kestrel-user-extensions");
+      chrome_extension_view_enabled = has_argument(argc, argv, "--kestrel-chrome-extension-view");
+      chrome_tab_model_enabled = has_argument(argc, argv, "--kestrel-chrome-tab-model");
+      durable_profile_enabled = has_argument(argc, argv, "--kestrel-durable-profile");
+    }
     disposable_test_profile_key_enabled =
         has_argument(argc, argv, "--kestrel-test-profile-key");
     if (disposable_test_profile_key_enabled && !durable_profile_enabled) {
@@ -6307,8 +6449,8 @@ int main(int argc, char* argv[]) {
       std::cerr << "Extension workbench cannot run the privileged shell or Core." << std::endl;
       return 1;
     }
-    full_renderer_enabled =
-        has_argument(argc, argv, "--kestrel-renderer");
+    if (!native_default_shell)
+      full_renderer_enabled = has_argument(argc, argv, "--kestrel-renderer");
     shell_url = bundled_shell_url();
     if (shell_url.empty()) {
       std::cerr << "Kestrel native Chromium shell resource is missing." << std::endl;
@@ -6426,8 +6568,9 @@ int main(int argc, char* argv[]) {
     // failed local signing diagnosis explicit; it is never a shipping fallback.
     settings.no_sandbox = has_argument(argc, argv, "--kestrel-allow-no-sandbox");
     settings.persist_session_cookies = true;
-    const auto cache_path =
-        argument_value(argc, argv, "--kestrel-cache-path");
+    const auto cache_path = native_default_shell
+        ? std::optional<std::string>(std::string(default_profile_root.fileSystemRepresentation))
+        : argument_value(argc, argv, "--kestrel-cache-path");
     if (!cache_path) {
       std::cerr << "Kestrel native Chromium host requires an explicit isolated "
                    "profile path."
@@ -6477,6 +6620,58 @@ int main(int argc, char* argv[]) {
       return 1;
     }
     isolated_profile_path = resolved_profile;
+    requested_profile = [NSString stringWithUTF8String:resolved_profile];
+    isolated_core_profile_path = isolated_profile_path;
+    NSString* isolated_core_profile_root = requested_profile;
+    if (native_default_shell) {
+      NSError* selection_error = nil;
+      NSDictionary* selection = KestrelResolveNativeCoreProfileSelection(
+          requested_profile, &selection_error);
+      isolated_core_profile_root = selection[@"profilePath"];
+      if (![isolated_core_profile_root isKindOfClass:NSString.class]) {
+        std::cerr << (selection_error.localizedDescription.UTF8String ?: "Kestrel's data profile selection is unavailable; existing files were preserved.") << std::endl;
+        return 1;
+      }
+      char resolved_core[PATH_MAX]{};
+      if (!realpath(isolated_core_profile_root.fileSystemRepresentation, resolved_core)) {
+        std::cerr << "Kestrel could not resolve its selected data profile." << std::endl;
+        return 1;
+      }
+      isolated_core_profile_root = [NSString stringWithUTF8String:resolved_core];
+      isolated_core_profile_path = resolved_core;
+
+      kestrel::ProfileReservationError reservation_error;
+      native_default_profile_reservation = kestrel::ProfileReservation::Acquire(
+          isolated_profile_path, &reservation_error);
+      if (!native_default_profile_reservation) {
+        std::cerr << "This native Kestrel profile is already in use or unavailable." << std::endl;
+        return 1;
+      }
+      if (isolated_core_profile_path != isolated_profile_path) {
+        native_default_core_profile_reservation = kestrel::ProfileReservation::Acquire(
+            isolated_core_profile_path, &reservation_error);
+        if (!native_default_core_profile_reservation) {
+          std::cerr << "Kestrel's selected data profile is already in use or unavailable." << std::endl;
+          return 1;
+        }
+      }
+      const std::string lock_path = isolated_profile_path + "/.kestrel-desktop.lock";
+      native_default_profile_lock_fd = open(
+          lock_path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+      struct stat lock_info{};
+      if (native_default_profile_lock_fd < 0 ||
+          fstat(native_default_profile_lock_fd, &lock_info) ||
+          !S_ISREG(lock_info.st_mode) || lock_info.st_uid != getuid() ||
+          lock_info.st_nlink != 1 || (lock_info.st_mode & 07777) != 0600 ||
+          flock(native_default_profile_lock_fd, LOCK_EX | LOCK_NB)) {
+        std::cerr << "This native Kestrel profile is already in use or unavailable." << std::endl;
+        return 1;
+      }
+      native_profile_transfer = [[KestrelNativeProfileTransferController alloc]
+          initWithBrowserProfile:requested_profile
+              currentCoreProfile:isolated_core_profile_root
+                        testKeys:NO];
+    }
     std::string vault_error;
     if (!ConfigureNativeBrowserLocalVault(isolated_profile_path,
           disposable_test_profile_key_enabled && durable_profile_enabled,
@@ -6490,8 +6685,8 @@ int main(int argc, char* argv[]) {
         });
     CefString(&settings.root_cache_path) = isolated_profile_path;
     CefString(&settings.cache_path) = isolated_profile_path;
-    ephemeral_core_enabled =
-        has_argument(argc, argv, "--kestrel-ephemeral-core");
+    if (!native_default_shell)
+      ephemeral_core_enabled = has_argument(argc, argv, "--kestrel-ephemeral-core");
     if ((smoke_browser_backend || smoke_isolated_automation) &&
         !ephemeral_core_enabled) {
       std::cerr << "Browser backend smoke requires --kestrel-ephemeral-core."
@@ -6520,9 +6715,12 @@ int main(int argc, char* argv[]) {
       CefBrowserSettings browser_settings;
       NSString* isolated_profile =
           [NSString stringWithUTF8String:isolated_profile_path.c_str()];
+      NSString* isolated_core_profile =
+          [NSString stringWithUTF8String:isolated_core_profile_path.c_str()];
       CefRefPtr<KestrelClient> client(new KestrelClient(
           shell_url,
           isolated_profile,
+          isolated_core_profile,
           ephemeral_core_enabled,
           user_extensions_enabled,
           chrome_extension_view_enabled));
@@ -6606,14 +6804,22 @@ int main(int argc, char* argv[]) {
         []() -> CefRefPtr<CefClient> {
           return chrome_tab_model_enabled && main_client_owner
               ? main_client_owner->ChromeDefaultClient() : nullptr;
-        }));
+        }, "", "", native_default_shell));
     if (!CefInitialize(main_args, settings, app.get(), nullptr)) {
       std::cerr << "Kestrel could not initialize Chromium." << std::endl;
       return CefGetExitCode();
     }
 
     KestrelAppDelegate* delegate = [[KestrelAppDelegate alloc] init];
+    delegate.acceptsExternalURLs = native_default_shell;
     NSApp.delegate = delegate;
+    if (native_default_shell) {
+      if (NSApp.activationPolicy != NSApplicationActivationPolicyRegular &&
+          ![NSApp setActivationPolicy:NSApplicationActivationPolicyRegular]) {
+        std::cerr << "Kestrel could not enable its normal macOS app activation policy." << std::endl;
+      }
+      InstallNativeProfileMenu();
+    }
     if (extension_workbench) {
       // CEF supplies the browser toolbar, but the embedding app owns its
       // application menu and Cmd-Q. Route Quit through our tracked browsers.
@@ -6627,11 +6833,50 @@ int main(int argc, char* argv[]) {
       [menu addItem:application_item];
       NSApp.mainMenu = menu;
     }
+    const auto previous_sigterm = signal(SIGTERM, SIG_IGN);
+    const auto termination_active = std::make_shared<std::atomic_bool>(true);
+    const auto termination_requested = std::make_shared<std::atomic_bool>(false);
+    dispatch_queue_t termination_queue =
+        dispatch_queue_create("com.kestrel.native-host-termination", DISPATCH_QUEUE_SERIAL);
+    dispatch_source_t termination = dispatch_source_create(
+        DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, termination_queue);
+    dispatch_source_set_event_handler(termination, ^{
+      if (!termination_active->load(std::memory_order_acquire) ||
+          termination_requested->exchange(true, std::memory_order_acq_rel)) return;
+      KestrelDispatchToMainRunLoop(^{
+        if (termination_active->load(std::memory_order_acquire)) [NSApp terminate:nil];
+      });
+    });
+    dispatch_resume(termination);
     CefRunMessageLoop();
+    termination_active->store(false, std::memory_order_release);
+    dispatch_source_cancel(termination);
+    signal(SIGTERM, previous_sigterm);
     if (live_extension_control) live_extension_control->Shutdown();
     if (private_chrome_pipe) private_chrome_pipe->Quiesce();
     if (main_client_owner) {
       main_client_owner->FinalizeUserBrowserShutdown();
+    }
+    if (native_default_shell && native_profile_transfer) {
+      [native_profile_transfer shutdown];
+      BOOL transfer_shutdown_confirmed =
+          [native_profile_transfer waitForShutdown:15];
+      if (!transfer_shutdown_confirmed) {
+        std::cerr << "KESTREL_NATIVE_PROFILE_TRANSFER_SHUTDOWN_UNCONFIRMED" << std::endl;
+        NSAlert* alert = [[NSAlert alloc] init];
+        alert.messageText = @"Kestrel is finishing a profile operation";
+        alert.informativeText = @"Kestrel will keep this profile locked until its background transfer worker is confirmed stopped. Choose Keep Waiting to continue.";
+        [alert addButtonWithTitle:@"Keep Waiting"];
+        [alert runModal];
+        while (!transfer_shutdown_confirmed) {
+          [[NSRunLoop currentRunLoop]
+              runMode:NSDefaultRunLoopMode
+          beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
+          transfer_shutdown_confirmed =
+              [native_profile_transfer waitForShutdown:15];
+        }
+      }
+      native_profile_transfer = nil;
     }
     // The bridge router was removed by a trailing UI task before the message
     // loop quit. Release every application-owned CEF reference before calling
@@ -6649,6 +6894,12 @@ int main(int argc, char* argv[]) {
     live_extension_control.reset();
     if (private_chrome_pipe) private_chrome_pipe->Shutdown();
     private_chrome_pipe.reset();
+    if (native_default_profile_lock_fd >= 0) {
+      close(native_default_profile_lock_fd);
+      native_default_profile_lock_fd = -1;
+    }
+    native_default_core_profile_reservation.reset();
+    native_default_profile_reservation.reset();
     delegate = nil;
   }
   return extension_workbench_exit_code;

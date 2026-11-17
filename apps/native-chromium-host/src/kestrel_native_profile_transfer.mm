@@ -713,13 +713,27 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
     dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(confirmed); });
   });
 }
-- (void)shutdown { if (self.stopped) return; self.stopped = YES; [self.picker cancel:nil]; if (self.reviewAlert) [NSApp abortModal]; dispatch_async(self.queue, ^{ [self stopPipeOnQueueAllowRetry:NO releaseSource:YES]; }); }
+- (void)shutdown {
+  const BOOL firstRequest = !self.stopped;
+  self.stopped = YES;
+  if (firstRequest) {
+    [self.picker cancel:nil];
+    if (self.reviewAlert) [NSApp abortModal];
+  }
+  // An earlier attempt can time out while the child is still stopping. Keep
+  // retrying only through the launch-identity-checked pipe stop path; this
+  // never targets a PID that no longer matches the worker we started.
+  dispatch_async(self.queue, ^{
+    [self stopPipeOnQueueAllowRetry:YES releaseSource:YES];
+  });
+}
 - (BOOL)waitForShutdown:(NSTimeInterval)timeout {
   if (![NSThread isMainThread] || !std::isfinite(timeout) || timeout <= 0 || timeout > 15.0) return NO;
   [self shutdown];
   dispatch_semaphore_t complete = dispatch_semaphore_create(0);
   __block BOOL stopped = NO;
   dispatch_async(self.queue, ^{
+    if (self.pipe) [self stopPipeOnQueueAllowRetry:YES releaseSource:YES];
     stopped = self.pipe == nil && self.sourceLease == nil;
     dispatch_semaphore_signal(complete);
   });

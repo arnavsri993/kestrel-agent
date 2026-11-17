@@ -127,9 +127,10 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
     browsers_[browser->GetIdentifier()] = browser;
     browser->GetHost()->SetAccessibilityState(STATE_ENABLED);
     if (!first_browser_) first_browser_ = browser;
+    PresentFirstWindow(browser);
     OpenUiWhenReady();
     if (closing_) browser->GetHost()->CloseBrowser(true);
-    std::cout << "KESTREL_CHROMIUM_DESKTOP_TAB_READY" << std::endl;
+    std::cout << "KESTREL_CHROMIUM_DESKTOP_TAB_READY pid=" << getpid() << std::endl;
   }
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
     browsers_.erase(browser->GetIdentifier());
@@ -208,6 +209,21 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
   }
  private:
   void MaybeQuit() { if (closing_ && browsers_.empty() && automation_closed_) CefQuitMessageLoop(); }
+  void PresentFirstWindow(CefRefPtr<CefBrowser> browser) {
+    if (initial_window_presented_) return;
+    NSView* view = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
+    NSWindow* window = view.window;
+    if (!window) return;
+    initial_window_presented_ = true;
+    KestrelDispatchToMainRunLoop(^{
+      if (window.miniaturized) [window deminiaturize:nil];
+      // A normal LaunchServices or Dock launch carries user intent. Request
+      // activation without the focus-stealing option, then make our own first
+      // browser window key and visible once AppKit accepts the activation.
+      [[NSRunningApplication currentApplication] activateWithOptions:0];
+      [window makeKeyAndOrderFront:nil];
+    });
+  }
   void OpenUiWhenReady() {
     if (!document_ready_ || ui_opened_ || !first_browser_) return;
     ui_opened_ = true;
@@ -227,6 +243,7 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
   bool automation_closed_ = true;
   bool automation_resetting_ = false;
   bool ui_ready_ = false;
+  bool initial_window_presented_ = false;
   bool document_ready_ = false;
   int startup_retries_ = 0;
   bool ui_opened_ = false;
@@ -630,6 +647,8 @@ static NSString* DefaultNativeProfile() {
   if (!saved) return nil; // Preserve an incomplete marker for explicit recovery.
   return profile;
 }
+
+NSString* KestrelNativeDefaultProfile(void) { return DefaultNativeProfile(); }
 
 int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
   const char* test_key_env = getenv("KESTREL_NATIVE_TEST_PROFILE_KEY");
@@ -1177,6 +1196,13 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
   // embedding delegate and native menus afterwards, just as the CEF sample
   // does, so Quit owns the Core and messaging lifetimes as well as the window.
   NSApp.delegate = owner_delegate;
+  // CEF may adjust AppKit's activation policy while installing its controller.
+  // The top-level LaunchServices app must remain an ordinary Dock app so a
+  // user-initiated Finder or Dock launch can activate its first window.
+  if (NSApp.activationPolicy != NSApplicationActivationPolicyRegular &&
+      ![NSApp setActivationPolicy:NSApplicationActivationPolicyRegular]) {
+    std::cerr << "Kestrel could not enable its normal macOS app activation policy." << std::endl;
+  }
   InstallDesktopMenu();
   // The documented dev launcher stops its owned process with SIGTERM. Route
   // that through the same clean Quit path as the menu, on AppKit's thread.
