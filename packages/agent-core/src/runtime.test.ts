@@ -2308,7 +2308,7 @@ describe("agent runtime", () => {
 				},
 			});
 			await expect(runtime.close()).rejects.toThrow(
-				"Command children were interrupted; descendant shutdown is unconfirmed.",
+				"Command children were interrupted; descendant shutdown is unconfirmed",
 			);
 			const restarted = new AgentRuntime(
 				database,

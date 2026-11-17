@@ -733,7 +733,8 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   dispatch_semaphore_t complete = dispatch_semaphore_create(0);
   __block BOOL stopped = NO;
   dispatch_async(self.queue, ^{
-    if (self.pipe) [self stopPipeOnQueueAllowRetry:YES releaseSource:YES];
+    // Observe the attempt queued by shutdown. A later wait may retry an
+    // uncertain stop, but this call must not schedule a second attempt.
     stopped = self.pipe == nil && self.sourceLease == nil;
     dispatch_semaphore_signal(complete);
   });

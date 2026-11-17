@@ -213,13 +213,29 @@ int main(int argc, char** argv) {
           @"leaseReleasedAtShutdown":@(ownerReleased && released),@"invalidateIdempotent":@(invalidated)} options:0 error:nil];
         return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
       }
+      if ([action isEqual:@"shutdown-retry"]) {
+        if (!lease) return 2;
+        FixtureRetryController* controller = [[FixtureRetryController alloc] initWithBrowserProfile:owner currentCoreProfile:owner testKeys:NO];
+        FixtureRetryPipe* pipe = [[FixtureRetryPipe alloc] init]; pipe.owner = controller;
+        controller.pipe = pipe; controller.sourceLease = lease; lease = nil;
+        const BOOL first = [controller waitForShutdown:1.0];
+        const NSUInteger firstStopCount = pipe.stopCount;
+        const BOOL retained = controller.pipe != nil && controller.sourceLease != nil && !FixtureLockProbe(owner);
+        pipe.confirmed = YES;
+        const BOOL second = [controller waitForShutdown:1.0];
+        NSData* result = [NSJSONSerialization dataWithJSONObject:@{@"firstWaitPassed":@(first),@"firstStopCount":@(firstStopCount),
+            @"reservationRetained":@(retained),@"secondWaitPassed":@(second),@"stopCount":@(pipe.stopCount),
+            @"pipeRetained":@(controller.pipe != nil),@"leaseRetained":@(controller.sourceLease != nil),
+            @"lockAvailable":@(FixtureLockProbe(owner))} options:0 error:nil];
+        return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
+      }
       if ([action hasPrefix:@"shutdown-"] && ![action isEqual:@"shutdown-timeout"]) {
         if (!lease) return 2;
         FixtureRetryController* controller = [[FixtureRetryController alloc] initWithBrowserProfile:owner currentCoreProfile:owner testKeys:NO];
         FixtureRetryPipe* pipe = [[FixtureRetryPipe alloc] init];
         pipe.confirmed = [action hasSuffix:@"confirmed"]; pipe.owner = controller;
         controller.pipe = pipe; controller.sourceLease = lease; lease = nil;
-        const BOOL stopped = [controller waitForShutdown:1.0]; [controller shutdown];
+        const BOOL stopped = [controller waitForShutdown:1.0];
         NSData* result = [NSJSONSerialization dataWithJSONObject:@{@"stopped":@(controller.stopped),@"waitPassed":@(stopped),@"stopCount":@(pipe.stopCount),
             @"pipeRetained":@(controller.pipe != nil),@"leaseRetained":@(controller.sourceLease != nil),@"lockAvailable":@(FixtureLockProbe(owner))} options:0 error:nil];
         return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;

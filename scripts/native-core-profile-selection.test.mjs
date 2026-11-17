@@ -157,6 +157,13 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 			stopped: true, waitPassed: confirmed, stopCount: 1, pipeRetained: !confirmed, leaseRetained: !confirmed, lockAvailable: confirmed,
 		});
 	});
+	it("retries an uncertain shutdown only on a later wait and then releases its reservation", () => {
+		const value = nativeSource(true);
+		expect(fixture(value.root, "--native-source", "shutdown-retry")).toEqual({
+			firstWaitPassed: false, firstStopCount: 1, reservationRetained: true, secondWaitPassed: true,
+			stopCount: 2, pipeRetained: false, leaseRetained: false, lockAvailable: true,
+		});
+	});
 	it("bounds shutdown waiting and permits a later completion check", () => {
 		const value = nativeSource(true);
 		expect(fixture(value.root, "--native-source", "shutdown-timeout")).toEqual({
