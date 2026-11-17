@@ -159,7 +159,8 @@ async function start(name) {
  receipt.stages.push({ stage: `start-${name}`, pid: state.child.pid, profile });
  const endpoint = await eventually(() => {
   assert(state.child.exitCode === null && state.child.signalCode === null, "Owned candidate exited on start.");
-  assert(!state.output.includes("KESTREL_NATIVE_KEYCHAIN_POLICY selected=mock"), "Mock storage provider selected.");
+  assert(state.output.includes("KESTREL_NATIVE_SECRET_STORAGE selected=local-vault"), "Reviewed Chromium local vault provider was not selected.");
+  assert(!state.output.includes("KESTREL_NATIVE_SECRET_STORAGE selected=mock"), "Mock storage provider selected.");
   return state.output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+)/)?.[1];
  }, "Native loopback CDP endpoint missing.", 60_000);
  state.endpoint = endpoint; browser = await chromium.connectOverCDP(endpoint, { noDefaults: true });

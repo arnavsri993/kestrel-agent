@@ -227,8 +227,15 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     }
     const bool mock_keychain =
         kestrel::ConfigureKeychainPolicy(*command_line);
-    std::cout << "KESTREL_NATIVE_KEYCHAIN_POLICY selected="
-              << (mock_keychain ? "mock" : "system") << std::endl;
+    const char* secret_storage_policy = mock_keychain ? "mock" : "system";
+#if defined(KESTREL_NATIVE_BROWSER_FRAME) && KESTREL_NATIVE_BROWSER_FRAME
+    // The reviewed custom CEF build has already accepted the profile-sealed
+    // vault key before CEF initialization. `mock_keychain == false` alone does
+    // not mean Chromium selected macOS Keychain in this lane.
+    if (!mock_keychain) secret_storage_policy = "local-vault";
+#endif
+    std::cout << "KESTREL_NATIVE_SECRET_STORAGE selected="
+              << secret_storage_policy << std::endl;
     // Kestrel starts local-first. The Chromium embed must not create a
     // background account, telemetry, component-updater, or reliability
     // network channel before a person explicitly chooses a provider route.

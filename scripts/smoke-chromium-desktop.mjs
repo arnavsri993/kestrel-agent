@@ -30,7 +30,8 @@ const cancellation=createNativeDesktopCancellation({onCancel:error=>{
 const onInt=()=>{if(!terminalSealed)cancellation.cancel('SIGINT');},onTerm=()=>{if(!terminalSealed)cancellation.cancel('SIGTERM');};
 process.on('SIGINT',onInt);process.on('SIGTERM',onTerm);
 const delay=(...args)=>cancellation.delay(...args);
-const isKestrelHomeUrl=url=>/^chrome-extension:\/\/[^/]+\/index\.html(?:\?surface=frame)?$/.test(url);
+const isKestrelHomeUrl=url=>/^chrome-extension:\/\/[^/]+\/index\.html$/.test(url);
+const isKestrelFrameUrl=url=>/^chrome-extension:\/\/[^/]+\/index\.html\?surface=frame$/.test(url);
 async function connect(endpoint){
  cancellation.check();
  return cancellation.wait(chromium.connectOverCDP(endpoint,{noDefaults:true,timeout:15_000}).then(value=>cancellation.bindTransport(value)));
@@ -99,7 +100,7 @@ const server=createServer((req,res)=>{
  <script>window.getSelection=()=>({rangeCount:1,toString:()=>"canary_page_world_spoof_secret"});</script>`);
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-let child,browser,output='',uiActionPage,storageEvidence,runCompleted=false;
+let child,browser,output='',uiActionPage,nativeFrame,storageEvidence,runCompleted=false;
 let savedSession,providerEvidence,workspaceEvidence,codexEvidence;
 function ownedNodeProcesses(){
  const rows=execFileSync('/bin/ps',['-axo','pid=,ppid=,comm='],{encoding:'utf8'}).trim().split('\n').map(line=>line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)).filter(Boolean);
@@ -290,14 +291,38 @@ try{
  // Only this disposable canary bypasses setup to isolate the browser flow.
  await home.evaluate(()=>{localStorage.setItem('kestrel:onboarded','yes');localStorage.setItem('kestrel:default-browser-prompted','yes');});
  await home.reload();
- if(new URL(home.url()).searchParams.get('surface')==='frame'){
-  await home.waitForFunction(()=>document.documentElement.dataset.nativeSurface==='frame'&&document.querySelector('.browser-workspace-native-frame-shell .browser-tab-row')&&document.querySelector('.browser-workspace-native-frame-shell .browser-toolbar'),undefined,{polling:100,timeout:30_000});
-  assert.equal(await home.locator('.browser-workspace-native-frame-shell .browser-tab-row').count(),1,'Kestrel must own the native browser tab strip.');
-  assert.equal(await home.locator('.browser-workspace-native-frame-shell .browser-toolbar').count(),1,'Kestrel must own the native address and page toolbar.');
+ assert(isKestrelHomeUrl(home.url()),'Home must load the content app page, not about:blank or the native frame.');
+ await home.locator('.kestrel-sidebar').waitFor();
+ await home.locator('#new-tab-title').waitFor();
+ await home.locator('#new-tab-chat-input').waitFor();
+ try{
+  await home.waitForFunction(()=>{
+   const input=document.querySelector('#new-tab-chat-input'),bounds=input?.getBoundingClientRect();
+   const style=input&&getComputedStyle(input);
+   return Boolean(input&&bounds?.width>0&&bounds.height>0&&style?.visibility!=='hidden'&&style?.display!=='none'&&Number(style?.opacity)>0&&!input.matches(':disabled'));
+  },undefined,{polling:100,timeout:30_000});
+ }catch(error){
+  receipt.homeReadiness=await home.evaluate(()=>{
+   const input=document.querySelector('#new-tab-chat-input'),bounds=input?.getBoundingClientRect(),style=input&&getComputedStyle(input);
+   const loading=[...document.querySelectorAll('.loading-screen')].map(element=>({className:element.className,text:element.textContent?.trim().slice(0,120),opacity:getComputedStyle(element).opacity,display:getComputedStyle(element).display}));
+   return{url:location.href,title:document.title,visibility:document.visibilityState,hasFocus:document.hasFocus(),viewport:{width:innerWidth,height:innerHeight},document:{width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight},input:input?{width:bounds.width,height:bounds.height,display:style.display,visibility:style.visibility,opacity:style.opacity,disabled:input.disabled}:null,loading};
+  }).catch(cause=>({diagnosticError:String(cause)}));
+  await home.screenshot({path:join(evidence,'failed-home-readiness.png'),timeout:5000}).catch(()=>{});
+  throw new Error(`Kestrel Home did not become visibly ready: ${JSON.stringify(receipt.homeReadiness)}; ${String(error)}`);
+ }
+ const frameTargets=await browser.newBrowserCDPSession();
+ const hasFrame=(await frameTargets.send('Target.getTargets')).targetInfos.some(target=>target.type==='page'&&isKestrelFrameUrl(target.url));
+ await frameTargets.detach();
+ if(hasFrame){
+  nativeFrame=await createdPage(isKestrelFrameUrl);
+  await nativeFrame.waitForFunction(()=>document.documentElement.dataset.nativeSurface==='frame'&&document.querySelector('.browser-workspace-native-frame-shell .browser-tab-row')&&document.querySelector('.browser-workspace-native-frame-shell .browser-toolbar'),undefined,{polling:100,timeout:30_000});
+  assert.equal(await nativeFrame.locator('.browser-workspace-native-frame-shell .browser-tab-row').count(),1,'Kestrel must own the native browser tab strip.');
+  assert.equal(await nativeFrame.locator('.browser-workspace-native-frame-shell .browser-toolbar').count(),1,'Kestrel must own the native address and page toolbar.');
+  await nativeFrame.screenshot({path:join(evidence,'native-browser-frame.png')});
  }else{
-  await home.locator('.kestrel-sidebar').waitFor();
   assert.equal(await home.locator('.browser-toolbar,.browser-tab-row').count(),0,'The stock Chromium fixture must retain its existing native browser controls.');
  }
+ receipt.phases.push({phase:'native-kestrel-home-and-browser-frame',passed:true,homeUrl:home.url(),homeComposerVisible:true,customBrowserFrame:hasFrame,frameUrl:nativeFrame?.url(),frameTabs:hasFrame?1:undefined,frameToolbar:hasFrame});
  const grants=await home.evaluate(()=>window.kestrel.request({type:'get-workspace-grants'}));assert.equal(grants.ok,true);
  const nativeSystem=await home.evaluate(()=>window.kestrel.request({type:'get-system-state'}));assert.equal(nativeSystem.ok,true);assert.equal(typeof nativeSystem.launchAtLogin,'boolean');
  const created=await home.evaluate(()=>window.kestrel.request({type:'runtime-create-session',title:'Chromium restart canary',kind:'conversation'}));assert.equal(created.ok,true);savedSession=created.session?.id;assert(savedSession);
@@ -396,8 +421,9 @@ try{
  assert(!['failed','blocked'].includes(navigated.status),JSON.stringify(navigated));
  await coreTab.waitForURL(navigatedUrl);
  const uiState=(await home.evaluate(()=>window.kestrel.request({type:'browser-get-state'}))).browserState;
- if(new URL(home.url()).searchParams.get('surface')==='frame'){
-  assert(!uiState.tabs.some(tab=>tab.url===home.url()),'The native Kestrel BrowserView frame must stay outside the user-tab model.');
+ if(hasFrame){
+  const frame=await createdPage(isKestrelFrameUrl);
+  assert(!uiState.tabs.some(tab=>tab.url===frame.url()),'The native Kestrel BrowserView frame must stay outside the user-tab model.');
  }else{
   const protectedTab=uiState.tabs.find(tab=>!tab.url);assert(protectedTab);
   const denied=await coreTool('browser.close-tab',{tabId:protectedTab.id});assert(['failed','blocked'].includes(denied.status),'Core must not control Kestrel UI pages.');
@@ -417,9 +443,10 @@ try{
  receipt.settingsActivationAfter=await ownedUiDiagnostics(home);
  assert(receipt.settingsActivationAfter.visibility==='visible'&&receipt.settingsActivationAfter.hasFocus&&receipt.settingsActivationAfter.windowFocused,
   'The native browser window is hidden. Unlock the Mac before exercising Store controls.');
- if(new URL(home.url()).searchParams.get('surface')==='frame'){
-  await home.getByRole('button',{name:'Browser menu',exact:true}).click();
-  await home.getByRole('menuitem',{name:'Settings',exact:true}).click();
+ if(hasFrame){
+  const frame=await createdPage(isKestrelFrameUrl);
+  await frame.getByRole('button',{name:'Browser menu',exact:true}).click();
+  await frame.getByRole('menuitem',{name:'Settings',exact:true}).click();
  }else await home.getByRole('button',{name:'Open settings',exact:true}).click();
  uiActionPage=undefined;
  const settings=await createdPage(url=>url.includes('index.html?app=settings'));await settings.waitForURL(/index.html\?app=settings/);
@@ -437,7 +464,7 @@ try{
  receipt.phases.push({phase:'native-ui-core-and-tabs',passed:true,rendererErrors:errors});assert.deepEqual(errors,[]);
  if(lifecycle){
   assert(!store,'Run the window lifecycle and Store prompts as separate canaries.');
-  for(const page of context.pages())if(page!==home)await page.close();
+  for(const page of context.pages())if(page!==home&&!isKestrelFrameUrl(page.url()))await page.close();
   await home.bringToFront();
   const nodeDescendants=()=>ownedNodeProcesses().map(node=>node.pid).sort((a,b)=>a-b);
   const coreProcesses=nodeDescendants();assert(coreProcesses.length>=3,'The browser must own broker, relay, and Core.');
@@ -455,11 +482,12 @@ try{
   }
   assert(restored,'Native window did not reopen.');home=restored;
   await home.waitForFunction(()=>typeof window.kestrel?.request==='function',undefined,{polling:100,timeout:30_000});
-  if(new URL(home.url()).searchParams.get('surface')==='frame'){
-   await home.waitForFunction(()=>document.querySelector('.browser-workspace-native-frame-shell .browser-tab-row'),undefined,{polling:100,timeout:30_000});
-  }else{
-   await home.locator('.kestrel-sidebar').waitFor();
-   await home.locator('#new-tab-title').waitFor();
+  assert(isKestrelHomeUrl(home.url()),'Reopened Home must load the content app page, not about:blank or the native frame.');
+  await home.locator('.kestrel-sidebar').waitFor();
+  await home.locator('#new-tab-title').waitFor();
+  if(hasFrame){
+   const frame=await createdPage(isKestrelFrameUrl);
+   await frame.waitForFunction(()=>document.querySelector('.browser-workspace-native-frame-shell .browser-tab-row'),undefined,{polling:100,timeout:30_000});
   }
   const reopenedTargets=await browser.newBrowserCDPSession();
   const reopenedHomes=(await reopenedTargets.send('Target.getTargets')).targetInfos.filter(target=>target.type==='page'&&isKestrelHomeUrl(target.url));

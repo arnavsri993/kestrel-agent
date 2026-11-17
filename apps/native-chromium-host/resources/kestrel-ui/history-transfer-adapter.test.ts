@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createBrowserAdapter } from "./browser.mjs";
-import { NATIVE_IMPORTED_HISTORY_KEY } from "./history-transfer.mjs";
+import { NATIVE_HISTORY_SYNC_STATUS_KEY, NATIVE_IMPORTED_HISTORY_KEY } from "./history-transfer.mjs";
 import { UserBrowserEventSchema, UserBrowserStateSchema } from "../../../../packages/shared-types/src/contracts";
 const extensionId = "a".repeat(32), uiUrl = `chrome-extension://${extensionId}/index.html`, sender = { id: extensionId, url: uiUrl };
 const source = { format: "kestrel-history", version: 1, entries: [{ url: "https://example.com/Original", title: "Original", visitedAt: "2020-01-01T00:00:00Z" }] };
@@ -96,7 +96,7 @@ describe("authenticated adapter history integration", () => {
   // A reloaded/new document gets the same worker authority via a fresh callback.
   const newRendererRequest = (input: any) => f.adapter.request(input, { ...sender, url: `${uiUrl}?app=history` });
   const initial = await newRendererRequest({ type: "browser-get-state" });
-  expect(initial.ok).toBe(true); expect(initial.browserState.historySyncError).toMatch(/imported history could not be removed/);
+  expect(initial.ok).toBe(true); expect(initial.browserState.historySyncError).toMatch(/matching imported history could not be removed/);
   expect(UserBrowserStateSchema.safeParse(initial.browserState).success).toBe(true);
   const error = initial.browserState.historySyncError;
   f.visited(); await vi.waitFor(() => expect(f.emitted).toHaveBeenCalledWith("browser-event", expect.objectContaining({ type: "state", state: expect.objectContaining({ historySyncError: error }) })));
@@ -116,10 +116,11 @@ describe("authenticated adapter history integration", () => {
   f.chrome.history.deleteAll = () => { throw Error("native clear failed"); };
   const failure = await f.adapter.request({ type: "browser-clear-history" }, sender);
   expect(failure.ok).toBe(false); expect(failure.browserState.historySyncError).toMatch(/partially cleared/);
-  expect((await f.adapter.request({ type: "browser-get-state" }, sender)).browserState.historySyncError).toBe(failure.error);
+  expect((await f.adapter.request({ type: "browser-get-state" }, sender)).browserState.historySyncError).toMatch(/partially cleared/);
   f.chrome.history.deleteAll = originalClear;
   const recovered = await f.adapter.request({ type: "browser-clear-history" }, sender);
   expect(recovered.ok).toBe(true); expect(recovered.browserState.historySyncError).toBeUndefined();
+  expect(f.storage[NATIVE_HISTORY_SYNC_STATUS_KEY]).toBeNull();
  });
  it("rejects unauthorized previews and consumes a pending review after malformed apply", async () => {
   const f = fixture(); const denied = await f.adapter.request({ type: "browser-plan-history-import", data: source }, { id: extensionId, url: "https://example.com/" }); expect(denied.ok).toBe(false);

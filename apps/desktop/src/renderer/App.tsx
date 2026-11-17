@@ -198,6 +198,7 @@ import {
 import { canCompleteOnboarding, setupVerificationCopy } from "./setup-onboarding";
 import { VoiceCaptureOwner, type VoiceCapture } from "./voice-capture";
 import {
+	createStartupSnapshotGate,
 	loadInitialDesktopState,
 	startupFailureMessage,
 } from "./startup-state";
@@ -11092,17 +11093,22 @@ export function App() {
 	}, [deepLinkNotice]);
 	useEffect(() => {
 		let active = true;
+		const snapshots = createStartupSnapshotGate((next) => {
+			if (active) setSnapshot(next);
+		});
 		const unsubscribe = window.kestrel.onSnapshot((next) => {
 			if (active) {
 				setError(null);
-				setSnapshot(next);
+				snapshots.event(next);
 				setRuntimeRefreshRevision((current) => current + 1);
 			}
 		});
-		void loadInitialDesktopState((request) => window.kestrel.request(request))
+		void loadInitialDesktopState(
+			(request) => window.kestrel.request(request),
+			snapshots.initial,
+		)
 			.then((initial) => {
 				if (!active) return;
-				setSnapshot(initial.snapshot);
 				setRuntimeSessions(initial.sessions);
 				setRuntimeSessionsLoadState(
 					initial.sessionsLoadError ? "error" : "ready",

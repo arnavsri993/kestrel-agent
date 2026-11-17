@@ -5,7 +5,7 @@ import { capturePageContext } from "./page-context.mjs";
 import { createNativeAutomation } from "./native-automation.mjs";
 import { createNativeHomeSettingsTransfer } from "./home-settings-transfer.mjs";
 import { createNativeBookmarkTransfer } from "./bookmark-transfer.mjs";
-import { createNativeHistoryTransfer, NATIVE_IMPORTED_HISTORY_KEY, normalizeNativeHistory } from "./history-transfer.mjs";
+import { createNativeHistoryTransfer, NATIVE_HISTORY_SYNC_STATUS_KEY, NATIVE_IMPORTED_HISTORY_KEY, normalizeNativeHistory } from "./history-transfer.mjs";
 import { isNativeBrowserSettingsUrl } from "../../../../packages/shared-types/src/native-browser-settings.ts";
 
 const TAB_IDS_KEY = "kestrel.native.browser.tabIds.v1";
@@ -120,6 +120,7 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			}
 		} });
 	const historyTransfer = createNativeHistoryTransfer({ read: () => stored(NATIVE_IMPORTED_HISTORY_KEY, { version: 1, entries: [] }), write: value => persist(NATIVE_IMPORTED_HISTORY_KEY, value),
+		readStatus: () => stored(NATIVE_HISTORY_SYNC_STATUS_KEY, null), writeStatus: value => persist(NATIVE_HISTORY_SYNC_STATUS_KEY, value),
 		readNative: readNativeHistory, clearNative: () => invoke(chromeApi.history, "deleteAll"), response, emit: emitState });
 	let focusedWindowId;
 	const loginCodeCaptures = new Map();
@@ -228,7 +229,7 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		const windowId = await focusedWindow();
 		const map = await tabMap(tabs);
 		const settings = await homeSettings();
-		const [bookmarkData, history, downloads] = await Promise.all([readBookmarks(), readHistory(), readDownloads()]);
+		const [bookmarkData, historyState, downloads] = await Promise.all([readBookmarks(), historyTransfer.readState(), readDownloads()]);
 		const normalized = tabs.map((tab) => ({
 			id: map[String(tab.id)], title: (tab.title || "New Tab").slice(0, 500), url: displayUrl(tab.url || "").slice(0, 8192),
 			loading: Boolean(tab.status === "loading"), canGoBack: false, canGoForward: false,
@@ -237,8 +238,8 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		}));
 		return {
 			tabs: normalized, tabFolders: [], activeTabId: map[String(tabs.find((tab) => tab.active && tab.windowId === windowId)?.id)] || null,
-			history, originFavicons: [], downloads, bookmarks: bookmarkData.bookmarks,
-			...(historyTransfer.getSyncError() ? { historySyncError: historyTransfer.getSyncError() } : {}),
+			history: historyState.history, originFavicons: [], downloads, bookmarks: bookmarkData.bookmarks,
+			...(historyState.historySyncError ? { historySyncError: historyState.historySyncError } : {}),
 			bookmarkFolders: bookmarkData.folders, recentlyClosedTabs: [],
 			sitePermissions: [], settings, settingsOwnership: "chromium",
 		};
@@ -307,7 +308,7 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 	});
 	chromeApi.storage.onChanged?.addListener?.((changes, area) => {
 		if (area === "local" && Object.hasOwn(changes || {}, BOOKMARK_MODES_KEY)) scheduleBookmarkEmit();
-		if (area === "local" && Object.hasOwn(changes || {}, NATIVE_IMPORTED_HISTORY_KEY)) scheduleEmit();
+		if (area === "local" && (Object.hasOwn(changes || {}, NATIVE_IMPORTED_HISTORY_KEY) || Object.hasOwn(changes || {}, NATIVE_HISTORY_SYNC_STATUS_KEY))) scheduleEmit();
 	});
 	chromeApi.bookmarks?.onChanged?.addListener?.(scheduleBookmarkEmit);
 	chromeApi.bookmarks?.onCreated?.addListener?.(scheduleBookmarkEmit);

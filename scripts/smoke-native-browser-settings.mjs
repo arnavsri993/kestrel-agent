@@ -110,7 +110,8 @@ async function start(coldUrl) {
    const { arguments: effective } = await session.send('Browser.getBrowserCommandLine');
    assert(Array.isArray(effective) && effective.includes('--kestrel-durable-profile'));
    assert(!effective.some(arg => /^--(?:use-mock-keychain|kestrel-real-keychain|kestrel-test-profile-key)(?:=|$)/.test(arg)));
-   assert(!output.includes('KESTREL_NATIVE_KEYCHAIN_POLICY selected=mock'));
+   assert(output.includes('KESTREL_NATIVE_SECRET_STORAGE selected=local-vault'));
+   assert(!output.includes('KESTREL_NATIVE_SECRET_STORAGE selected=mock'));
   } finally { await session.detach(); }
  }
  home = await pageFor(url => /^chrome-extension:\/\/[^/]+\/index\.html$/.test(url));

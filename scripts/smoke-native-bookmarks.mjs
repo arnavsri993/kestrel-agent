@@ -53,10 +53,10 @@ async function start() {
  running = state; stopped = false; endpoint = undefined;
  for (const stream of [state.child.stdout, state.child.stderr]) stream.on('data', bytes => {
   state.output = (state.output + bytes).slice(-200000);
-  state.systemPolicy ||= state.output.includes('KESTREL_NATIVE_KEYCHAIN_POLICY selected=system');
-  state.mockPolicy ||= state.output.includes('KESTREL_NATIVE_KEYCHAIN_POLICY selected=mock');
+  state.localVaultPolicy ||= state.output.includes('KESTREL_NATIVE_SECRET_STORAGE selected=local-vault');
+  state.mockPolicy ||= state.output.includes('KESTREL_NATIVE_SECRET_STORAGE selected=mock');
  });
- await eventually(() => { assert.equal(state.child.exitCode, null, 'Owned app exited.'); if (storage.mode === 'production-vault') assert(!state.mockPolicy, 'Mock storage selected.'); endpoint = state.output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+)/)?.[1]; return endpoint && (storage.mode !== 'production-vault' || state.systemPolicy); }, 'Owned native endpoint or production policy missing.');
+ await eventually(() => { assert.equal(state.child.exitCode, null, 'Owned app exited.'); if (storage.mode === 'production-vault') assert(!state.mockPolicy, 'Mock storage selected.'); endpoint = state.output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+)/)?.[1]; return endpoint && (storage.mode !== 'production-vault' || state.localVaultPolicy); }, 'Owned native endpoint or production policy missing.');
  browser = await chromium.connectOverCDP(endpoint, { noDefaults: true });
  if (storage.mode === 'production-vault') {
   const session = await browser.newBrowserCDPSession();
@@ -66,7 +66,7 @@ async function start() {
    assert(!args.some(arg => /^--(?:use-mock-keychain|kestrel-real-keychain|kestrel-test-profile-key)(?:=|$)/.test(arg)), 'Non-production storage switch present.');
   } finally { await session.detach(); }
  }
- receipt.launches.push({ pid: state.child.pid, ...(storage.mode === 'production-vault' ? { nativePolicy: 'system', effectiveProductionStorageSwitches: true } : {}) });
+ receipt.launches.push({ pid: state.child.pid, ...(storage.mode === 'production-vault' ? { nativePolicy: 'local-vault', effectiveProductionStorageSwitches: true } : {}) });
  await eventually(async () => {
   home = browser.contexts().flatMap(context => context.pages()).find(item => /chrome-extension:\/\/[^/]+\/index.html$/.test(item.url()));
   if (home) return true;
@@ -85,7 +85,7 @@ async function stop() {
  const result = await Promise.race([current.exited, delay(15000, undefined, { ref: false }).then(() => { current.child.kill('SIGKILL'); throw Error('Owned app shutdown unconfirmed.'); })]);
  assert.deepEqual(result, { code: 0, signal: null });
  await browser?.close().catch(() => {}); browser = undefined; library = undefined;
- if (storage.mode === 'production-vault') assert(current.systemPolicy && !current.mockPolicy, 'Production policy was not retained.');
+ if (storage.mode === 'production-vault') assert(current.localVaultPolicy && !current.mockPolicy, 'Production local-vault policy was not retained.');
  await eventually(() => { try { assertNativeBrowserFixtureStopped(storage); return true; } catch { return false; } }, 'Candidate processes did not stop.', 10000);
  stopped = true; receipt.stops.push({ pid: current.child.pid, ...result, candidateProcessesStopped: true });
 }

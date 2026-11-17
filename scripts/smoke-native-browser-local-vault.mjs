@@ -157,8 +157,9 @@ async function start() {
  setStage("native-browser-endpoint");
  const endpoint = await eventually(() => {
   assert(!failed && child.exitCode === null && child.signalCode === null, "Candidate exited during launch.");
-  assert(!output.includes("KESTREL_NATIVE_KEYCHAIN_POLICY selected=mock"), "Mock provider unexpectedly selected.");
-  return output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+)/)?.[1];
+  assert(!output.includes("KESTREL_NATIVE_SECRET_STORAGE selected=mock"), "Mock provider unexpectedly selected.");
+  const endpoint=output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+)/)?.[1];
+  return endpoint&&output.includes("KESTREL_NATIVE_SECRET_STORAGE selected=local-vault")?endpoint:undefined;
  }, 60000);
  diagnosticEndpoint = endpoint;
  browser = await connect(endpoint); setStage("effective-command-line");

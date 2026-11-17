@@ -8,11 +8,12 @@ const reorderKeys = (value: any, reverse: boolean): any => Array.isArray(value) 
  ? Object.fromEntries((reverse ? Object.keys(value).reverse() : Object.keys(value)).map(key => [key, reorderKeys(value[key], reverse)])) : value;
 function fixture(reorderReads = false) {
  let stored: any = { version: 1, entries: [] }, native: any = { entries: [], excluded: 0, truncated: false }, writes = 0, failWrite = false, failClear = false, mismatch = false, time = 1_000_000;
+ let marker: any = null, statusFailure = false;
  let reads = 0, alterWrite: ((value: any) => void) | undefined;
  const emit = vi.fn(async () => {}), clear = vi.fn(async () => { if (failClear) throw Error("secret native failure"); native.entries = []; });
- const create = () => createNativeHistoryTransfer({ read: async () => reorderReads ? reorderKeys(stored, ++reads % 2 === 1) : structuredClone(stored), write: async (value: any) => { writes++; if (failWrite) throw Error("Storage unavailable"); stored = structuredClone(value); if (mismatch) stored.entries = []; alterWrite?.(stored); }, readNative: async () => structuredClone(native), clearNative: clear, emit, response: async () => ({ ok: true, browserState: { history: await adapter.read() } }), clock: () => time });
+ const create = () => createNativeHistoryTransfer({ read: async () => reorderReads ? reorderKeys(stored, ++reads % 2 === 1) : structuredClone(stored), write: async (value: any) => { writes++; if (failWrite) throw Error("Storage unavailable"); stored = structuredClone(value); if (mismatch) stored.entries = []; alterWrite?.(stored); }, readNative: async () => structuredClone(native), clearNative: clear, readStatus: async () => { if (statusFailure) throw Error("status read failure"); return structuredClone(marker); }, writeStatus: async (value: any) => { if (statusFailure) throw Error("status write failure"); marker = structuredClone(value); }, emit, response: async () => ({ ok: true, browserState: { history: await adapter.read() } }), clock: () => time });
  const adapter = create();
- return { adapter, create, emit, clear, alterWrite: (fn: (value: any) => void) => { alterWrite = fn; }, get: () => stored, set: (value: any) => { stored = value; }, native: (value: any) => { native = value; }, writes: () => writes, failWrite: (value = true) => { failWrite = value; }, failClear: (value = true) => { failClear = value; }, mismatch: () => { mismatch = true; }, expire: () => { time += 120_000; } };
+ return { adapter, create, emit, clear, marker: () => marker, failStatus: (value = true) => { statusFailure = value; }, alterWrite: (fn: (value: any) => void) => { alterWrite = fn; }, get: () => stored, set: (value: any) => { stored = value; }, native: (value: any) => { native = value; }, writes: () => writes, failWrite: (value = true) => { failWrite = value; }, failClear: (value = true) => { failClear = value; }, mismatch: () => { mismatch = true; }, expire: () => { time += 120_000; } };
 }
 const plan = async (f: ReturnType<typeof fixture>, data: any = source()) => (await f.adapter.request({ type: "browser-plan-history-import", data })).historyImportPlan;
 const apply = (f: ReturnType<typeof fixture>, id: string) => f.adapter.request({ type: "browser-apply-history-import", planId: id });
@@ -82,22 +83,44 @@ describe("native archival history transfer", () => {
  it("retains worker-owned synchronization status through reads and partial success until a full purge succeeds", async () => {
   const f = fixture(), p = await plan(f); await apply(f, p.planId); f.failWrite();
   const failure = await f.adapter.nativeHistoryRemoved({ allHistory: true, urls: [] });
-  expect(failure.ok).toBe(false); expect(f.adapter.getSyncError()).toBe(failure.error);
-  await f.adapter.read(); expect(f.adapter.getSyncError()).toBe(failure.error);
+  expect(failure.ok).toBe(false); expect(await f.adapter.getSyncError()).toBe(failure.error);
+  await f.adapter.read(); expect(await f.adapter.getSyncError()).toBe(failure.error);
   f.failWrite(false);
   expect((await f.adapter.nativeHistoryRemoved({ allHistory: false, urls: [source().entries[0].url] })).ok).toBe(true);
-  expect(f.adapter.getSyncError()).toBe(failure.error);
+  expect(await f.adapter.getSyncError()).toBe(failure.error);
   expect((await f.adapter.nativeHistoryRemoved({ allHistory: true, urls: [] })).ok).toBe(true);
-  expect(f.adapter.getSyncError()).toBeUndefined();
+  expect(await f.adapter.getSyncError()).toBeUndefined();
  });
  it("retains a partial Kestrel-clear failure until an explicitly successful full clear", async () => {
   const f = fixture(), p = await plan(f); await apply(f, p.planId); f.failClear();
   const failure = await f.adapter.request({ type: "browser-clear-history" });
-  expect(failure.ok).toBe(false); expect(f.adapter.getSyncError()).toBe(failure.error);
-  await f.adapter.nativeHistoryRemoved({ allHistory: false, urls: [] }); expect(f.adapter.getSyncError()).toBe(failure.error);
+  expect(failure.ok).toBe(false); expect(await f.adapter.getSyncError()).toMatch(/partially cleared/);
+  await f.adapter.nativeHistoryRemoved({ allHistory: false, urls: [] }); expect(await f.adapter.getSyncError()).toMatch(/partially cleared/);
   f.failClear(false);
   expect((await f.adapter.request({ type: "browser-clear-history" })).ok).toBe(true);
-  expect(f.adapter.getSyncError()).toBeUndefined();
+  expect(await f.adapter.getSyncError()).toBeUndefined();
+ });
+ it("retains only a generic durable marker across reinstantiation after partial clear and removal failure", async () => {
+  const f = fixture(), p = await plan(f); await apply(f, p.planId); f.failClear();
+  expect((await f.adapter.request({ type: "browser-clear-history" })).ok).toBe(false);
+  expect(f.marker()).toEqual({ version: 1, code: "history-sync-pending" });
+  expect(JSON.stringify(f.marker())).not.toContain("example.com");
+  expect((await f.create().readState()).historySyncError).toMatch(/partially cleared/);
+  f.failClear(false); expect((await f.create().request({ type: "browser-clear-history" })).ok).toBe(true);
+  expect((await f.create().readState()).historySyncError).toBeUndefined();
+  const next = await plan(f); await apply(f, next.planId); f.failWrite();
+  expect((await f.adapter.nativeHistoryRemoved({ allHistory: false, urls: [source().entries[0].url] })).ok).toBe(false);
+  expect((await f.create().readState()).historySyncError).toMatch(/imported history could not be removed/);
+  f.failWrite(false); await f.create().nativeHistoryRemoved({ allHistory: false, urls: [source().entries[0].url] });
+  expect((await f.create().readState()).historySyncError).toBeDefined();
+  await f.create().nativeHistoryRemoved({ allHistory: true, urls: [] });
+  expect((await f.create().readState()).historySyncError).toBeUndefined();
+ });
+ it("fails closed when status storage is unavailable and does not start a clear", async () => {
+  const f = fixture(); f.failStatus();
+  await expect(f.adapter.request({ type: "browser-clear-history" })).rejects.toThrow(/status could not be saved/);
+  expect(f.clear).not.toHaveBeenCalled(); expect(f.writes()).toBe(0);
+  expect((await f.adapter.readState()).historySyncError).toBeDefined();
  });
  it("rejects over-capacity current native history without hiding imported entries", async () => {
   const f = fixture(); f.native({ entries: Array.from({ length: 5000 }, (_, i) => ({ ...source().entries[0], url: `https://native.example/${i}` })), excluded: 0 });

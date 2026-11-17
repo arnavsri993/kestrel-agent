@@ -115,7 +115,7 @@ async function start() {
  const endpoint = await eventually(() => {
   assert(!failed && child.exitCode === null && child.signalCode === null, "Candidate exited during launch.");
   const found = output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+)/)?.[1];
-  return found && output.includes("KESTREL_NATIVE_KEYCHAIN_POLICY selected=system") ? found : undefined;
+  return found && output.includes("KESTREL_NATIVE_SECRET_STORAGE selected=system") ? found : undefined;
  }, 310000);
  checkInterrupt(); browser = await connect(endpoint);
  stage = "effective-command-line"; console.log(`STAGE ${stage}`);

@@ -1,6 +1,9 @@
 import { NativeHistoryTransferSchema, NativeHistoryTransferEntrySchema, RendererRequestSchema, UserBrowserHistoryEntrySchema } from '../../../../packages/shared-types/src/contracts.ts';
 
 export const NATIVE_IMPORTED_HISTORY_KEY = 'kestrel.native.browser.importedHistory.v1';
+export const NATIVE_HISTORY_SYNC_STATUS_KEY = 'kestrel.native.browser.historySyncStatus.v1';
+const pendingStatus = { version: 1, code: 'history-sync-pending' };
+const pendingError = 'History was only partially cleared or could not be cleared, or matching imported history could not be removed. Check history and try clearing it again.';
 const ttl = 120_000;
 const copy = value => structuredClone(value);
 // Chrome storage preserves JSON values, but may enumerate object fields in a
@@ -16,8 +19,8 @@ const witness = snapshot => semanticJSON({ imported: snapshot.imported, native: 
 
 // Imported dates are archival metadata. They never create Chromium visits or
 // feed Chromium's omnibox. One worker queue owns every history read and write.
-export function createNativeHistoryTransfer({ read, write, readNative, clearNative, response, emit, clock = Date.now }) {
- let plan, syncError, queue = Promise.resolve();
+export function createNativeHistoryTransfer({ read, write, readNative, clearNative, readStatus, writeStatus, response, emit, clock = Date.now }) {
+ let plan, uncertain = false, queue = Promise.resolve();
  const enqueue = action => { const work = queue.then(action); queue = work.catch(() => undefined); return work; };
  async function imported() {
   const value = await read();
@@ -45,6 +48,22 @@ export function createNativeHistoryTransfer({ read, write, readNative, clearNati
    if (!same(await imported(), value)) throw Error('Verification failed.');
   } catch { throw Error('Imported history could not be saved or verified. Check history before reviewing another import.'); }
  }
+ async function status() {
+  try {
+   const value = await readStatus();
+   if (value !== undefined && value !== null && !same(value, pendingStatus)) throw Error('Invalid status');
+   return uncertain || value != null ? pendingError : undefined;
+  } catch { uncertain = true; return pendingError; }
+ }
+ async function setStatus(value) {
+  try {
+   await writeStatus(value);
+   const stored = await readStatus();
+   if (value === null ? stored != null : !same(stored, value)) throw Error('Verification failed');
+  } catch { uncertain = true; throw Error('History synchronization status could not be saved or verified. Check history before trying again.'); }
+ }
+ async function markPending() { await setStatus(pendingStatus); }
+ async function markRecovered() { await setStatus(null); uncertain = false; }
  async function operation(input) {
   // Even malformed/wrong-ID apply and discard requests retire a pending token.
   const previous = plan;
@@ -54,13 +73,20 @@ export function createNativeHistoryTransfer({ read, write, readNative, clearNati
   input = parsed.data;
   if (input.type === 'browser-discard-history-import') return { ok: true };
   if (input.type === 'browser-clear-history') {
-   // Neither store is skipped when the other fails. Never report a partial
-   // clear as success, and always publish the remaining current state.
+   // The marker must be durable before either store is mutated.
+   await markPending();
    const failures = [];
    try { await clearNative(); } catch { failures.push('Chromium history'); }
    try { await verifiedWrite({ version: 1, entries: [] }); } catch { failures.push('imported history'); }
-   syncError = failures.length ? `History was only partially cleared or could not be cleared (${failures.join(' and ')}). Check history before trying again.` : undefined;
-   return { refresh: true, cleared: true, ...(syncError ? { error: syncError } : {}) };
+   if (!failures.length) {
+    try {
+     const native = await readNative();
+     if (native.unavailable || native.truncated || native.excluded || native.entries.length) throw Error('Native history was not empty');
+     await markRecovered();
+    } catch { failures.push('history verification'); }
+   }
+   const error = failures.length ? `History was only partially cleared or could not be cleared (${failures.join(' and ')}). Check history before trying again.` : undefined;
+   return { refresh: true, cleared: true, ...(error ? { error } : {}) };
   }
   if (input.type === 'browser-export-history') {
    const s = await snapshot();
@@ -112,11 +138,16 @@ export function createNativeHistoryTransfer({ read, write, readNative, clearNati
   nativeHistoryRemoved: details => enqueue(async () => {
    plan = undefined;
    try {
+    const priorError = await status();
+    await markPending();
     if (details?.allHistory === true) {
      await verifiedWrite({ version: 1, entries: [] });
-     syncError = undefined;
-    }
-    else {
+     // An all-history event establishes the native purge; verify its current
+     // state as well before clearing any earlier unresolved marker.
+     const native = await readNative();
+     if (native.unavailable || native.truncated || native.excluded || native.entries.length) throw Error('Native history was not empty');
+     await markRecovered();
+    } else {
      const urls = new Set((Array.isArray(details?.urls) ? details.urls : []).flatMap(url => {
       if (!NativeHistoryTransferEntrySchema.shape.url.safeParse(url).success) return [];
       return [new URL(url).href];
@@ -126,16 +157,18 @@ export function createNativeHistoryTransfer({ read, write, readNative, clearNati
       const entries = before.entries.filter(entry => !urls.has(new URL(entry.url).href));
       if (entries.length !== before.entries.length) await verifiedWrite({ version: 1, entries });
      }
+     if (!priorError) await markRecovered();
     }
     return { ok: true };
    } catch {
-    syncError = 'Chromium history changed, but matching imported history could not be removed. Check history and try clearing it again.';
-    return { ok: false, error: syncError };
+    uncertain = true;
+    return { ok: false, error: pendingError };
    }
   }),
-  // Worker-owned status is replayed with each initial renderer refresh. It is
-  // intentionally in memory: unwritable storage cannot promise durable status.
-  getSyncError: () => syncError,
+  // Read the collection and its status under the same queue so a renderer
+  // cannot observe a stale recovery state between deletion and marker writes.
+  readState: () => enqueue(async () => ({ history: visible(await snapshot()), historySyncError: await status() })),
+  getSyncError: () => enqueue(status),
   read: () => enqueue(async () => visible(await snapshot())),
   request: async input => {
    let result;

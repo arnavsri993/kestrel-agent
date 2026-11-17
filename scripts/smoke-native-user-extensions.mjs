@@ -445,7 +445,8 @@ try {
 
 		browser = await chromium.connectOverCDP(endpoint);
 		if (storage.mode === "production-vault") {
-			assert(!output.includes("KESTREL_NATIVE_KEYCHAIN_POLICY selected=mock"), "Mock browser storage was selected.");
+			assert(output.includes("KESTREL_NATIVE_SECRET_STORAGE selected=local-vault"), "Reviewed Chromium local vault provider was not selected.");
+			assert(!output.includes("KESTREL_NATIVE_SECRET_STORAGE selected=mock"), "Mock browser storage was selected.");
 			const browserSession = await browser.newBrowserCDPSession();
 			try {
 				const { arguments: effective } = await browserSession.send("Browser.getBrowserCommandLine");

@@ -16,6 +16,7 @@ export interface InitialDesktopState {
 
 export async function loadInitialDesktopState(
 	request: (input: StartupRequest) => Promise<CoreResponse>,
+	onSnapshot?: (snapshot: WorkspaceSnapshot) => void,
 ): Promise<InitialDesktopState> {
 	const snapshotResponse = await request({ type: "snapshot" });
 	if (!snapshotResponse.ok)
@@ -24,6 +25,7 @@ export async function loadInitialDesktopState(
 		);
 	if (!("snapshot" in snapshotResponse) || !snapshotResponse.snapshot)
 		throw new Error("The local core returned no workspace state.");
+	onSnapshot?.(snapshotResponse.snapshot);
 
 	let sessions: RuntimeSession[] = [];
 	let selectedSessionId: string | null = null;
@@ -55,6 +57,23 @@ export async function loadInitialDesktopState(
 		sessions,
 		selectedSessionId,
 		...(sessionsLoadError ? { sessionsLoadError } : {}),
+	};
+}
+
+// A snapshot event received while the initial request is in flight is newer
+// than that request's response and must remain visible.
+export function createStartupSnapshotGate(
+	apply: (snapshot: WorkspaceSnapshot) => void,
+) {
+	let receivedEvent = false;
+	return {
+		initial(snapshot: WorkspaceSnapshot) {
+			if (!receivedEvent) apply(snapshot);
+		},
+		event(snapshot: WorkspaceSnapshot) {
+			receivedEvent = true;
+			apply(snapshot);
+		},
 	};
 }
 

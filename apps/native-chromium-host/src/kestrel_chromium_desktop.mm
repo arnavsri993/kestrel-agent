@@ -196,7 +196,7 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
     window.runtime_style = CEF_RUNTIME_STYLE_CHROME;
     CefBrowserSettings settings;
     const std::string initial_url = url.empty()
-        ? (browser_frame_enabled_ ? "about:blank" : ui_url_)
+        ? (browser_frame_enabled_ && !ui_ready_ ? "about:blank" : ui_url_)
         : url;
     CefBrowserHost::CreateBrowserSync(window, this, initial_url, settings, nullptr, nullptr);
   }
@@ -239,10 +239,16 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
   }
   void OpenUiWhenReady() {
     if (!document_ready_ || ui_opened_ || !first_browser_) return;
-    ui_opened_ = true;
-    if (browser_frame_enabled_) return;
+    // The first blank document wakes the bundled extension and native bridge.
+    // In the custom-frame build, wait for that authenticated bridge handshake,
+    // then load the real Kestrel Home in Chromium's content area beneath the
+    // separate BrowserView frame. The frame itself only renders browser chrome.
+    if (browser_frame_enabled_ && !ui_ready_) return;
     const std::string url = first_browser_->GetMainFrame()->GetURL();
-    if (url.empty() || url == "about:blank") first_browser_->GetMainFrame()->LoadURL(ui_url_);
+    if (url.empty() || url == "about:blank") {
+      ui_opened_ = true;
+      first_browser_->GetMainFrame()->LoadURL(ui_url_);
+    }
   }
   const std::string ui_url_;
   NativeIsolatedAutomation::Reply automation_reply_;
