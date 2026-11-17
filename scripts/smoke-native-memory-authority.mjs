@@ -19,6 +19,7 @@ const root = await realpath(await mkdtemp(join(tmpdir(), "kestrel-native-authori
 const key = randomBytes(32), databasePath = join(root, "core.sqlite");
 const resources = join(candidate, "Contents/Resources/agent-core");
 const { CoreSupervisor, nodeCoreProcess } = await import(pathToFileURL(join(resources, "service/native-desktop-runtime.mjs")).href);
+const { memoryFingerprintIndex } = await tsImport(fileURLToPath(new URL("../packages/database/src/memory-fingerprint-index.ts", import.meta.url)), import.meta.url);
 const owned = new Set();
 const receipt = { version: 1, startedAt: new Date().toISOString(), candidate,
   candidateSha256: await candidateDigest(candidate),
@@ -56,12 +57,18 @@ function inspect(ownerId, text) {
       assert.match(state.generation, /^[a-f0-9-]{36}$/);
       const jobs = db.prepare("SELECT * FROM memory_jobs WHERE kind='embed'").all().map(row => {
         const job = decrypt(row);
-        for (const [field, column] of Object.entries({ id: "id", kind: "kind", status: "status", dedupeKey: "dedupe_key", attempts: "attempts" }))
-          assert.equal(job[field], row[column]);
+        for (const [field, column] of Object.entries({ id: "id", kind: "kind", status: "status", dedupeKey: "dedupe_key", attempts: "attempts" })) {
+          const expected = field === "dedupeKey" ? memoryFingerprintIndex(key, "job-dedupe", job.dedupeKey) : job[field];
+          assert.equal(expected, row[column]);
+        }
         return job;
       }).filter(job => job.payload.ownerType === "memory" && job.payload.ownerId === ownerId);
       const embeddingRows = db.prepare("SELECT * FROM memory_embeddings WHERE owner_type='memory' AND owner_id=?").all(ownerId);
-      const embeddings = embeddingRows.map(row => { const value = decrypt(row); assert.equal(value.contentHash, row.content_hash); return value; });
+      const embeddings = embeddingRows.map(row => {
+        const value = decrypt(row);
+        assert.equal(memoryFingerprintIndex(key, "embedding-content", value.contentHash), row.content_hash);
+        return value;
+      });
       assert(!jobs.some(job => job.dedupeKey.includes(createHash("sha256").update(text).digest("hex").slice(0, 16))));
       assert.notEqual(contentHash, createHash("sha256").update(text).digest("hex"));
       const currentJob = jobs.find(job => job.payload.generation === state.generation && job.status === "completed");
