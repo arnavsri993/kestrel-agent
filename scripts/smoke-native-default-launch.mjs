@@ -20,7 +20,6 @@ await writeFile(join(profile, ".kestrel-native-default-v1"), "kestrel-native-v1\
 const legacyKeyPath = join(profile, "native-core/database.key");
 const rawTestKeyPath = join(profile, ".kestrel-native-test-core-key-v1");
 const localVaultPath = join(profile, ".kestrel-local-vault-v1");
-const databasePath = join(profile, "native-core/database/kestrel.sqlite");
 let child;
 let launchServicesChild;
 let nativePid;
@@ -83,25 +82,20 @@ async function launch() {
   ], { stdio: "ignore" });
   await waitFor(async () => {
     const output = await launchOutput();
-    if (!output.includes("KESTREL_NATIVE_CHROMIUM_MAIN_WINDOW_READY")) return false;
-    nativePid = Number(output.match(/KESTREL_NATIVE_CHROMIUM_MAIN_WINDOW_READY pid=(\d+)/)?.[1]);
+    if (!output.includes("KESTREL_CHROMIUM_DESKTOP_TAB_READY")) return false;
+    nativePid = Number(output.match(/KESTREL_CHROMIUM_DESKTOP_TAB_READY pid=(\d+)/)?.[1]);
     return Number.isSafeInteger(nativePid) && !candidatePidsBeforeLaunch.has(nativePid) && candidatePids().includes(nativePid);
   }, 45000, "LaunchServices did not create Kestrel's first browser window.");
   await waitFor(async () => {
     const output = await launchOutput();
-    const appReady = output.includes("KESTREL_NATIVE_CHROMIUM_RENDERER_BRIDGE_READY") &&
-      output.includes("KESTREL_NATIVE_CHROMIUM_HOST_READY") &&
-      output.includes("KESTREL_NATIVE_CHROMIUM_CORE_READY") &&
-      output.includes("user_extensions=enabled") &&
-      output.includes("durable_profile=enabled");
-    const databaseReady = await stat(databasePath).then(s => s.isFile(), () => false);
-    return appReady && databaseReady;
-  }, 45000, "Kestrel became foreground but its Core bridge or UI document did not become ready.");
+    const appReady = output.includes("KESTREL_CHROMIUM_DESKTOP_BRIDGE_READY");
+    return appReady;
+  }, 45000, "Kestrel became foreground but its native browser frame/Core bridge did not become ready.");
   await waitFor(() => {
     const front = frontmostApplication();
     return front?.pid === nativePid && front.bundlePath === candidate;
   }, 10000, "Kestrel's full shell loaded, but macOS kept another app in front.");
-  console.log("PASS LaunchServices presented the complete Kestrel shell and activated its process.");
+  console.log("PASS LaunchServices presented the native Kestrel browser frame and activated its process.");
   const exited = new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Candidate failed to quit cleanly.")), 15000);
     launchServicesChild.once("exit", (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
@@ -130,7 +124,7 @@ try {
   await assert.rejects(stat(legacyKeyPath), { code: "ENOENT" });
   await assert.rejects(stat(rawTestKeyPath), { code: "ENOENT" });
   assert.equal((await stat(localVaultPath)).mode & 0o777, 0o600);
-  console.log("LaunchServices no-argument Kestrel React shell, foreground native window, renderer/Core bridge, Core database, extension support, local-vault persistence across restart, and clean shutdown passed. No Keychain prompt appeared; no test-key mode was used.");
+  console.log("LaunchServices no-argument Chromium-owned Kestrel frame, foreground native window, authenticated UI/Core bridge, local-vault persistence across restart, and clean shutdown passed. No Keychain prompt appeared; no test-key mode was used.");
 } finally {
   if (child && child.exitCode === null && child.signalCode === null) {
     const stopped = new Promise(resolve => child.once("exit", resolve));

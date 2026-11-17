@@ -64,7 +64,6 @@
 #include "kestrel_chrome_window_mac.h"
 #include "kestrel_live_extension_control.h"
 #include "kestrel_native_run_loop_dispatch.h"
-#include "native_external_url_validation.h"
 
 @interface KestrelNativeCoreRelay : NSObject
 - (instancetype)initWithProfileRoot:(NSString*)profileRoot
@@ -675,7 +674,6 @@ class KestrelChromeBrowserViewDelegate final : public CefBrowserViewDelegate {
 };
 
 class KestrelClient;
-void DrainPendingNativeDefaultExternalURLs();
 KestrelClient* client_instance = nullptr;
 void schedule_close_after_ready();
 void post_bridge_teardown(CefRefPtr<KestrelClient> client);
@@ -1516,23 +1514,6 @@ class KestrelClient : public CefClient,
     if (chrome_window_) chrome_window_->Present();
   }
 
-  bool OpenExternalURL(const std::string& input) {
-    if (!native_default_shell_enabled || closing_ ||
-        ![NSThread isMainThread]) {
-      return false;
-    }
-    std::string error;
-    if (!CreateUserBrowserTab(input, true, &error)) {
-      std::cerr << "Kestrel could not open an external URL"
-                << (error.empty() ? "." : ": " + error) << std::endl;
-      return false;
-    }
-    SyncUserBrowserViewVisibility();
-    PublishUserBrowserState();
-    PresentMainWindow();
-    return true;
-  }
-
   void ChromeWindowClosing() {
     if (live_extension_control) live_extension_control->Shutdown();
     if (private_chrome_pipe) private_chrome_pipe->Quiesce();
@@ -1594,10 +1575,6 @@ class KestrelClient : public CefClient,
   void OnLoadEnd(CefRefPtr<CefBrowser> browser,
                  CefRefPtr<CefFrame> frame,
                  int http_status_code) override {
-    if (native_default_shell_enabled && browser && browser_ &&
-        browser->IsSame(browser_) && frame && frame->IsMain()) {
-      DrainPendingNativeDefaultExternalURLs();
-    }
     if (browser && browser_ && browser->IsSame(browser_) && chrome_window_ &&
         frame && frame->IsMain()) {
       chrome_window_->Present();
@@ -5976,29 +5953,6 @@ class BridgeRouterReleaseTask final : public CefTask {
 // keeps the bridge router from being released re-entrantly by the BrowserView
 // graph during window teardown.
 CefRefPtr<KestrelClient> main_client_owner;
-std::deque<std::string> pending_native_default_external_urls;
-
-bool RouteKestrelExternalURL(NSURL* url) {
-  if (!native_default_shell_enabled) return EnqueueKestrelExternalURL(url);
-  if (![NSThread isMainThread] || !IsAllowedKestrelExternalURL(url)) return false;
-  NSString* text = url.absoluteString;
-  const char* utf8 = text.UTF8String;
-  if (!utf8) return false;
-  if (main_client_owner) return main_client_owner->OpenExternalURL(utf8);
-  if (pending_native_default_external_urls.size() >= 32) return false;
-  pending_native_default_external_urls.emplace_back(utf8);
-  return true;
-}
-
-void DrainPendingNativeDefaultExternalURLs() {
-  if (!native_default_shell_enabled || !main_client_owner ||
-      ![NSThread isMainThread]) return;
-  while (!pending_native_default_external_urls.empty()) {
-    if (!main_client_owner->OpenExternalURL(
-            pending_native_default_external_urls.front())) return;
-    pending_native_default_external_urls.pop_front();
-  }
-}
 
 void post_bridge_teardown(CefRefPtr<KestrelClient> client) {
   CefPostTask(TID_UI, new BridgeTeardownTask(std::move(client)));
@@ -6222,7 +6176,7 @@ class KestrelWindowDelegate : public CefWindowDelegate {
 - (void)application:(NSApplication*)application openURLs:(NSArray<NSURL*>*)urls {
   (void)application;
   if (!self.acceptsExternalURLs) return;
-  for (NSURL* url in urls) if (!RouteKestrelExternalURL(url))
+  for (NSURL* url in urls) if (!EnqueueKestrelExternalURL(url))
     std::cerr << "Kestrel could not accept an external URL." << std::endl;
 }
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
@@ -6320,10 +6274,10 @@ int main(int argc, char* argv[]) {
   }
   const bool explicit_desktop = has_argument(argc, argv, "--kestrel-chromium-desktop");
   const bool native_default_shell = !explicit_desktop && !legacy_selector;
-  if (has_argument(argc, argv, "--kestrel-live-extensions") || native_default_shell) {
-    if (!native_default_shell && (!has_argument(argc, argv, "--kestrel-user-extensions") ||
+  if (has_argument(argc, argv, "--kestrel-live-extensions")) {
+    if (!has_argument(argc, argv, "--kestrel-user-extensions") ||
         !has_argument(argc, argv, "--kestrel-chrome-tab-model") ||
-        has_argument(argc, argv, "--remote-debugging-pipe"))) {
+        has_argument(argc, argv, "--remote-debugging-pipe")) {
       std::cerr << "Live extensions require Kestrel's private Chromium tab model." << std::endl;
       return 1;
     }
@@ -6351,11 +6305,11 @@ int main(int argc, char* argv[]) {
   CefMainArgs main_args(argc, argv);
   @autoreleasepool {
     [KestrelApplication sharedApplication];
-    if (explicit_desktop) {
+    if (explicit_desktop || native_default_shell) {
       KestrelAppDelegate* desktop_delegate = [[KestrelAppDelegate alloc] init];
       desktop_delegate.acceptsExternalURLs = YES;
       [NSApp setDelegate:desktop_delegate];
-      return RunKestrelChromiumDesktop(argc, argv, false);
+      return RunKestrelChromiumDesktop(argc, argv, native_default_shell);
     }
     NSString* default_profile_root = nil;
     if (native_default_shell) {
