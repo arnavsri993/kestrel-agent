@@ -163,6 +163,27 @@ generated production-vault checkpoint in
 November 15, its temporary profile was missing. The checkpoint and receipt are
 preserved, but they are not a live fixture for a later upgrade.
 
+### Exact candidate Store rerun, 2026-11-17
+
+The strict Store canary was rerun against the unchanged native candidate bundle
+`fb8e74b49ad6f031d616f5a72e64eb28dc42465be789b71765e20d6e658a07fd` using a
+fresh generated production-vault profile. The current Chrome Web Store installed
+JSON Formatter `0.10.2` and uBlock Origin Lite `2026.1116.1650`. Store install,
+extension-created tab ownership in Kestrel's real Chromium window, the isolated
+uBlock action popup, manager disable/re-enable, and persistence after full
+restart all passed. The corrected probe obtains the first-party browser frame's
+window ID through `chrome.windows.getCurrent()`; that frame is a BrowserView,
+so `chrome.tabs.getCurrent()` does not identify it.
+
+The official update check returned `no_update` and confirmed the installed
+version; no published Store version transition was available to test. The strict
+parity gate therefore remains incomplete. The receipt is
+`.tmp/native-store-parity-61cb-windowid-fix/receipt.json`; it records all three
+owned process stops as exit 0 and confirms the exact candidate was absent after
+cleanup. Its generated profile was retained because the required version
+transition was not observed. The canonical `/Applications/Kestrel.app` and its
+profile were not used or changed.
+
 ### Transfer observer correction
 
 The first unlocked production-vault transfer run reached both native completion

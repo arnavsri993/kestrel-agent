@@ -537,8 +537,15 @@ try{
   extensionParity.manifestEvidence=manifest?{extensionId:actionExtension,version:manifest.version,manifestVersion:manifest.manifest_version,permissions:manifest.permissions??[],optionalPermissions:manifest.optional_permissions??[],action:manifest.action??manifest.browser_action??null}:null;
   let popupWindowId;
   try{
-   const currentNativeTab=await home.evaluate(()=>new Promise(resolve=>chrome.tabs.getCurrent(tab=>resolve(tab?{id:tab.id,windowId:tab.windowId}:null))));
-   if(Number.isSafeInteger(currentNativeTab?.windowId))popupWindowId=currentNativeTab.windowId;
+   // The Kestrel browser frame is a first-party extension BrowserView rather
+   // than a normal tab, so chrome.tabs.getCurrent() is null in this page. The
+   // Chrome window API still reports the actual native window that owns the
+   // frame and user tabs.
+   const currentNativeWindowId=await home.evaluate(async()=>{
+    const currentWindow=await chrome.windows.getCurrent();
+    return currentWindow?.id;
+   });
+   if(Number.isSafeInteger(currentNativeWindowId))popupWindowId=currentNativeWindowId;
   }catch{}
   if(!Number.isSafeInteger(popupWindowId))missing('toolbar-action-popup','Could not obtain the actual Chrome window id from Kestrel’s first-party extension page.');
   let ownedTabId,ownedTabUrl;
