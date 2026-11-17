@@ -3,7 +3,7 @@
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { selectNativeVaultRuntime } from "./native-vault-runtime-selection.mjs";
+import { desktopRuntimeInstallPlan } from "./desktop-runtime-install-plan.mjs";
 
 /**
  * Installs the selected desktop runtime. Electron remains the default Dock app.
@@ -11,31 +11,15 @@ import { selectNativeVaultRuntime } from "./native-vault-runtime-selection.mjs";
  * Developer ID signing / notarization checks.
  */
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const runtime = (process.env.KESTREL_DESKTOP_RUNTIME ?? "electron").toLowerCase();
-
-if (runtime === "chromium" || runtime === "native") {
-	const vaultRuntime = selectNativeVaultRuntime();
-	const pack = spawnSync("corepack", ["pnpm", "package:mac:native",
-		...(vaultRuntime === undefined ? [] : ["--vault-cef-runtime", vaultRuntime])], {
-		stdio: "inherit",
-		cwd: root,
-		env: process.env,
-	});
-	if (pack.status !== 0) process.exit(pack.status ?? 1);
-	const install = spawnSync(
-		process.execPath,
-		[join(root, "scripts", "install-native-chromium-macos.mjs")],
-		{ stdio: "inherit", cwd: root, env: process.env },
-	);
-	process.exit(install.status ?? 1);
-}
-
-if (runtime !== "electron") {
-	console.error(`Unknown KESTREL_DESKTOP_RUNTIME=${runtime}. Use electron or chromium.`);
+let plan;
+try {
+	plan = desktopRuntimeInstallPlan({ root, argv: process.argv.slice(2) });
+} catch (error) {
+	console.error(error instanceof Error ? error.message : String(error));
 	process.exit(1);
 }
 
-const result = spawnSync("corepack", ["pnpm", "install:mac:dev"], {
+const result = spawnSync(plan.command, plan.args, {
 	stdio: "inherit",
 	cwd: root,
 	env: process.env,

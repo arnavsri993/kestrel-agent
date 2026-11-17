@@ -415,6 +415,19 @@ Until `check:native-signing` exits 0 against
 `release/native-mac-arm64/Kestrel.app`, Electron packaging remains required and
 `KESTREL_INSTALL_NATIVE_CANONICAL=1` must not be used for Dock replacement.
 
+`install:desktop-runtime` keeps Electron as its default. For an accepted native
+cutover, first build and validate the candidate with the native packaging
+commands above, then pass that exact existing `.app` to the installer:
+
+```sh
+KESTREL_DESKTOP_RUNTIME=chromium KESTREL_INSTALL_NATIVE_CANONICAL=1 \
+  corepack pnpm install:desktop-runtime /absolute/path/to/Kestrel.app
+```
+
+The wrapper does not rebuild the candidate, so the signed package and the
+retirement evidence remain bound to the same app digest. Native build options
+belong on `package:mac:native`; the installer accepts only one candidate path.
+
 Still required before retiring Electron:
 
 - Real Keychain path on a Developer ID–signed durable build (no ad-hoc prompt
