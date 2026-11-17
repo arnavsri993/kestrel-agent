@@ -2307,7 +2307,9 @@ describe("agent runtime", () => {
 					stdout: expect.stringContaining("echo:hello"),
 				},
 			});
-			runtime.close();
+			await expect(runtime.close()).rejects.toThrow(
+				"Command children were interrupted; descendant shutdown is unconfirmed.",
+			);
 			const restarted = new AgentRuntime(
 				database,
 				[root],

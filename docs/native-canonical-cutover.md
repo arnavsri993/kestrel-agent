@@ -16,7 +16,7 @@ canonical evidence fails preflight; other missing gates are never deferred.
 
 `scripts/check-native-cutover-prerequisites.mjs` implements this separate phase.
 `scripts/check-electron-retirement-gates.mjs` remains the full final check and
-still requires all 27 gates. The read-only plan reports pre- and post-cutover
+still requires all 28 gates. The read-only plan reports pre- and post-cutover
 requirements separately:
 
 ```bash

@@ -72,7 +72,7 @@ async function setup(name) {
 function homeUrl(profile) {
  const id = [...hash(join(profile, "kestrel-ui-bundle")).slice(0, 32)]
   .map(digit => "abcdefghijklmnop"[parseInt(digit, 16)]).join("");
- return `chrome-extension://${id}/index.html`;
+ return `chrome-extension://${id}/index.html?surface=frame`;
 }
 function assertOwned(state) {
  assert.equal(running, state, "The observed candidate is no longer the owned running state.");
@@ -173,8 +173,12 @@ async function start(name) {
  const home = await findOwnedHome(state);
  state.home = home;
  await home.waitForFunction(() => typeof window.kestrel?.request === "function");
- await home.evaluate(() => { localStorage.setItem("kestrel:onboarded", "yes"); localStorage.setItem("kestrel:default-browser-prompted", "yes"); });
- await home.reload(); await home.locator(".kestrel-sidebar").waitFor();
+ await home.waitForFunction(() => {
+  const readyAt = Number(document.documentElement.dataset.kestrelFrameReady);
+  return document.documentElement.dataset.nativeSurface === "frame" && Number.isFinite(readyAt) && Date.now() - readyAt < 15_000 &&
+   !!document.querySelector(".browser-workspace-native-frame-shell .browser-tab-row") &&
+   !!document.querySelector(".browser-workspace-native-frame-shell .browser-toolbar");
+ });
  const subscriptions = await request(home, { type: "subscription-cli-status" });
  assert(Array.isArray(subscriptions.subscriptionClis) && subscriptions.subscriptionClis.length > 0);
  assert(subscriptions.subscriptionClis.every(item => !item.detected && !item.enabled && !item.path && !item.authenticated), "Provider discovery unexpectedly enabled.");
