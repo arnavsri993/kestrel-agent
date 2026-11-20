@@ -3,6 +3,8 @@ import type { RuntimeToolExecution } from "@kestrel/shared-types";
 import { emptyBrowserRecoveryBudgetState } from "./browser-recovery";
 import {
 	OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR,
+	OBSERVE_REQUIRED_COMPUTER_COMPLETION_ERROR,
+	computerCompletionError,
 	PREMATURE_BROWSER_COMPLETION_ERROR,
 	prematureBrowserCompletionError,
 } from "./agent-run-completion";
@@ -103,5 +105,35 @@ describe("prematureBrowserCompletionError", () => {
 				],
 			}),
 		).toBe(OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR);
+	});
+});
+
+describe("computerCompletionError", () => {
+	const action = execution({ id: "input", toolName: "computer.act", idempotencyKey: "run-1:input",
+		input: { action: { type: "click", captureId: "before" } } });
+	const observation = execution({ id: "after", toolName: "computer.screenshot", idempotencyKey: "run-1:after",
+		output: { captureId: "after", capturedAt: "2026-07-22T18:00:02.000Z" } });
+	const check = (items: RuntimeToolExecution[], observedExecutionId?: string) => computerCompletionError({
+		runId: "run-1", sessionId: "session-1", listExecutions: () => items, observedExecutionId,
+	});
+	it("rejects a completion after delivered input until the model receives a fresh observation", () => {
+		expect(check([action])).toBe(OBSERVE_REQUIRED_COMPUTER_COMPLETION_ERROR);
+		expect(check([action, observation])).toBe(OBSERVE_REQUIRED_COMPUTER_COMPLETION_ERROR);
+		expect(check([action, observation], "after")).toBeUndefined();
+	});
+	it("rejects old, reused, foreign, or pre-action frames", () => {
+		for (const changed of [
+			{ ...observation, idempotencyKey: "other-run:after" },
+			{ ...observation, sessionId: "other-session" },
+			{ ...observation, status: "failed" as const },
+			{ ...observation, output: { captureId: "before", capturedAt: "2026-07-22T18:00:02.000Z" } },
+			{ ...observation, output: { captureId: "after", capturedAt: "2026-07-22T17:59:59.000Z" } },
+		]) expect(check([action, changed], "after")).toBe(OBSERVE_REQUIRED_COMPUTER_COMPLETION_ERROR);
+	});
+	it("checks the final action and leaves read-only and denied-input runs alone", () => {
+		const later = { ...action, id: "later", completedAt: "2026-07-22T18:00:03.000Z" };
+		expect(check([action, observation, later], "after")).toBe(OBSERVE_REQUIRED_COMPUTER_COMPLETION_ERROR);
+		expect(check([observation], "after")).toBeUndefined();
+		expect(check([{ ...action, status: "blocked" }])).toBeUndefined();
 	});
 });

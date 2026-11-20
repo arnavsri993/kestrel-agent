@@ -9,9 +9,11 @@ Plan in at most three bullets, then:
 
 End with one sentence on what stayed local. Do not edit files, activate deferred tools, or suggest unrelated tasks. Finish in one turn if possible.`;
 
+export const FIRST_TASK_PURPOSE = "first-run-read-only-check" as const;
+
 export const FIRST_TASK_SLOW_MODEL_NOTICE =
 	"First local model turns can take 1–2 minutes while weights load. Kestrel is still working; cancel and retry if nothing changes after about 3 minutes.";
 
 export function isFirstTaskPrompt(prompt: string): boolean {
-	return prompt.trimStart().startsWith(FIRST_TASK_PROMPT_SIGNATURE);
+	return prompt === FIRST_TASK_PROMPT;
 }

@@ -64,7 +64,24 @@ try {
 		.last()
 		.click();
 	await external.getByText("verified", { exact: true }).last().waitFor();
-	await external.getByText(/1 supported credentials resolved/).waitFor();
+	await external
+		.getByText("Supported provider credentials resolved.", { exact: true })
+		.waitFor();
+	const externalSecretList = await page.evaluate(() =>
+		window.kestrel.request({ type: "external-secret-list" }),
+	);
+	assert.equal(externalSecretList.ok, true);
+	assert.ok(
+		"externalSecretSources" in externalSecretList &&
+			Array.isArray(externalSecretList.externalSecretSources),
+		"external-secret-list must return provider status records",
+	);
+	const commandSource = externalSecretList.externalSecretSources.find(
+		(source) => source.id === "command",
+	);
+	assert.ok(commandSource, "Command helper status must be present");
+	assert.equal(commandSource.state, "verified");
+	assert.deepEqual(commandSource.resolvedCredentialIds, ["openai"]);
 	const providers = await page.evaluate(() =>
 		window.kestrel.request({ type: "runtime-list-providers" }),
 	);

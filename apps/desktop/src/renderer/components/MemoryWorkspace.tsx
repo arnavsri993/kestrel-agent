@@ -7,6 +7,9 @@ import type {
 } from "@kestrel/shared-types";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import "./MemoryWorkspace.css";
+import { ScopedAgentMemory } from "./ScopedAgentMemory";
+import { nativeChromiumSurface } from "../native-extension-transport";
+import { NativeEmbeddingRecovery } from "./NativeEmbeddingRecovery";
 
 type WorkspaceView = "overview" | "timeline" | "memory" | "people" | "tools";
 type DocumentKind = MemoryDocument["kind"];
@@ -238,8 +241,11 @@ export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSess
 		const refresh = () => void load(true);
 		const timer = window.setInterval(refresh, 30_000);
 		window.addEventListener("focus", refresh);
-		return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
+		window.addEventListener("kestrel-memory-repair-settled", refresh);
+		return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); window.removeEventListener("kestrel-memory-repair-settled", refresh); };
 	}, [viewerId, domainId, weekOffset]);
+
+	const knowledgeSessionId = workspace?.viewers.find(viewer => viewer.id === viewerId)?.sessionId;
 
 	function updateDocument(document: MemoryDocument) { setWorkspace((current) => current ? { ...current, documents: [...current.documents.filter((item) => item.id !== document.id), document] } : current); }
 	function removeDocument(id: string) { setWorkspace((current) => current ? { ...current, documents: current.documents.filter((item) => item.id !== id) } : current); }
@@ -254,12 +260,13 @@ export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSess
 				</div>
 			</header>
 			<nav className="memory-workspace-tabs" aria-label="Memory views">{([ ["overview", "Overview"], ["timeline", "Timeline"], ["memory", "Memory"], ["people", "People"], ["tools", "Tools"] ] as const).map(([id, label]) => <button key={id} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>{label}</button>)}</nav>
+			{nativeChromiumSurface && view === "memory" && <div className="memory-workspace-content memory-repair-container"><NativeEmbeddingRecovery /></div>}
 			{error && <div className="memory-state" role="alert"><h2>Memory is unavailable</h2><p>{error}</p><button onClick={() => void load()}>Try again</button></div>}
 			{busy && !workspace && <div className="memory-state" aria-live="polite"><h2>Reading memory…</h2><p>Gathering the notes visible to this viewer.</p></div>}
 			{workspace && !error && <div className="memory-workspace-content">
 				{view === "overview" && <><Overview documents={workspace.documents} workspace={workspace} /><section className="memory-recent"><h3>People</h3>{workspace.documents.filter(item => item.kind === "person").slice(0, 5).map(item => <button key={item.id} onClick={() => setView("people")}>{item.title}</button>)}<h3>Tools</h3>{workspace.documents.filter(item => item.kind === "tool").slice(0, 5).map(item => <button key={item.id} onClick={() => setView("tools")}>{item.title}</button>)}</section></>}
 				{view === "timeline" && <><div className="memory-week-controls"><button onClick={() => setWeekOffset(value => value - 1)}>Previous week</button><button onClick={() => setWeekOffset(0)}>This week</button><button disabled={weekOffset >= 0} onClick={() => setWeekOffset(value => value + 1)}>Next week</button><button disabled={consolidating} onClick={async () => { const generation = requestId.current; setConsolidating(true); try { const result = await request({ type: "memory-workspace-consolidate", query: workspace.query }); if (generation === requestId.current && "memoryWorkspace" in result && result.memoryWorkspace) setWorkspace(result.memoryWorkspace); } catch (cause) { if (generation === requestId.current) setError(cause instanceof Error ? cause.message : "Could not consolidate memory."); } finally { setConsolidating(false); } }}>{consolidating ? "Summarizing…" : "Summarize with model"}</button></div><Timeline workspace={workspace} /></>}
-				{view === "memory" && <><Overview documents={workspace.documents} workspace={workspace} full /><details><summary>Edit memory documents</summary><DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="memory_and_knowledge" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} /></details></>}
+				{view === "memory" && <><details className="memory-agent-knowledge"><summary>Agent knowledge and recovery</summary>{knowledgeSessionId ? <><p>Standalone knowledge for the selected agent, across all domains. Memory documents below are managed separately.</p><ScopedAgentMemory key={knowledgeSessionId} sessionId={knowledgeSessionId} /></> : <p>Choose an agent in “Viewing as” to inspect its standalone knowledge and manage encrypted backups.</p>}</details><Overview documents={workspace.documents} workspace={workspace} full /><details><summary>Edit memory documents</summary><DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="memory_and_knowledge" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} /></details></>}
 				{view === "people" && <DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="person" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} />}
 				{view === "tools" && <><DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="tool" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} /><details><summary>Domain knowledge</summary><DocumentWorkspace key={`${viewerId}:knowledge`} documents={workspace.documents} kind="knowledge" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} /></details>{viewerId === "user" && legacyTools}</>}
 			</div>}

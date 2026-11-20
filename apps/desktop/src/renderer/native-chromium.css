@@ -1,0 +1,82 @@
+/* Chromium owns the window's tab strip, omnibox and web content. These are
+ * actual Kestrel surfaces, with no duplicate browser controls underneath. */
+html[data-desktop-runtime="chromium"] .ai-browser-app {
+	--agent-panel-top: 0px;
+}
+html[data-desktop-runtime="chromium"] .ai-browser-app .browser-workspace {
+	grid-template-areas: "viewport .";
+	grid-template-rows: minmax(0, 1fr);
+	grid-template-columns: minmax(0, 1fr) var(--agent-panel-width);
+}
+html[data-desktop-runtime="chromium"] .ai-browser-app .browser-workspace:has(.kestrel-sidebar) {
+	grid-template-areas: "kestrel-sidebar viewport .";
+	grid-template-columns: var(--kestrel-sidebar-width, 216px) minmax(0, 1fr) var(--agent-panel-width);
+}
+html[data-native-surface="panel"] .ai-browser-app {
+	display: block;
+	min-width: 0;
+	--agent-panel-width: 100%;
+	--agent-panel-open-width: 100%;
+}
+html[data-native-surface="panel"] .agent-sidebar {
+	display: grid;
+	grid-template-rows: auto auto minmax(0, 1fr);
+	position: relative;
+	top: auto;
+	width: 100%;
+	height: 100dvh;
+	max-height: none;
+	border: 0;
+}
+html[data-native-surface="panel"] .agent-sidebar-resize-handle {
+	display: none;
+}
+html[data-native-surface="panel"] .agent-compact-dock {
+	display: none;
+}
+
+/* The native BrowserView hosts this first-party page above Chromium's real
+ * TabStripModel contents. Keep only Kestrel's own tab rail and address toolbar
+ * in the hosted frame; the web page itself remains Chromium's active tab. */
+html[data-native-surface="frame"] body,
+html[data-native-surface="frame"] #root,
+html[data-native-surface="frame"] .ai-browser-app {
+	width: 100%;
+	height: 82px;
+	min-height: 0;
+	max-height: 82px;
+}
+html[data-desktop-runtime="chromium"][data-native-surface="frame"] .ai-browser-app {
+	display: block;
+	padding: 0;
+	background: var(--canvas);
+}
+html[data-native-surface="frame"] .native-frame-action-error {
+	position: fixed;
+	z-index: 10000;
+	top: 42px;
+	right: 12px;
+	max-width: min(420px, calc(100vw - 24px));
+	margin: 0;
+	padding: 6px 10px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--raised);
+	color: var(--ink);
+	box-shadow: 0 4px 18px rgb(0 0 0 / 18%);
+	font-size: 12px;
+}
+html[data-desktop-runtime="chromium"][data-native-surface="frame"] .ai-browser-app .browser-workspace-native-frame-shell {
+	height: 82px;
+	grid-template-areas: "tabs" "toolbar";
+	grid-template-rows: 40px 42px;
+	grid-template-columns: minmax(0, 1fr);
+}
+html[data-native-surface="frame"] .browser-workspace-native-frame-shell .browser-viewport,
+html[data-native-surface="frame"] .browser-workspace-native-frame-shell .browser-loading-line,
+html[data-native-surface="frame"] .browser-workspace-native-frame-shell .browser-inline-error,
+html[data-native-surface="frame"] .browser-workspace-native-frame-shell .browser-find-bar,
+html[data-native-surface="frame"] .browser-workspace-native-frame-shell .browser-bookmarks-bar,
+html[data-native-surface="frame"] .browser-workspace-native-frame-shell .chrome-web-store-install-bar {
+	display: none !important;
+}

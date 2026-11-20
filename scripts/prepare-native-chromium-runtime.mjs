@@ -18,14 +18,14 @@ const temporaryRoot = join(root, ".tmp");
 // CEF's own maintained binary distribution is the native Chromium runtime used
 // for the real host. Keep this pin and checksum explicit so a release build
 // never silently follows a browser binary from PATH or an unverified mirror.
-// CEF 152 includes CEF's maintained GCM-disable patch. That prevents the
-// background registration traffic emitted by older CEF builds even when the
+// CEF 152 introduced the maintained GCM-disable patch retained by this pin.
+// It prevents background registration traffic from older builds even when the
 // host requests Chromium's background-networking flags.
-export const CEF_VERSION = "152.0.6+g708dc14+chromium-152.0.7977.83";
+export const CEF_VERSION = "156.0.15+gcf671c0+chromium-156.0.8078.80";
 export const CEF_PLATFORM = "macosarm64";
 export const CEF_ARCHIVE = `cef_binary_${CEF_VERSION}_${CEF_PLATFORM}.tar.bz2`;
 export const CEF_SHA256 =
-	"3477a3287955da77f7b604e01c9e6fe10a2e1eab26b8d39b9ea1d5a9df944e72";
+	"938081b5bb552b4990b9667662d9909429d2c113d862c83826322310835666f9";
 export const CEF_URL = `https://cef-builds.spotifycdn.com/${encodeURIComponent(
 	CEF_ARCHIVE,
 )}`;

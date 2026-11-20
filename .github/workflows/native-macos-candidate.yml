@@ -1,0 +1,77 @@
+name: Native macOS build-only candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-candidate:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Require Apple Silicon
+        run: test "$(uname -m)" = arm64
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - name: Build ad-hoc native candidate
+        run: corepack pnpm package:mac:native
+      - name: Smoke-test packaged native candidate
+        run: corepack pnpm test:packaged-native:arm64
+      - name: Archive and verify build-only candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="release/native-mac-arm64/Kestrel.app"
+          output=".tmp/native-candidate-artifact"
+          mkdir -p "$output" "$output/check"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv --verbose=2 "$app" 2>&1 | grep -F 'Signature=adhoc'
+          /usr/bin/ditto -c -k --keepParent "$app" "$output/Kestrel-native-adhoc.zip"
+          /usr/bin/ditto -x -k "$output/Kestrel-native-adhoc.zip" "$output/check"
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { createReadStream } from 'node:fs';
+          import { writeFile } from 'node:fs/promises';
+          import { candidateDigest } from './scripts/native-retirement-evidence.mjs';
+
+          const output = '.tmp/native-candidate-artifact';
+          const candidateSha256 = await candidateDigest('release/native-mac-arm64/Kestrel.app');
+          const restoredSha256 = await candidateDigest(`${output}/check/Kestrel.app`);
+          if (candidateSha256 !== restoredSha256 || candidateSha256 !== await candidateDigest('release/native-mac-arm64/Kestrel.app')) {
+            throw new Error('Archived app differs from the verified candidate');
+          }
+          const hash = createHash('sha256');
+          for await (const chunk of createReadStream(`${output}/Kestrel-native-adhoc.zip`)) hash.update(chunk);
+          const manifest = {
+            version: 1,
+            commit: process.env.GITHUB_SHA,
+            classification: 'ad-hoc-build-only',
+            notarized: false,
+            distributable: false,
+            candidateSha256,
+            archive: 'Kestrel-native-adhoc.zip',
+            archiveSha256: hash.digest('hex'),
+          };
+          if (!/^[a-f0-9]{40}$/.test(manifest.commit ?? '')) throw new Error('Invalid commit SHA');
+          await writeFile(`${output}/manifest.json`, `${JSON.stringify(manifest, null, 2)}\n`);
+          NODE
+      - name: Upload build-only candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-chromium-adhoc-build-only-${{ github.sha }}
+          path: |
+            .tmp/native-candidate-artifact/Kestrel-native-adhoc.zip
+            .tmp/native-candidate-artifact/manifest.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7

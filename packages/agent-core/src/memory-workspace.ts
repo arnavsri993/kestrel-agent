@@ -314,6 +314,7 @@ export class MemoryWorkspaceService {
 	}
 
 	private eventVisible(event: TimelineEvent, scope: ReturnType<MemoryWorkspaceService["scope"]>, domains: Set<string>): boolean {
+		if (!this.database.hasMemoryOwnerSourceAuthority("timeline_event", event.id)) return false;
 		const runtime = event.sourceSessionId || event.sessionId
 			? this.database.listRuntimeSessions().find(item => item.id === (event.sourceSessionId ?? event.sessionId))
 			: undefined;
@@ -326,6 +327,7 @@ export class MemoryWorkspaceService {
 	private projectLegacyDocuments(): MemoryDocument[] {
 		const output: MemoryDocument[] = [];
 		for (const memory of this.legacyMemory.activeMemories()) {
+			if (!this.database.hasMemoryOwnerSourceAuthority("memory", memory.id)) continue;
 			const domains = unique(memory.relatedProjectIds ?? []);
 			output.push(this.legacyDocument({
 				id: `workspace:legacy-memory:${memory.id}`, kind: "memory",
@@ -339,6 +341,7 @@ export class MemoryWorkspaceService {
 		for (const identity of this.database.listAgentIdentities(true)) {
 			for (const memory of this.database.listAgentMemories(identity.id, { limit: 1_000 })) {
 				if (memory.status !== "active") continue;
+				if (!this.database.hasMemoryOwnerSourceAuthority("agent_memory", memory.id)) continue;
 				if (memory.id.startsWith("agent-memory-") && this.legacyMemory.list().some(item => item.id === memory.id.slice("agent-memory-".length))) continue;
 				output.push(this.legacyDocument({
 					id: `workspace:agent-memory:${memory.id}`, kind: "memory", title: memory.kind,

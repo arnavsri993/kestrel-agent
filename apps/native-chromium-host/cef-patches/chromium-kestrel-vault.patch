@@ -1,0 +1,701 @@
+diff --git a/chrome/browser/browser_process_impl.cc b/chrome/browser/browser_process_impl.cc
+index bed9453f156ba5b94a8daa5261085045e288098e..ff812bea6f003298d7348a676d46bd5c37b81c1f 100644
+--- a/chrome/browser/browser_process_impl.cc
++++ b/chrome/browser/browser_process_impl.cc
+@@ -283,6 +283,7 @@ void OnLocalStatePrefsLoaded();
+ #endif
+
+ #if BUILDFLAG(IS_MAC)
++#include "components/os_crypt/async/browser/kestrel_vault_key_provider.h"
+ #include "components/os_crypt/async/browser/keychain_key_provider.h"
+ #endif
+
+@@ -1648,7 +1649,14 @@ void BrowserProcessImpl::PreMainMessageLoopRun() {
+ #endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_LINUX)
+
+ #if BUILDFLAG(IS_MAC)
+-  if (base::FeatureList::IsEnabled(features::kUseKeychainKeyProvider)) {
++  if (os_crypt_async::IsKestrelVaultEnabled()) {
++    // This is a replacement, not a higher-priority fallback: never construct
++    // KeychainKeyProvider (or test/legacy providers) in the unlocked-vault mode.
++    providers.clear();
++    providers.emplace_back(
++        /*precedence=*/100u,
++        std::make_unique<os_crypt_async::KestrelVaultKeyProvider>());
++  } else if (base::FeatureList::IsEnabled(features::kUseKeychainKeyProvider)) {
+     providers.emplace_back(std::make_pair(
+         /*precedence=*/10u,
+         std::make_unique<os_crypt_async::KeychainKeyProvider>()));
+diff --git a/components/os_crypt/async/browser/BUILD.gn b/components/os_crypt/async/browser/BUILD.gn
+index 2309659150f87cced2def4071588c60cdc9c591c..76595a25f3b735b0f8251509117bec1df008a2f3 100644
+--- a/components/os_crypt/async/browser/BUILD.gn
++++ b/components/os_crypt/async/browser/BUILD.gn
+@@ -19,6 +19,14 @@ component("browser") {
+
+   defines = [ "IS_OS_CRYPT_ASYNC_IMPL" ]
+
++  if (is_mac) {
++    sources += [
++      "kestrel_vault_key_provider.cc",
++      "kestrel_vault_key_provider.h",
++    ]
++    deps += [ "//crypto" ]
++  }
++
+   if (is_win) {
+     sources += [
+       "os_crypt_win.cc",
+diff --git a/components/os_crypt/async/browser/kestrel_vault_key_provider.cc b/components/os_crypt/async/browser/kestrel_vault_key_provider.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..ebb613eb11a52b8f7c23ab1b5e22429eb6c756e7
+--- /dev/null
++++ b/components/os_crypt/async/browser/kestrel_vault_key_provider.cc
+@@ -0,0 +1,100 @@
++// Copyright 2026 The Kestrel Authors.
++// Use of this source code is governed by a BSD-style license.
++
++#include "components/os_crypt/async/browser/kestrel_vault_key_provider.h"
++
++#include <algorithm>
++#include <array>
++#include <utility>
++
++#include "base/no_destructor.h"
++#include "base/synchronization/lock.h"
++#include "base/types/expected.h"
++#include "components/os_crypt/async/common/algorithm.mojom.h"
++#include "crypto/secure_util.h"
++
++namespace os_crypt_async {
++namespace {
++
++// Versioned, non-overlapping with upstream v10/v11/v20 prefixes. This tag is
++// specific to Kestrel-derived browser keys; it never denotes a static key.
++constexpr char kKestrelKeyTag[] = "v99";
++enum class State { kUnset, kConfigured, kFrozen, kConsumed };
++struct Configuration {
++  base::Lock lock;
++  State state = State::kUnset;
++  std::array<uint8_t, Encryptor::Key::kAES256GCMKeySize> key = {};
++};
++
++Configuration& GetConfiguration() {
++  // No exit-time destructor and no accidental key copy. The staging bytes are
++  // explicitly erased before any Encryptor instance is vended.
++  static base::NoDestructor<Configuration> configuration;
++  return *configuration;
++}
++
++}  // namespace
++
++bool ConfigureKestrelVaultKey(base::span<const uint8_t> browser_key) {
++  if (browser_key.size() != Encryptor::Key::kAES256GCMKeySize) {
++    return false;
++  }
++  auto& configuration = GetConfiguration();
++  base::AutoLock lock(configuration.lock);
++  if (configuration.state != State::kUnset) {
++    return false;
++  }
++  std::ranges::copy(browser_key, configuration.key.begin());
++  configuration.state = State::kConfigured;
++  return true;
++}
++
++bool FreezeKestrelVaultConfiguration() {
++  auto& configuration = GetConfiguration();
++  base::AutoLock lock(configuration.lock);
++  if (configuration.state != State::kConfigured) {
++    return false;
++  }
++  configuration.state = State::kFrozen;
++  return true;
++}
++
++bool IsKestrelVaultEnabled() {
++  auto& configuration = GetConfiguration();
++  base::AutoLock lock(configuration.lock);
++  return configuration.state == State::kFrozen ||
++         configuration.state == State::kConsumed;
++}
++
++KestrelVaultKeyProvider::KestrelVaultKeyProvider() {
++  auto& configuration = GetConfiguration();
++  base::AutoLock lock(configuration.lock);
++  if (configuration.state != State::kFrozen) {
++    return;
++  }
++  key_.emplace(base::span<const uint8_t>(configuration.key),
++               mojom::Algorithm::kAES256GCM);
++  crypto::SecureZeroBuffer(configuration.key);
++  configuration.state = State::kConsumed;
++}
++
++KestrelVaultKeyProvider::~KestrelVaultKeyProvider() = default;
++
++void KestrelVaultKeyProvider::GetKey(KeyCallback callback) {
++  if (!key_) {
++    // Unavailability must NEVER be reported as permanent: callers may delete
++    // ciphertext after kPermanentlyUnavailable. Stop/re-unlock/restart instead.
++    std::move(callback).Run(
++        kKestrelKeyTag, base::unexpected(KeyError::kTemporarilyUnavailable));
++    return;
++  }
++  auto key = std::move(*key_);
++  key_.reset();
++  std::move(callback).Run(kKestrelKeyTag, std::move(key));
++}
++
++bool KestrelVaultKeyProvider::UseForEncryption() {
++  return true;
++}
++
++}  // namespace os_crypt_async
+diff --git a/components/os_crypt/async/browser/kestrel_vault_key_provider.h b/components/os_crypt/async/browser/kestrel_vault_key_provider.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..31c37c8ca205719a4c1df9eb7d285356f4ee11b3
+--- /dev/null
++++ b/components/os_crypt/async/browser/kestrel_vault_key_provider.h
+@@ -0,0 +1,36 @@
++// Copyright 2026 The Kestrel Authors.
++// Use of this source code is governed by a BSD-style license.
++
++#ifndef COMPONENTS_OS_CRYPT_ASYNC_BROWSER_KESTREL_VAULT_KEY_PROVIDER_H_
++#define COMPONENTS_OS_CRYPT_ASYNC_BROWSER_KESTREL_VAULT_KEY_PROVIDER_H_
++
++#include <optional>
++#include "base/component_export.h"
++#include "base/containers/span.h"
++#include "components/os_crypt/async/browser/key_provider.h"
++
++namespace os_crypt_async {
++
++// Browser-process in-memory configuration. No key material is serialized by
++// these functions. Call once before CefInitialize; no runtime replacement.
++COMPONENT_EXPORT(OS_CRYPT_ASYNC)
++bool ConfigureKestrelVaultKey(base::span<const uint8_t> browser_key);
++COMPONENT_EXPORT(OS_CRYPT_ASYNC)
++bool FreezeKestrelVaultConfiguration();
++COMPONENT_EXPORT(OS_CRYPT_ASYNC)
++bool IsKestrelVaultEnabled();
++
++class COMPONENT_EXPORT(OS_CRYPT_ASYNC) KestrelVaultKeyProvider final
++    : public KeyProvider {
++ public:
++  KestrelVaultKeyProvider();
++  ~KestrelVaultKeyProvider() override;
++  void GetKey(KeyCallback callback) override;
++  bool UseForEncryption() override;
++
++ private:
++  std::optional<Encryptor::Key> key_;
++};
++
++}  // namespace os_crypt_async
++#endif  // COMPONENTS_OS_CRYPT_ASYNC_BROWSER_KESTREL_VAULT_KEY_PROVIDER_H_
+
+diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
+index b68f089..1436d2b 100644
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -22,2 +22,3 @@
+ #include "base/feature_list.h"
++#include "base/files/file_path.h"
+ #include "base/functional/bind.h"
+@@ -26,2 +27,3 @@
+ #include "base/location.h"
++#include "base/logging.h"
+ #include "base/memory/raw_ptr.h"
+@@ -52,2 +54,4 @@
+ #include "chrome/browser/extensions/browser_extension_window_controller.h"
++#include "chrome/browser/extensions/extension_view_host.h"
++#include "chrome/browser/extensions/extension_view_host_factory.h"
+ #include "chrome/browser/extensions/extension_util.h"
+@@ -157,2 +161,4 @@
+ #include "chrome/browser/ui/views/extensions/extensions_toolbar_desktop.h"
++#include "chrome/browser/ui/views/extensions/extension_view_views.h"
++#include "chrome/common/chrome_isolated_world_ids.h"
+ #include "chrome/browser/ui/views/eye_dropper/eye_dropper.h"
+@@ -296,2 +302,4 @@
+ #include "content/public/browser/desktop_capture_pip_utils.h"
++#include "content/public/browser/navigation_handle.h"
++#include "content/public/browser/web_contents_observer.h"
+ #include "content/public/browser/download_manager.h"
+@@ -310,3 +318,6 @@
+ #include "content/public/common/drop_data.h"
++#include "extensions/browser/extension_registry.h"
++#include "extensions/browser/extension_registry_observer.h"
+ #include "extensions/common/command.h"
++#include "extensions/common/extension.h"
+ #include "media/capture/capture_switches.h"
+@@ -364,3 +375,5 @@
+ #include "ui/views/view_utils.h"
++#include "ui/views/accessible_pane_view.h"
+ #include "ui/views/views_features.h"
++#include "url/gurl.h"
+ #include "ui/views/widget/native_widget.h"
+@@ -426,2 +439,102 @@ using web_modal::WebContentsModalDialogHost;
+
++// Forward extension strip changes through the immersive overlay to BrowserView.
++class KestrelExtensionsPane final : public views::AccessiblePaneView {
++  METADATA_HEADER(KestrelExtensionsPane, views::AccessiblePaneView)
++ public:
++  explicit KestrelExtensionsPane(base::RepeatingClosure invalidate_browser)
++      : invalidate_browser_(std::move(invalidate_browser)) {}
++  void ChildPreferredSizeChanged(views::View*) override {
++    PreferredSizeChanged();
++    invalidate_browser_.Run();
++  }
++  void ChildVisibilityChanged(views::View*) override {
++    PreferredSizeChanged();
++    invalidate_browser_.Run();
++  }
++ private:
++  base::RepeatingClosure invalidate_browser_;
++};
++BEGIN_METADATA(KestrelExtensionsPane)
++END_METADATA
++
++class KestrelBrowserFrameLoadObserver final
++    : public content::WebContentsObserver {
++ public:
++  KestrelBrowserFrameLoadObserver(content::WebContents* contents,
++                                  GURL expected_url,
++                                  base::RepeatingClosure invalidate)
++      : content::WebContentsObserver(contents),
++        expected_url_(std::move(expected_url)),
++        invalidate_(std::move(invalidate)) {}
++
++  void DidStartNavigation(content::NavigationHandle* navigation) override {
++    if (navigation->IsInPrimaryMainFrame() && !navigation->IsSameDocument())
++      invalidate_.Run();
++  }
++  void DidFailLoad(content::RenderFrameHost* frame, const GURL&, int) override {
++    if (frame == web_contents()->GetPrimaryMainFrame()) invalidate_.Run();
++  }
++  void PrimaryMainFrameRenderProcessGone(base::TerminationStatus) override {
++    invalidate_.Run();
++  }
++  void WebContentsDestroyed() override { invalidate_.Run(); }
++
++  void DidFinishNavigation(
++      content::NavigationHandle* navigation_handle) override {
++    if (reported_ || !navigation_handle->HasCommitted() ||
++        !navigation_handle->IsInPrimaryMainFrame() ||
++        navigation_handle->GetURL() != expected_url_) {
++      return;
++    }
++    reported_ = true;
++    LOG(INFO) << "KESTREL_CHROMIUM_BROWSER_FRAME_DOCUMENT_LOADED";
++    // Keep existing native smoke receipts bound to the real Kestrel document.
++    LOG(INFO) << "KESTREL_CHROMIUM_DESKTOP_DOCUMENT_LOADED";
++  }
++
++ private:
++  const GURL expected_url_;
++  base::RepeatingClosure invalidate_;
++  bool reported_ = false;
++};
++
++class KestrelBrowserFrameExtensionObserver final
++    : public extensions::ExtensionRegistryObserver {
++ public:
++  KestrelBrowserFrameExtensionObserver(
++      extensions::ExtensionRegistry* registry,
++      std::string extension_id,
++      base::RepeatingClosure on_loaded,
++      base::RepeatingClosure on_unloaded)
++      : extension_id_(std::move(extension_id)),
++        on_loaded_(std::move(on_loaded)),
++        on_unloaded_(std::move(on_unloaded)) {
++    observation_.Observe(registry);
++  }
++
++  void OnExtensionLoaded(content::BrowserContext*,
++                         const extensions::Extension* extension) override {
++    if (extension->id() == extension_id_) {
++      on_loaded_.Run();
++    }
++  }
++
++  void OnExtensionUnloaded(
++      content::BrowserContext*,
++      const extensions::Extension* extension,
++      extensions::UnloadedExtensionReason) override {
++    if (extension->id() == extension_id_) {
++      on_unloaded_.Run();
++    }
++  }
++
++ private:
++  const std::string extension_id_;
++  base::RepeatingClosure on_loaded_;
++  base::RepeatingClosure on_unloaded_;
++  base::ScopedObservation<extensions::ExtensionRegistry,
++                          extensions::ExtensionRegistryObserver>
++      observation_{this};
++};
++
+ namespace {
+@@ -2423,2 +2536,7 @@ void BrowserView::FocusToolbar() {
+
++  if (kestrel_frame_ready_ && kestrel_extensions_pane_) {
++    kestrel_extensions_pane_->SetPaneFocus(nullptr);
++    return;
++  }
++
+   // Start the traversal within the main toolbar. SetPaneFocus stores
+@@ -4506,4 +4624,9 @@ void BrowserView::GetAccessiblePanes(std::vector<views::View*>* panes) {
+
+-  panes->push_back(
+-      ToolbarButtonProvider::From(browser_)->GetAsAccessiblePaneView());
++  if (kestrel_frame_ready_ && kestrel_extensions_pane_) {
++    // Traverse the whole strip, including pinned extension actions.
++    panes->push_back(kestrel_extensions_pane_);
++  } else {
++    panes->push_back(
++        ToolbarButtonProvider::From(browser_)->GetAsAccessiblePaneView());
++  }
+   if (horizontal_tab_strip_region_view_) {
+@@ -4889,2 +5012,59 @@ void BrowserView::Layout(PassKey) {
+
++  const bool immersive_frame = IsFullscreen() &&
++      ImmersiveModeController::From(browser())->IsEnabled();
++  const bool show_kestrel_frame = kestrel_frame_ready_ &&
++      (!IsFullscreen() || immersive_frame);
++  if (kestrel_frame_view_) {
++    kestrel_frame_view_->SetVisible(show_kestrel_frame);
++    kestrel_frame_view_->SetBounds(0, 0, width(), 82);
++  }
++  if (show_kestrel_frame) {
++    // Chromium's layout can re-show its toolbar; keep only the moved strip.
++    if (toolbar_) toolbar_->SetVisible(false);
++    constexpr int kKestrelFrameHeight = 82;
++    const int toolbar_height = toolbar_ ? toolbar_->GetPreferredSize().height() : 0;
++    if (top_container_ && toolbar_ && toolbar_->extensions_container() &&
++        kestrel_extensions_pane_) {
++      auto* extensions = toolbar_->extensions_container();
++      const int strip_width = std::min(width(), extensions->GetPreferredSize().width());
++      top_container_->SetVisible(true);
++      top_container_->SetBounds(0, immersive_frame ? 0 : kKestrelFrameHeight,
++                                width(), toolbar_height +
++                                             (immersive_frame ? kKestrelFrameHeight : 0));
++      kestrel_extensions_pane_->SetBounds(width() - strip_width,
++                                          immersive_frame ? kKestrelFrameHeight : 0,
++                                          strip_width, toolbar_height);
++      extensions->SetBounds(0, 0, strip_width, toolbar_height);
++    }
++    const int content_top = kKestrelFrameHeight + toolbar_height;
++    if (horizontal_tab_strip_region_view_)
++      horizontal_tab_strip_region_view_->SetVisible(false);
++    if (vertical_tab_strip_region_view_)
++      vertical_tab_strip_region_view_->SetVisible(false);
++    // The immersive overlay floats above content; preserve stock fullscreen
++    // content geometry rather than reserving space for it.
++    if (!immersive_frame) {
++    const int infobar_height = infobar_container_ ? infobar_container_->height() : 0;
++    if (infobar_container_) {
++      gfx::Rect bounds = infobar_container_->bounds();
++      bounds.set_y(content_top);
++      infobar_container_->SetBoundsRect(bounds);
++    }
++    if (multi_contents_view_) {
++      gfx::Rect bounds = multi_contents_view_->bounds();
++      const int bottom = bounds.bottom();
++      bounds.set_y(content_top + infobar_height);
++      bounds.set_height(std::max(0, bottom - bounds.y()));
++      multi_contents_view_->SetBoundsRect(bounds);
++    }
++    if (side_panel_) {
++      gfx::Rect bounds = side_panel_->bounds();
++      const int bottom = bounds.bottom();
++      bounds.set_y(content_top);
++      bounds.set_height(std::max(0, bottom - bounds.y()));
++      side_panel_->SetBoundsRect(bounds);
++    }
++    }
++  }
++
+   // TODO(jamescook): Why was this in the middle of layout code?
+@@ -4987,2 +5167,3 @@ void BrowserView::AddedToWidget() {
+   if (initialized_) {
++    MaybeCreateKestrelBrowserFrame();
+     return;
+@@ -5179,2 +5360,202 @@ void BrowserView::AddedToWidget() {
+   initialized_ = true;
++  MaybeCreateKestrelBrowserFrame();
++}
++
++void BrowserView::MaybeCreateKestrelBrowserFrame() {
++  const base::CommandLine* command_line =
++      base::CommandLine::ForCurrentProcess();
++  if (!command_line->HasSwitch("kestrel-browser-frame")) {
++    return;
++  }
++
++  const std::string extension_id =
++      command_line->GetSwitchValueASCII("kestrel-shell-extension-id");
++  const base::FilePath extension_path =
++      command_line->GetSwitchValuePath("kestrel-shell-extension-path");
++  if (extension_id.size() != 32 ||
++      extension_id.find_first_not_of("abcdefghijklmnop") != std::string::npos ||
++      extension_path.empty()) {
++    LOG(ERROR) << "Kestrel browser frame is missing its trusted extension "
++                  "identity.";
++    return;
++  }
++
++  extensions::ExtensionRegistry* registry =
++      extensions::ExtensionRegistry::Get(GetProfile());
++  if (!registry) {
++    LOG(ERROR) << "Kestrel browser frame cannot access the profile extension "
++                  "registry.";
++    return;
++  }
++
++  if (!kestrel_frame_extension_observer_) {
++    kestrel_frame_extension_observer_ =
++        std::make_unique<KestrelBrowserFrameExtensionObserver>(
++            registry, extension_id,
++            base::BindRepeating(
++                &BrowserView::MaybeCreateKestrelBrowserFrame,
++                weak_ptr_factory_.GetWeakPtr()),
++            base::BindRepeating(&BrowserView::DestroyKestrelBrowserFrame,
++                                weak_ptr_factory_.GetWeakPtr()));
++    LOG(INFO) << "Kestrel browser frame is waiting for its bundled UI extension.";
++  }
++
++  const extensions::Extension* extension =
++      registry->enabled_extensions().GetByID(extension_id);
++  if (extension) {
++    if (extension->path() != extension_path) {
++      LOG(ERROR) << "Kestrel browser frame extension path did not match its "
++                    "startup identity.";
++      return;
++    }
++    if (kestrel_frame_view_) {
++      return;
++    }
++
++    const GURL frame_url("chrome-extension://" + extension_id +
++                         "/index.html?surface=frame");
++    kestrel_frame_host_ =
++        extensions::ExtensionViewHostFactory::CreateSidePanelHost(
++            *extension, frame_url, browser_, /*tab_interface=*/nullptr);
++    if (!kestrel_frame_host_) {
++      LOG(ERROR) << "Kestrel browser frame extension host creation failed.";
++      return;
++    }
++
++    kestrel_frame_load_observer_ =
++        std::make_unique<KestrelBrowserFrameLoadObserver>(
++            kestrel_frame_host_->web_contents(), frame_url,
++            base::BindRepeating(&BrowserView::InvalidateKestrelBrowserFrame,
++                                weak_ptr_factory_.GetWeakPtr()));
++    auto frame_view = std::make_unique<ExtensionViewViews>(
++        GetProfile(), kestrel_frame_host_.get());
++    frame_view->Init();
++    kestrel_frame_view_ = AddChildView(std::move(frame_view));
++    kestrel_frame_view_->SetVisible(false);
++    kestrel_frame_timer_.Start(
++        FROM_HERE, base::Seconds(1),
++        base::BindRepeating(&BrowserView::PollKestrelBrowserFrame,
++                            weak_ptr_factory_.GetWeakPtr()));
++    PollKestrelBrowserFrame();
++    DeprecatedLayoutImmediately();
++    return;
++  }
++
++}
++
++void BrowserView::SetKestrelBrowserFrameReady(bool ready) {
++  if (ready == kestrel_frame_ready_) return;
++  if (ready && IsFullscreen() &&
++      !ImmersiveModeController::From(browser())->IsEnabled()) return;
++  if (ready) {
++    // WebUI toolbar extensions are not Views children. Until that path has a
++    // native strip integration, retain Chromium's complete stock controls.
++    if (!top_container_ || !toolbar_ || !toolbar_->extensions_container() ||
++        toolbar_->extensions_container()->parent() != toolbar_) {
++      return;
++    }
++    kestrel_extensions_index_ =
++        toolbar_->GetIndexOf(toolbar_->extensions_container());
++    if (!kestrel_extensions_index_) return;
++  }
++  kestrel_frame_ready_ = ready;
++  if (ready) {
++    kestrel_top_was_visible_ = top_container_ && top_container_->GetVisible();
++    kestrel_toolbar_was_visible_ = toolbar_ && toolbar_->GetVisible();
++    kestrel_horizontal_was_visible_ = horizontal_tab_strip_region_view_ &&
++                                      horizontal_tab_strip_region_view_->GetVisible();
++    kestrel_vertical_was_visible_ = vertical_tab_strip_region_view_ &&
++                                    vertical_tab_strip_region_view_->GetVisible();
++    kestrel_extensions_pane_ = top_container_->AddChildView(
++        std::make_unique<KestrelExtensionsPane>(base::BindRepeating(
++            [](base::WeakPtr<BrowserView> view) {
++              if (view) view->InvalidateLayout();
++            }, weak_ptr_factory_.GetWeakPtr())));
++    kestrel_extensions_pane_->AddChildView(toolbar_->extensions_container());
++    if (IsFullscreen() && top_container_->parent() != this && kestrel_frame_view_)
++      top_container_->AddChildView(kestrel_frame_view_.get());
++    top_container_->SetVisible(true);
++    toolbar_->SetVisible(false);
++    if (horizontal_tab_strip_region_view_) horizontal_tab_strip_region_view_->SetVisible(false);
++    if (vertical_tab_strip_region_view_) vertical_tab_strip_region_view_->SetVisible(false);
++  } else {
++    if (kestrel_frame_view_ && kestrel_frame_view_->parent() == top_container_)
++      AddChildView(kestrel_frame_view_.get());
++    if (top_container_ && toolbar_ && toolbar_->extensions_container() &&
++        toolbar_->extensions_container()->parent() == kestrel_extensions_pane_ &&
++        kestrel_extensions_index_) {
++      toolbar_->AddChildViewAt(toolbar_->extensions_container(),
++                               *kestrel_extensions_index_);
++    }
++    kestrel_extensions_index_.reset();
++    if (top_container_ && kestrel_extensions_pane_) {
++      top_container_->RemoveChildViewT(kestrel_extensions_pane_).reset();
++      kestrel_extensions_pane_ = nullptr;
++    }
++    if (top_container_) top_container_->SetVisible(kestrel_top_was_visible_);
++    if (toolbar_) toolbar_->SetVisible(kestrel_toolbar_was_visible_);
++    if (horizontal_tab_strip_region_view_) horizontal_tab_strip_region_view_->SetVisible(kestrel_horizontal_was_visible_);
++    if (vertical_tab_strip_region_view_) vertical_tab_strip_region_view_->SetVisible(kestrel_vertical_was_visible_);
++  }
++  if (kestrel_frame_view_) kestrel_frame_view_->SetVisible(ready);
++  DeprecatedLayoutImmediately();
++}
++
++void BrowserView::InvalidateKestrelBrowserFrame() {
++  ++kestrel_frame_probe_generation_;
++  kestrel_frame_probe_pending_ = false;
++  SetKestrelBrowserFrameReady(false);
++}
++
++void BrowserView::PollKestrelBrowserFrame() {
++  if (!kestrel_frame_host_) return;
++  if (kestrel_frame_probe_pending_) {
++    if (base::TimeTicks::Now() < kestrel_frame_probe_deadline_) return;
++    InvalidateKestrelBrowserFrame();
++  }
++  content::WebContents* contents = kestrel_frame_host_->web_contents();
++  const std::string id = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("kestrel-shell-extension-id");
++  const GURL expected("chrome-extension://" + id + "/index.html?surface=frame");
++  if (!contents || !contents->GetPrimaryMainFrame() ||
++      contents->GetLastCommittedURL() != expected) {
++    InvalidateKestrelBrowserFrame();
++    return;
++  }
++  kestrel_frame_probe_pending_ = true;
++  kestrel_frame_probe_deadline_ = base::TimeTicks::Now() + base::Seconds(3);
++  const uint64_t generation = ++kestrel_frame_probe_generation_;
++  // Fixed code, restricted to the validated private extension host. The
++  // marker is a lease renewed by the real UI only after a bridge round trip.
++  contents->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
++      u"(()=>{const d=document.documentElement;const t=Number(d.dataset.kestrelFrameReady);"
++      u"return d.dataset.nativeSurface==='frame'&&Number.isFinite(t)&&t<=Date.now()&&"
++      u"Date.now()-t<15000&&!!document.querySelector('.browser-workspace-native-frame-shell .browser-tab-row')&&"
++      u"!!document.querySelector('.browser-workspace-native-frame-shell .browser-toolbar')})()",
++      base::BindOnce(&BrowserView::OnKestrelBrowserFrameProbe,
++                     weak_ptr_factory_.GetWeakPtr(), generation, expected),
++      ISOLATED_WORLD_ID_CHROME_INTERNAL);
++}
++
++void BrowserView::OnKestrelBrowserFrameProbe(uint64_t generation,
++                                              const GURL& expected,
++                                              base::Value result) {
++  if (!kestrel_frame_probe_pending_ || generation != kestrel_frame_probe_generation_) return;
++  kestrel_frame_probe_pending_ = false;
++  const bool matches = kestrel_frame_host_ && kestrel_frame_host_->web_contents() &&
++      kestrel_frame_host_->web_contents()->GetLastCommittedURL() == expected;
++  SetKestrelBrowserFrameReady(matches && result.is_bool() && result.GetBool());
++}
++
++void BrowserView::DestroyKestrelBrowserFrame() {
++  kestrel_frame_timer_.Stop();
++  InvalidateKestrelBrowserFrame();
++  kestrel_frame_load_observer_.reset();
++  if (kestrel_frame_view_) {
++    views::View* parent = kestrel_frame_view_->parent();
++    if (parent) {
++      parent->RemoveChildViewT(kestrel_frame_view_).reset();
++    }
++    kestrel_frame_view_ = nullptr;
++  }
++  kestrel_frame_host_.reset();
+ }
+@@ -5182,2 +5563,3 @@ void BrowserView::AddedToWidget() {
+ void BrowserView::RemovedFromWidget() {
++  DestroyKestrelBrowserFrame();
+   CHECK(GetFocusManager());
+@@ -6032,2 +6414,4 @@ void BrowserView::OnImmersiveFullscreenEntered() {
+   ReparentTopContainerForStartOfImmersive();
++  if (kestrel_frame_ready_ && kestrel_frame_view_)
++    top_container_->AddChildView(kestrel_frame_view_.get());
+
+@@ -6048,2 +6432,4 @@ void BrowserView::OnImmersiveFullscreenExited() {
+
++  if (kestrel_frame_view_ && kestrel_frame_view_->parent() == top_container_)
++    AddChildView(kestrel_frame_view_.get());
+   ReparentTopContainerForEndOfImmersive();
+@@ -6057,2 +6443,4 @@ void BrowserView::OnImmersiveFullscreenExited() {
+ void BrowserView::OnImmersiveModeControllerDestroyed() {
++  if (kestrel_frame_view_ && kestrel_frame_view_->parent() == top_container_)
++    AddChildView(kestrel_frame_view_.get());
+   ReparentTopContainerForEndOfImmersive();
+diff --git a/chrome/browser/ui/views/frame/browser_view.h b/chrome/browser/ui/views/frame/browser_view.h
+index 6c4807b..b247b83 100644
+--- a/chrome/browser/ui/views/frame/browser_view.h
++++ b/chrome/browser/ui/views/frame/browser_view.h
+@@ -21,2 +21,4 @@
+ #include "base/timer/timer.h"
++#include "base/values.h"
++#include "url/gurl.h"
+ #include "build/build_config.h"
+@@ -105,2 +107,9 @@ class VerticalTabStripRegionView;
+ class WebAppFrameToolbarView;
++class ExtensionViewViews;
++class KestrelBrowserFrameLoadObserver;
++class KestrelBrowserFrameExtensionObserver;
++
++namespace extensions {
++class ExtensionViewHost;
++}  // namespace extensions
+
+@@ -123,2 +132,3 @@ enum class Channel;
+ namespace views {
++class AccessiblePaneView;
+ class LabelButton;
+@@ -1076,2 +1086,9 @@ class BrowserView : public BrowserWindow,
+   void UpdateAccessibleNameForRootView();
++  void MaybeCreateKestrelBrowserFrame();
++  void DestroyKestrelBrowserFrame();
++  void SetKestrelBrowserFrameReady(bool ready);
++  void InvalidateKestrelBrowserFrame();
++  void PollKestrelBrowserFrame();
++  void OnKestrelBrowserFrameProbe(uint64_t generation, const GURL& expected,
++                                  base::Value result);
+   void UpdateAccessibleURLForRootView(const GURL& url);
+@@ -1410,2 +1427,22 @@ class BrowserView : public BrowserWindow,
+
++  // Kestrel owns the visible browser frame; Chromium still owns the window,
++  // BrowserView, TabStripModel, extension hosts, and web contents.
++  std::unique_ptr<extensions::ExtensionViewHost> kestrel_frame_host_;
++  std::unique_ptr<KestrelBrowserFrameLoadObserver>
++      kestrel_frame_load_observer_;
++  std::unique_ptr<KestrelBrowserFrameExtensionObserver>
++      kestrel_frame_extension_observer_;
++  raw_ptr<ExtensionViewViews> kestrel_frame_view_ = nullptr;
++  base::RepeatingTimer kestrel_frame_timer_;
++  base::TimeTicks kestrel_frame_probe_deadline_;
++  uint64_t kestrel_frame_probe_generation_ = 0;
++  bool kestrel_frame_probe_pending_ = false;
++  bool kestrel_frame_ready_ = false;
++  bool kestrel_top_was_visible_ = false;
++  bool kestrel_toolbar_was_visible_ = false;
++  std::optional<size_t> kestrel_extensions_index_;
++  raw_ptr<views::AccessiblePaneView> kestrel_extensions_pane_ = nullptr;
++  bool kestrel_horizontal_was_visible_ = false;
++  bool kestrel_vertical_was_visible_ = false;
++
+   // Bitmask of current combination of reparenting states, e.g. immersive and

@@ -1,7 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type {
 	KestrelDatabase,
 	MemoryDeleteResult,
+	MemoryEmbeddingInputSnapshot,
 	TimelineEventListOptions,
 } from "@kestrel/database";
 import {
@@ -10,6 +11,8 @@ import {
 	AgentMemoryRecordSchema,
 	CaptureConfigurationSchema,
 	CaptureStatusSchema,
+	capturePatternMatches,
+	CapturePatternLimitError,
 	DailySummarySchema,
 	EmbeddingRecordSchema,
 	EntityRecordSchema,
@@ -55,8 +58,9 @@ import {
 	type RuntimeSession,
 } from "@kestrel/shared-types";
 import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
-import type { AgentRuntime } from "./runtime";
+import { validatePendingProjectIds, type AgentRuntime } from "./runtime";
 import { MemoryManager, type MemoryInput } from "./memory";
+import { isForgetConversationCommand } from "./memory-command-classifier";
 import { redactSensitiveContent } from "./tool-result-guardrails";
 
 const DAY_MS = 86_400_000;
@@ -65,6 +69,8 @@ const BLOCK_GAP_MS = 12 * 60_000;
 const DEFAULT_RETENTION_DAYS = 90;
 const MAX_CONTEXT_CHARACTERS = 24_000;
 const MAX_BACKGROUND_JOBS_PER_TICK = 12;
+const EMBEDDING_REPAIR_PAGE_SIZE = 8;
+const EMBEDDING_REPAIR_BUDGET_MS = 25;
 const MAINTENANCE_BUCKET_MS = 15 * 60_000;
 
 /** Central scoring knobs keep relevance behavior reviewable and testable. */
@@ -130,6 +136,7 @@ export interface MemorySubstrateOptions {
 	now?: () => Date;
 	embeddingProvider?: MemoryEmbeddingProvider;
 	projects?: readonly MemoryProject[];
+	pendingProjectIds?: readonly string[];
 	/** Existing configuration controls explicit user-memory extraction. */
 	explicitCaptureEnabled?: () => boolean;
 }
@@ -242,10 +249,6 @@ function naturalTimeRange(query: string, now: Date): { startAt?: string; endAt?:
 
 function redactText(value: string): string {
 	const locallyRedacted = redactSensitiveContent(value)
-		.replace(
-			/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/giu,
-			"[redacted-private-key]",
-		)
 		.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/giu, "$1[redacted]")
 		.replace(/\b(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,})\b/gu, "[redacted-secret]")
 		.replace(
@@ -317,18 +320,6 @@ function actorForRole(role: RuntimeMessage["role"]): TimelineActor {
 	return role === "user" ? "user" : role === "assistant" ? "assistant" : "system";
 }
 
-function isForgetConversationCommand(text: string): boolean {
-	const normalized = text
-		.normalize("NFKC")
-		.toLocaleLowerCase()
-		.replace(/[\u2018\u2019]/gu, "'")
-		.replace(/\s+/gu, " ")
-		.trim()
-		.replace(/[.!?]+$/u, "");
-	return /^(?:forget|delete|remove)(?:\s+everything)?\s+(?:you\s+)?(?:remember(?:ed)?|know)\s+(?:from|about)\s+(?:this|the current)\s+conversation$/.test(normalized)
-		|| /^(?:don't|do not)\s+(?:remember|use)\s+(?:this|the current)\s+conversation\s+for\s+memory$/.test(normalized)
-		|| /^(?:forget|delete|remove)\s+(?:this|the current)\s+conversation(?:\s+from\s+memory)?$/.test(normalized);
-}
 
 export class MemorySubstrate {
 	private readonly database: KestrelDatabase;
@@ -343,9 +334,17 @@ export class MemorySubstrate {
 	private backgroundRunning = false;
 	private closed = false;
 	private readonly activeTaskIds = new Map<string, string>();
+	private embeddingRepairAfterId = "";
+	private embeddingJobRepairAfterId = "";
+	private repairEmbeddingJobsNext = false;
+	private legacyMigrationPending = false;
+	private legacyMigrationBlocked = false;
+	private legacyMigrationTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly projects = new Map<string, MemoryProject>();
+	private readonly pendingProjectIds: ReadonlySet<string>;
 
 	constructor(options: MemorySubstrateOptions) {
+		this.pendingProjectIds = new Set(validatePendingProjectIds(options.pendingProjectIds === undefined ? [] : options.pendingProjectIds, options.projects ?? []));
 		this.database = options.database;
 		this.legacyMemory = options.legacyMemory;
 		this.now = options.now ?? (() => new Date());
@@ -475,6 +474,7 @@ export class MemorySubstrate {
 	 */
 	syncProjects(projects: readonly MemoryProject[]): MemoryProject[] {
 		const parsedProjects = projects.map((project) => MemoryProjectSchema.parse(project));
+		validatePendingProjectIds([...this.pendingProjectIds], parsedProjects);
 		const nextIds = new Set(parsedProjects.map((project) => project.id));
 		for (const project of parsedProjects) {
 			this.projects.set(project.id, project);
@@ -509,7 +509,7 @@ export class MemorySubstrate {
 		// A removed project must not remain an active entity in future retrievals.
 		for (const entity of this.database.listMemoryEntities({ kind: "project", includeAmbiguous: true, includeSensitive: true, includeRestricted: true, limit: 2_000 })) {
 			const projectId = typeof entity.structuredData.projectId === "string" ? entity.structuredData.projectId : undefined;
-			if (!projectId || nextIds.has(projectId) || entity.status === "deleted") continue;
+			if (!projectId || nextIds.has(projectId) || this.pendingProjectIds.has(projectId) || entity.status === "deleted") continue;
 			this.database.upsertMemoryEntity({ ...entity, status: "deleted", updatedAt: this.now().toISOString() });
 		}
 		this.projects.clear();
@@ -519,6 +519,9 @@ export class MemorySubstrate {
 
 	start(): void {
 		if (this.backgroundTimer || this.closed) return;
+		// Explicit active-Core preparation; database readers and transfer
+		// staging never perform this conversion in their constructors.
+		this.legacyMigrationPending = true;
 		this.scheduleAmbientJobs();
 		this.backgroundTimer = setInterval(() => {
 			if (this.closed) return;
@@ -704,10 +707,7 @@ export class MemorySubstrate {
 		);
 		this.enqueue("extract", `extract:${event.id}`, { eventId: event.id });
 		this.enqueue("sessionize", `sessionize:${event.id}`, { eventId: event.id });
-		this.enqueue("embed", `embed:timeline_event:${event.id}`, {
-			ownerType: "timeline_event",
-			ownerId: event.id,
-		});
+		this.enqueueEmbedding("timeline_event", event.id);
 		return event;
 	}
 
@@ -862,6 +862,7 @@ export class MemorySubstrate {
 			? new Map(
 					this.database
 						.listMemoryEmbeddings({ status: "ready", limit: 5_000 })
+						.filter(embedding => this.database.isMemoryEmbeddingCurrent(embedding))
 						.map((embedding) => [`${embedding.ownerType}:${embedding.ownerId}`, embedding] as const),
 				  )
 			: undefined;
@@ -870,7 +871,8 @@ export class MemorySubstrate {
 		// fell outside the page's ORDER BY/LIMIT window.
 		const eventById = new Map(timelineEvents.map((event) => [event.id, event]));
 		for (const match of timelineMatches) eventById.set(match.event.id, match.event);
-		const eventCandidates = [...eventById.values()].filter(event => event.source !== "connected-source").flatMap((event) => {
+		const eventCandidates = [...eventById.values()].filter(event => event.source !== "connected-source" &&
+			this.database.hasMemoryOwnerSourceAuthority("timeline_event", event.id)).flatMap((event) => {
 			const lexical = lexicalById.get(event.id) ?? this.lexicalScore(query.query, event.textSummary);
 			const semantic = queryEmbedding
 				? this.semanticScore(queryEmbedding, "timeline_event", event.id, event.textSummary, readyEmbeddings)
@@ -887,6 +889,7 @@ export class MemorySubstrate {
 							limit: 500,
 						})
 						.filter((session) =>
+							this.database.hasMemoryOwnerSourceAuthority("timeline_session", session.id) &&
 							(!query.sessionId || session.id === query.sessionId || session.sourceSessionIds.includes(query.sessionId)) &&
 							(!query.sourceSessionId || session.sourceSessionIds.includes(query.sourceSessionId)) &&
 							this.aggregateVisible(session.eventIds, query) &&
@@ -901,6 +904,7 @@ export class MemorySubstrate {
 					limit: 1_000,
 				})
 				.filter((block) =>
+					this.database.hasMemoryOwnerSourceAuthority("activity_block", block.id) &&
 					(!query.sessionId || block.sessionId === query.sessionId || block.eventIds.some((id) => this.database.getTimelineEvent(id)?.sourceSessionId === query.sessionId)) &&
 					(!query.sourceSessionId || block.eventIds.some((id) => this.database.getTimelineEvent(id)?.sourceSessionId === query.sourceSessionId)) &&
 					this.aggregateVisible(block.eventIds, query) &&
@@ -909,6 +913,7 @@ export class MemorySubstrate {
 			: [];
 		const summaries = query.includeTimeline
 			? this.database.listDailySummaries(500).filter((summary) =>
+				this.database.hasMemoryOwnerSourceAuthority("daily_summary", summary.id) &&
 				this.aggregateVisible(summary.eventIds, query) &&
 				(!options.startAt || Date.parse(`${summary.day}T23:59:59.999Z`) >= Date.parse(options.startAt)) &&
 				(!options.endAt || Date.parse(`${summary.day}T00:00:00.000Z`) < Date.parse(options.endAt)) &&
@@ -957,6 +962,7 @@ export class MemorySubstrate {
 		}
 		if (query.includeMemories) {
 			for (const memory of this.legacyMemory.list().filter((item) => item.status === "active")) {
+				if (!this.database.hasMemoryOwnerSourceAuthority("memory", memory.id)) continue;
 				if (!this.sensitivityAllowed(memory.sensitivity, query)) continue;
 				if (query.horizons.length && !query.horizons.includes(horizonForLegacyMemory(memory))) continue;
 				if (query.projectIds.length && !query.projectIds.some((id) => (memory.relatedProjectIds ?? []).includes(id))) continue;
@@ -1003,6 +1009,7 @@ export class MemorySubstrate {
 		}
 		if (query.includeAgents && query.agentId) {
 			for (const memory of this.database.listAgentMemories(query.agentId, { limit: 100 })) {
+				if (!this.database.hasMemoryOwnerSourceAuthority("agent_memory", memory.id)) continue;
 				if (!this.sensitivityAllowed(memory.sensitivity, query)) continue;
 				if (query.horizons.length && !query.horizons.includes(memory.horizon)) continue;
 				if (query.projectIds.length && !query.projectIds.some((id) => memory.projectIds.includes(id))) continue;
@@ -1026,7 +1033,7 @@ export class MemorySubstrate {
 					includeCompleted: true,
 					limit: 500,
 				})) {
-				if (!this.taskVisibleToQuery(task, query)) continue;
+				if (!this.database.hasMemoryOwnerSourceAuthority("task", task.id) || !this.taskVisibleToQuery(task, query)) continue;
 				if (query.projectIds.length && !query.projectIds.some((id) => task.projectIds.includes(id))) continue;
 				if (query.personIds.length && !query.personIds.some((id) => task.personIds.includes(id))) continue;
 				if (query.entityIds.length && !query.entityIds.some((id) => task.entityIds.includes(id))) continue;
@@ -1076,7 +1083,7 @@ export class MemorySubstrate {
 		const detailEventIds = new Set([...selectedIds, ...selectedAggregateEventIds]);
 		const detailEvents = [...detailEventIds].flatMap((id) => {
 			const event = this.database.getTimelineEvent(id);
-			return event && this.eventMatchesQuery(event, query) ? [event] : [];
+			return event && this.database.hasMemoryOwnerSourceAuthority("timeline_event", event.id) && this.eventMatchesQuery(event, query) ? [event] : [];
 		});
 		return MemoryTimelineQueryResultSchema.parse({
 			results: selected,
@@ -1138,7 +1145,7 @@ export class MemorySubstrate {
 			...(input.sessionId ? { sessionId: input.sessionId } : {}),
 			...(input.agentId ? { agentId: input.agentId } : {}),
 			limit: 20,
-		});
+		}).filter(task => this.database.hasMemoryOwnerSourceAuthority("task", task.id));
 		const evidence = [...new Map(
 			[...durable, ...current, ...retrieved]
 				.flatMap((result) => result.provenanceIds)
@@ -1201,10 +1208,7 @@ export class MemorySubstrate {
 				updatedAt: memory.updatedAt,
 			}),
 		);
-		this.enqueue("embed", `embed:memory:${memory.id}:${createHash("sha256").update(memory.content).digest("hex").slice(0, 16)}`, {
-			ownerType: "memory",
-			ownerId: memory.id,
-		});
+		this.enqueueEmbedding("memory", memory.id);
 		return memory;
 	}
 
@@ -1241,10 +1245,7 @@ export class MemorySubstrate {
 				updatedAt: timestamp,
 			}),
 		);
-		this.enqueue("embed", `embed:memory:${id}:${createHash("sha256").update(corrected.content).digest("hex").slice(0, 16)}`, {
-			ownerType: "memory",
-			ownerId: id,
-		});
+		this.enqueueEmbedding("memory", id);
 		return corrected;
 	}
 
@@ -1287,11 +1288,7 @@ export class MemorySubstrate {
 		this.database.deleteMemoryEmbeddingsForOwner("agent_memory", id);
 		this.database.upsertAgentMemory(corrected);
 		this.recordAgentMemoryCorrection(corrected);
-		this.enqueue(
-			"embed",
-			`embed:agent_memory:${corrected.id}:${createHash("sha256").update(corrected.content).digest("hex").slice(0, 16)}`,
-			{ ownerType: "agent_memory", ownerId: corrected.id },
-		);
+		this.enqueueEmbedding("agent_memory", corrected.id);
 		return corrected;
 	}
 
@@ -1439,7 +1436,8 @@ export class MemorySubstrate {
 	private memoriesVisibleTo(
 		identity: AgentIdentity,
 	): Array<MemoryRecord | AgentMemoryRecord> {
-		const owned = this.database.listAgentMemories(identity.id, { limit: 1_000 });
+		const owned = this.database.listAgentMemories(identity.id, { limit: 1_000 })
+			.filter(memory => this.database.hasMemoryOwnerSourceAuthority("agent_memory", memory.id));
 		if (this.isPrivateAgent(identity)) return owned;
 
 		// Keep the legacy records in the public/main compatibility surface, but
@@ -1451,7 +1449,10 @@ export class MemorySubstrate {
 			if (!memory.id.startsWith("agent-memory-")) return true;
 			return !legacyIds.has(memory.id.slice("agent-memory-".length));
 		});
-		return [...this.activeMemories(), ...supplemental];
+		return [
+			...this.activeMemories().filter(memory => this.database.hasMemoryOwnerSourceAuthority("memory", memory.id)),
+			...supplemental,
+		];
 	}
 
 	/**
@@ -1548,11 +1549,7 @@ export class MemorySubstrate {
 				updatedAt: timestamp,
 			}),
 		);
-		this.enqueue(
-			"embed",
-			`embed:agent_memory:${agentMemory.id}:${createHash("sha256").update(content).digest("hex").slice(0, 16)}`,
-			{ ownerType: "agent_memory", ownerId: agentMemory.id },
-		);
+		this.enqueueEmbedding("agent_memory", agentMemory.id);
 		return agentMemory;
 	}
 
@@ -1594,10 +1591,7 @@ export class MemorySubstrate {
 		if (task.agentId)
 			this.ensureAgentIdentityForId(task.agentId, task.agentId === "agent-main" ? "main" : "subagent");
 		this.database.upsertWorkingTask(task);
-		this.enqueue("embed", `embed:task:${task.id}:${createHash("sha256").update(`${task.goal}\n${task.outcomeSummary ?? ""}`).digest("hex").slice(0, 16)}`, {
-			ownerType: "task",
-			ownerId: task.id,
-		});
+		this.enqueueEmbedding("task", task.id);
 		if (task.sourceIds[0])
 			this.database.upsertMemoryProvenance(ProvenanceRecordSchema.parse({
 				id: `provenance-task-${task.id}`,
@@ -1638,10 +1632,7 @@ export class MemorySubstrate {
 				: {}),
 		});
 		this.database.upsertWorkingTask(reconciled);
-		this.enqueue("embed", `embed:task:${reconciled.id}:${createHash("sha256").update(`${reconciled.goal}\n${reconciled.outcomeSummary ?? ""}`).digest("hex").slice(0, 16)}`, {
-			ownerType: "task",
-			ownerId: reconciled.id,
-		});
+		this.enqueueEmbedding("task", reconciled.id);
 		if (reconciled.outcomeSummary && reconciled.status === "completed") {
 			const timestamp = this.now().toISOString();
 			const memory = AgentMemoryRecordSchema.parse({
@@ -1679,10 +1670,7 @@ export class MemorySubstrate {
 				createdAt: timestamp,
 				updatedAt: timestamp,
 			}));
-			this.enqueue("embed", `embed:agent_memory:${memory.id}:${createHash("sha256").update(memory.content).digest("hex").slice(0, 16)}`, {
-				ownerType: "agent_memory",
-				ownerId: memory.id,
-			});
+			this.enqueueEmbedding("agent_memory", memory.id);
 		}
 		if (reconciled.status !== "running")
 			this.activeTaskIds.delete(reconciled.sessionId ?? reconciled.agentId ?? "");
@@ -1690,6 +1678,24 @@ export class MemorySubstrate {
 	}
 
 	async runMaintenance(maxJobs = MAX_BACKGROUND_JOBS_PER_TICK): Promise<MemoryMaintenanceResult> {
+		if (this.legacyMigrationPending) {
+			let progress: ReturnType<KestrelDatabase["migrateLegacyMemoryEmbeddingIdentifiers"]>;
+			try {
+				progress = this.database.migrateLegacyMemoryEmbeddingIdentifiers(this.now().toISOString());
+			} catch (error) {
+				// Damaged or unsupported state stays closed and uses the normal
+				// retry timer; it must not schedule a zero-delay failure loop.
+				this.legacyMigrationBlocked = true;
+				throw error;
+			}
+			this.legacyMigrationPending = !progress.done;
+			this.legacyMigrationBlocked = progress.blocked;
+			if (!progress.done) return MemoryMaintenanceResultSchema.parse({
+				jobsProcessed: 0, jobsCompleted: 0, jobsRetried: 0, jobsFailed: 0,
+				eventsSessionized: 0, blocksBuilt: 0, memoriesExtracted: 0, memoriesChanged: 0,
+				deletedArtifacts: 0, updatedAt: this.now().toISOString(),
+			});
+		}
 		const bounded = Math.max(1, Math.min(100, Math.trunc(maxJobs)));
 		let jobsProcessed = 0;
 		let jobsCompleted = 0;
@@ -1700,11 +1706,20 @@ export class MemorySubstrate {
 		let memoriesExtracted = 0;
 		let memoriesChanged = 0;
 		let deletedArtifacts = 0;
+		let repairedEmbeddings = false;
 		for (let index = 0; index < bounded; index += 1) {
 			const job = this.database.claimMemoryJob(this.now().toISOString());
-			if (!job) break;
+			if (!job) {
+				if (!repairedEmbeddings) {
+					repairedEmbeddings = true;
+					this.repairMemoryEmbeddings();
+					continue;
+				}
+				break;
+			}
 			jobsProcessed += 1;
 			try {
+				let embeddingCompleted = false;
 				if (job.kind === "extract") memoriesExtracted += this.processExtractionJob(job);
 				else if (job.kind === "sessionize") {
 					eventsSessionized += this.sessionize();
@@ -1718,22 +1733,24 @@ export class MemorySubstrate {
 					const result = this.consolidateTimeline();
 					blocksBuilt += result.blocksBuilt;
 				}
-				else if (job.kind === "embed") await this.processEmbeddingJob(job);
+				else if (job.kind === "embed") embeddingCompleted = await this.processEmbeddingJob(job);
 				else if (job.kind === "decay") memoriesChanged += this.decay();
 				else if (job.kind === "cleanup") deletedArtifacts += this.cleanupExpired();
-				this.database.completeMemoryJob(job.id, this.now().toISOString());
-				jobsCompleted += 1;
+				if (embeddingCompleted || this.database.completeMemoryJob(job.id, this.now().toISOString(), job.leaseToken))
+					jobsCompleted += 1;
 			} catch (error) {
 				const retried = this.database.failMemoryJob(
 					job.id,
 					error instanceof Error ? error.message : "Memory job failed.",
 					this.now().toISOString(),
 					Math.min(5 * 60_000, 2 ** job.attempts * 5_000),
+					job.leaseToken,
 				);
 				if (retried?.status === "pending") jobsRetried += 1;
-				else jobsFailed += 1;
+				else if (retried) jobsFailed += 1;
 			}
 		}
+		if (!repairedEmbeddings) this.repairMemoryEmbeddings();
 		return MemoryMaintenanceResultSchema.parse({
 			jobsProcessed,
 			jobsCompleted,
@@ -1756,6 +1773,8 @@ export class MemorySubstrate {
 		this.closed = true;
 		if (this.backgroundTimer) clearInterval(this.backgroundTimer);
 		this.backgroundTimer = undefined;
+		if (this.legacyMigrationTimer) clearTimeout(this.legacyMigrationTimer);
+		this.legacyMigrationTimer = undefined;
 		if (this.runtime && this.runtimeListener) this.runtime.off("event", this.runtimeListener);
 		this.runtimeListener = undefined;
 		const backgroundPromise = this.backgroundPromise;
@@ -1778,6 +1797,16 @@ export class MemorySubstrate {
 			await this.runMaintenance();
 		} finally {
 			this.backgroundRunning = false;
+			// Yield between bounded pages without imposing a 15-second delay on
+			// every eight records in an older profile. Live leases use the normal
+			// timer instead of a busy retry loop.
+			if (this.legacyMigrationPending && !this.legacyMigrationBlocked && !this.closed && !this.legacyMigrationTimer) {
+				this.legacyMigrationTimer = setTimeout(() => {
+					this.legacyMigrationTimer = undefined;
+					this.kickBackgroundMaintenance();
+				}, 0);
+				this.legacyMigrationTimer.unref?.();
+			}
 		}
 	}
 
@@ -1788,14 +1817,76 @@ export class MemorySubstrate {
 		this.enqueue("cleanup", `cleanup:${bucket}`, {});
 	}
 
+	private enqueueEmbedding(ownerType: EmbeddingRecord["ownerType"], ownerId: string): void {
+		const input = this.database.getMemoryEmbeddingInput(ownerType, ownerId);
+		if (!input) return;
+		this.enqueueEmbeddingInput(input);
+	}
+
+	private enqueueEmbeddingInput(input: MemoryEmbeddingInputSnapshot): void {
+		const { ownerType, ownerId } = input;
+		// Desired generations are durable, random and independent of the text.
+		// Returning to prior text still creates a distinct completed-job identity.
+		this.enqueue("embed", `embed:${ownerType}:${ownerId}:${input.generation}`, {
+			ownerType, ownerId, generation: input.generation,
+		});
+	}
+
+	private repairMemoryEmbeddings(): void {
+		// Alternate slices so expensive graphs cannot starve either durable
+		// discovery source. Retired jobs cover owners that never had a vector.
+		this.repairEmbeddingJobsNext = !this.repairEmbeddingJobsNext;
+		if (this.repairEmbeddingJobsNext) {
+			this.repairMemoryEmbeddingJobs();
+			return;
+		}
+		const startedAt = performance.now();
+		const page = this.database.listMemoryEmbeddingPage(this.embeddingRepairAfterId, EMBEDDING_REPAIR_PAGE_SIZE);
+		for (const [index, embedding] of page.entries()) {
+			// Resolve at most one graph per row, and yield after a bounded page or
+			// time slice. One graph is itself bounded by the authority resolver.
+			if (embedding.status !== "deleted") {
+				const input = this.database.getMemoryEmbeddingInput(embedding.ownerType, embedding.ownerId);
+				if (input && (input.generation !== embedding.generation || input.contentHash !== embedding.contentHash))
+					this.enqueueEmbeddingInput(input);
+			}
+			this.embeddingRepairAfterId = embedding.id;
+			if (index + 1 < page.length && performance.now() - startedAt >= EMBEDDING_REPAIR_BUDGET_MS) return;
+		}
+		if (page.length < EMBEDDING_REPAIR_PAGE_SIZE) this.embeddingRepairAfterId = "";
+	}
+
+	private repairMemoryEmbeddingJobs(): void {
+		const startedAt = performance.now();
+		// Walk all job IDs through the primary-key index; filtering the kind in
+		// SQL without a matching index could scan an unbounded non-embed gap.
+		const page = this.database.listMemoryJobPage(this.embeddingJobRepairAfterId, EMBEDDING_REPAIR_PAGE_SIZE);
+		for (const [index, job] of page.entries()) {
+			if (job.kind === "embed" && (job.status === "completed" || job.status === "failed" || job.status === "cancelled")) {
+				const type = EmbeddingRecordSchema.shape.ownerType.safeParse(job.payload.ownerType);
+				const id = job.payload.ownerId;
+				if (type.success && typeof id === "string" && id.length > 0 && id.length <= 200) {
+					const terminal = this.database.bindLegacyMemoryEmbeddingTerminalGuard(job.id, this.now().toISOString());
+					const input = terminal.terminal ? terminal.input : this.database.getMemoryEmbeddingInput(type.data, id);
+					if (input && input.generation !== job.payload.generation &&
+						(!terminal.terminal || (terminal.boundGeneration && terminal.boundGeneration !== input.generation)))
+						this.enqueueEmbeddingInput(input);
+				}
+			}
+			this.embeddingJobRepairAfterId = job.id;
+			if (index + 1 < page.length && performance.now() - startedAt >= EMBEDDING_REPAIR_BUDGET_MS) return;
+		}
+		if (page.length < EMBEDDING_REPAIR_PAGE_SIZE) this.embeddingJobRepairAfterId = "";
+	}
+
 	private enqueue(kind: MemoryJob["kind"], dedupeKey: string, payload: Record<string, unknown>): void {
 		const existing = this.database.getMemoryJobByDedupeKey(dedupeKey);
-		if (existing && ["pending", "running", "completed"].includes(existing.status)) return;
+		if (existing && ["pending", "running", "completed", "cancelled"].includes(existing.status)) return;
 		if (existing && existing.attempts >= existing.maxAttempts) return;
 		const timestamp = this.now().toISOString();
 		this.database.queueMemoryJob(
 			MemoryJobSchema.parse({
-				id: `memory-job-${createHash("sha256").update(dedupeKey).digest("hex").slice(0, 40)}`,
+				id: existing?.id ?? `memory-job-${randomUUID()}`,
 				kind,
 				dedupeKey,
 				status: "pending",
@@ -1817,25 +1908,30 @@ export class MemorySubstrate {
 			const session = this.runtime?.listSessions().find((candidate) => candidate.id === input.sessionId);
 			if (session && !this.sessionAllowsMemory(session)) return false;
 		}
-		const matching = [...configuration.policies]
-			.sort((left, right) => timestampValue(right.updatedAt) - timestampValue(left.updatedAt))
-			.find((policy) => this.policyMatches(policy, input));
-		return matching ? matching.enabled : true;
+		try {
+			const matching = [...configuration.policies]
+				.sort((left, right) => timestampValue(right.updatedAt) - timestampValue(left.updatedAt))
+				.find((policy) => this.policyMatches(policy, input));
+			return matching ? matching.enabled : true;
+		} catch (error) {
+			if (error instanceof CapturePatternLimitError) return false;
+			throw error;
+		}
 	}
 
 	private policyMatches(policy: CapturePolicy, input: CaptureActivityInput): boolean {
 		const pattern = policy.pattern.toLocaleLowerCase();
 		const glob = (value: string | undefined) => {
 			if (!value) return false;
-			const escaped = pattern.replace(/[.+^${}()|[\]\\]/gu, "\\$&").replaceAll("*", ".*");
-			return new RegExp(`^${escaped}$`, "iu").test(value);
+			return capturePatternMatches(pattern, value);
 		};
 		switch (policy.scope) {
 			case "domain":
 				try {
 					const hostname = input.url ? new URL(input.url).hostname.toLocaleLowerCase() : "";
 					return hostname === pattern || hostname.endsWith(`.${pattern}`) || glob(hostname);
-				} catch {
+				} catch (error) {
+					if (error instanceof CapturePatternLimitError) throw error;
 					return false;
 				}
 			case "tab": return glob(input.browserTabId);
@@ -1904,10 +2000,7 @@ export class MemorySubstrate {
 			createdAt: agentMemory.createdAt,
 			updatedAt: agentMemory.updatedAt,
 		}));
-		this.enqueue("embed", `embed:agent_memory:${agentMemory.id}:${createHash("sha256").update(agentMemory.content).digest("hex").slice(0, 16)}`, {
-			ownerType: "agent_memory",
-			ownerId: agentMemory.id,
-		});
+		this.enqueueEmbedding("agent_memory", agentMemory.id);
 		return agentMemory;
 	}
 
@@ -2092,10 +2185,7 @@ export class MemorySubstrate {
 				createdAt: timestamp,
 				updatedAt: timestamp,
 			}));
-			this.enqueue("embed", `embed:${ownerType}:${memory.id}:${createHash("sha256").update(memory.content).digest("hex").slice(0, 16)}`, {
-				ownerType,
-				ownerId: memory.id,
-			});
+			this.enqueueEmbedding(ownerType, memory.id);
 		}
 		this.database.upsertTimelineEvent({
 			...event,
@@ -2240,6 +2330,7 @@ export class MemorySubstrate {
 			for (const event of group) {
 				if (event.sessionId === sessionId) continue;
 				this.database.upsertTimelineEvent({ ...event, sessionId, updatedAt: timestamp });
+				this.enqueueEmbedding("timeline_event", event.id);
 				changed += 1;
 			}
 			const session = TimelineSessionSchema.parse({
@@ -2329,20 +2420,14 @@ export class MemorySubstrate {
 					previous.startedAt !== block.startedAt ||
 					previous.endedAt !== block.endedAt;
 				this.database.upsertActivityBlock(block);
+				this.enqueueEmbedding("activity_block", id);
 				if (changed) {
 					blocksBuilt += 1;
-					this.enqueue("embed", `embed:activity_block:${id}:${createHash("sha256").update(block.summary).digest("hex").slice(0, 16)}`, {
-						ownerType: "activity_block",
-						ownerId: id,
-					});
 				}
 				blockIds.push(id);
 			}
 			sessionBlocks.set(session.id, blockIds);
-			this.enqueue("embed", `embed:timeline_session:${session.id}:${createHash("sha256").update(session.summary).digest("hex").slice(0, 16)}`, {
-				ownerType: "timeline_session",
-				ownerId: session.id,
-			});
+			this.enqueueEmbedding("timeline_session", session.id);
 			const day = session.startedAt.slice(0, 10);
 			const current = daily.get(day) ?? { sessions: [], events: [], blockIds: [] };
 			current.sessions.push(session);
@@ -2385,10 +2470,7 @@ export class MemorySubstrate {
 				prior.activityBlockIds.join("\u0000") !== summary.activityBlockIds.join("\u0000");
 			this.database.upsertDailySummary(summary);
 			if (changed)
-				this.enqueue("embed", `embed:daily_summary:${summary.id}:${createHash("sha256").update(summary.summary).digest("hex").slice(0, 16)}`, {
-					ownerType: "daily_summary",
-					ownerId: summary.id,
-				});
+				this.enqueueEmbedding("daily_summary", summary.id);
 			for (const session of aggregate.sessions) {
 				const blockIds = sessionBlocks.get(session.id) ?? [];
 				this.database.upsertTimelineSession({
@@ -2401,31 +2483,16 @@ export class MemorySubstrate {
 		return { blocksBuilt };
 	}
 
-	private async processEmbeddingJob(job: MemoryJob): Promise<void> {
-		const ownerType = typeof job.payload.ownerType === "string" ? job.payload.ownerType : undefined;
-		const ownerId = typeof job.payload.ownerId === "string" ? job.payload.ownerId : undefined;
-		if (!ownerType || !ownerId) return;
-		let text = "";
-		if (ownerType === "timeline_event") {
-            const event = this.database.getTimelineEvent(ownerId);
-            if (event?.source === "connected-source") return;
-            text = event?.textSummary ?? "";
-        }
-		else if (ownerType === "timeline_session") text = this.database.getTimelineSession(ownerId)?.summary ?? "";
-		else if (ownerType === "memory") text = this.legacyMemory.list().find((memory) => memory.id === ownerId)?.content ?? "";
-		else if (ownerType === "agent_memory") text = this.database.getAgentMemory(ownerId)?.content ?? "";
-		else if (ownerType === "activity_block") text = this.database.getActivityBlock(ownerId)?.summary ?? "";
-		else if (ownerType === "daily_summary") text = this.database.getDailySummary(ownerId)?.summary ?? "";
-		else if (ownerType === "task") {
-			const task = this.database.getWorkingTask(ownerId);
-            // Source analysis uses consent-gated retrieval, never the general embed queue.
-            // Opaque observation IDs retain this boundary even after evidence deletion.
-            if (task?.sourceIds.some(id => id.startsWith("observation-") || this.database.getTimelineEvent(id)?.source === "connected-source")) return;
-			text = task ? `${task.goal}\n${task.outcomeSummary ?? ""}` : "";
+	private async processEmbeddingJob(job: MemoryJob): Promise<boolean> {
+		const input = this.database.snapshotMemoryEmbeddingJob(job, this.now().toISOString());
+		if (!input) {
+			const type = EmbeddingRecordSchema.shape.ownerType.safeParse(job.payload.ownerType);
+			const id = job.payload.ownerId;
+			if (type.success && typeof id === "string" && id.length <= 200) this.enqueueEmbedding(type.data, id);
+			return false;
 		}
-		if (!text) return;
+		const { ownerType, ownerId, text, generation, contentHash } = input;
 		const timestamp = this.now().toISOString();
-		const contentHash = createHash("sha256").update(text).digest("hex");
 		let provider = this.embeddingProvider;
 		let vector: number[] | undefined;
 		try {
@@ -2436,6 +2503,10 @@ export class MemorySubstrate {
 			// A configured remote/custom provider is optional.  Retrieval remains
 			// local and usable if that provider is unavailable.
 			if (provider.provider !== localMemoryEmbeddingProvider.provider) {
+				if (!this.database.isCurrentMemoryEmbeddingJob(job, input, this.now().toISOString())) {
+					this.enqueueEmbedding(ownerType, ownerId);
+					throw new Error("Memory embedding input or job authority changed.");
+				}
 				provider = localMemoryEmbeddingProvider;
 				try {
 					vector = [...await provider.embed(text)];
@@ -2446,49 +2517,18 @@ export class MemorySubstrate {
 				}
 			}
 		}
-		if (!vector) {
-			this.database.upsertMemoryEmbedding(EmbeddingRecordSchema.parse({
-				id: `embedding-${ownerType}-${ownerId}-unavailable`,
-				ownerType,
-				ownerId,
-				provider: provider.provider,
-				model: provider.model,
-				dimension: 1,
-				contentHash,
-				vector: [0],
-				status: "unavailable",
-				createdAt: timestamp,
-				updatedAt: timestamp,
-			}));
-			this.updateTimelineEmbeddingStatus(ownerType, ownerId, "unavailable", timestamp);
-			return;
+		const completedAt = this.now().toISOString();
+		const embedding = EmbeddingRecordSchema.parse({
+			id: vector ? `embedding-${ownerType}-${ownerId}-${provider.model}` : `embedding-${ownerType}-${ownerId}-unavailable`,
+			ownerType, ownerId, generation, provider: provider.provider, model: provider.model,
+			dimension: vector?.length ?? 1, contentHash, vector: vector ?? [0],
+			status: vector ? "ready" : "unavailable", createdAt: timestamp, updatedAt: completedAt,
+		});
+		if (!this.database.commitMemoryEmbeddingJob(job, input, embedding, completedAt)) {
+			this.enqueueEmbedding(ownerType, ownerId);
+			throw new Error("Memory embedding input or job authority changed.");
 		}
-		this.database.upsertMemoryEmbedding(EmbeddingRecordSchema.parse({
-			id: `embedding-${ownerType}-${ownerId}-${provider.model}`,
-			ownerType,
-			ownerId,
-			provider: provider.provider,
-			model: provider.model,
-			dimension: vector.length,
-			contentHash,
-			vector,
-			status: "ready",
-			createdAt: timestamp,
-			updatedAt: timestamp,
-		}));
-		this.updateTimelineEmbeddingStatus(ownerType, ownerId, "ready", timestamp);
-	}
-
-	private updateTimelineEmbeddingStatus(
-		ownerType: string,
-		ownerId: string,
-		status: TimelineEvent["embeddingStatus"],
-		updatedAt: string,
-	): void {
-		if (ownerType !== "timeline_event") return;
-		const event = this.database.getTimelineEvent(ownerId);
-		if (!event || event.embeddingStatus === status) return;
-		this.database.upsertTimelineEvent({ ...event, embeddingStatus: status, updatedAt });
+		return true;
 	}
 
 	private decay(): number {
@@ -2570,7 +2610,8 @@ export class MemorySubstrate {
 		readyEmbeddings?: Map<string, EmbeddingRecord>,
 	): number {
 		const stored = readyEmbeddings?.get(`${ownerType}:${ownerId}`);
-		if (stored && stored.dimension === queryEmbedding.length && stored.vector.length === stored.dimension)
+		if (stored && this.database.isMemoryEmbeddingCurrent(stored) &&
+			stored.dimension === queryEmbedding.length && stored.vector.length === stored.dimension)
 			return semanticSimilarity(queryEmbedding, new Float32Array(stored.vector));
 		return semanticSimilarity(queryEmbedding, localSemanticEmbedding(text));
 	}

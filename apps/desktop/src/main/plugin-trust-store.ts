@@ -29,7 +29,8 @@ function parsePublisher(value: unknown): StoredPublisher {
 		typeof record.keyId !== "string" ||
 		!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(record.keyId) ||
 		typeof record.publicKey !== "string" ||
-		record.publicKey.length > 32_000
+		record.publicKey.length > 32_000 ||
+		!/^-----BEGIN PUBLIC KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END PUBLIC KEY-----\r?\n?$/.test(record.publicKey)
 	)
 		throw new Error("Plugin publisher key document is invalid.");
 	const key = createPublicKey(record.publicKey);
@@ -69,7 +70,7 @@ export class PluginTrustStore {
 		return publishers;
 	}
 
-	private async save(publishers: StoredPublisher[]): Promise<void> {
+	private async save(publishers: StoredPublisher[], check: () => void = () => {}): Promise<void> {
 		await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
 		const temporary = `${this.path}.tmp-${randomUUID()}`;
 		try {
@@ -78,6 +79,7 @@ export class PluginTrustStore {
 				flag: "wx",
 			});
 			await chmod(temporary, 0o600);
+			check();
 			await rename(temporary, this.path);
 		} catch (error) {
 			await rm(temporary, { force: true });
@@ -92,22 +94,27 @@ export class PluginTrustStore {
 		}));
 	}
 
-	async trustKeys(): Promise<PluginTrustKey[]> {
+	async trustKeys(): Promise<Array<PluginTrustKey & { publicKey: string }>> {
 		return (await this.stored()).map(({ keyId, publicKey }) => ({
 			keyId,
 			publicKey,
 		}));
 	}
 
-	async importDocument(path: string): Promise<TrustedPluginPublisher> {
+	async importDocument(path: string, check: () => void = () => {}): Promise<TrustedPluginPublisher> {
+		check();
 		const bytes = await readFile(path);
+		check();
 		if (bytes.byteLength > 64_000)
 			throw new Error("Plugin publisher key document exceeds 64 KB.");
-		const publisher = parsePublisher(
-			JSON.parse(bytes.toString("utf8")) as unknown,
-		);
+		const document = JSON.parse(bytes.toString("utf8")) as unknown;
+		if (!document || typeof document !== "object" || Array.isArray(document) || Object.keys(document).sort().join(",") !== "keyId,publicKey")
+			throw new Error("Plugin publisher document must contain only a key ID and public key.");
+		const publisher = parsePublisher(document);
 		return this.mutate(async () => {
+			check();
 			const publishers = await this.stored();
+			check();
 			const existing = publishers.find(
 				(item) => item.keyId === publisher.keyId,
 			);
@@ -119,19 +126,21 @@ export class PluginTrustStore {
 				await this.save(
 					[...publishers, publisher].sort((left, right) =>
 						left.keyId.localeCompare(right.keyId),
-					),
+					), check,
 				);
 			return { keyId: publisher.keyId, fingerprint: publisher.fingerprint };
 		});
 	}
 
-	async remove(keyId: string): Promise<void> {
+	async remove(keyId: string, check: () => void = () => {}): Promise<void> {
 		await this.mutate(async () => {
+			check();
 			const publishers = await this.stored();
+			check();
 			if (!publishers.some((publisher) => publisher.keyId === keyId))
 				throw new Error(`Plugin publisher key ${keyId} is not trusted.`);
 			await this.save(
-				publishers.filter((publisher) => publisher.keyId !== keyId),
+				publishers.filter((publisher) => publisher.keyId !== keyId), check,
 			);
 		});
 	}

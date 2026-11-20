@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const call = (command) => window.kestrelHost(command);
 let sending = false;
+let changingConversation = false;
 let initialized = false;
 let transcriptSignature = "";
 let currentSession = "";
@@ -18,6 +19,16 @@ function button(text, action, label) {
   node.addEventListener("click", () => run(action)); return node;
 }
 async function run(action) { clearError(); try { await action(); } catch (cause) { error(cause); } finally { await refresh().catch(error); } }
+async function changeConversation(action) {
+  if (sending || changingConversation) return;
+  changingConversation = true;
+  ++refreshNumber;
+  $("message").readOnly = true;
+  $("send").disabled = $("new-conversation").disabled = true;
+  for (const node of $("conversations").querySelectorAll("button")) node.disabled = true;
+  try { await action(); await refresh(); }
+  finally { changingConversation = false; $("message").readOnly = false; }
+}
 async function refresh() {
   const ticket = ++refreshNumber;
   const state = await call({ type: "state" });
@@ -31,9 +42,9 @@ async function refresh() {
   $("cancel").hidden = !state.busy;
   $("title").textContent = state.sessions.find((session) => session.id === state.sessionId)?.title || "Conversation";
   $("conversations").replaceChildren(...state.sessions.map((session) => {
-    const node = button(session.title, () => call({ type: "select-conversation", id: session.id }));
+    const node = button(session.title, () => changeConversation(() => call({ type: "select-conversation", id: session.id })));
     node.classList.toggle("selected", session.id === state.sessionId);
-    node.setAttribute("aria-current", String(session.id === state.sessionId)); node.disabled = sending; return node;
+    node.setAttribute("aria-current", String(session.id === state.sessionId)); node.disabled = sending || changingConversation || state.busy; return node;
   }));
   $("tabs").replaceChildren(...state.tabs.map((tab) => {
     const row = document.createElement("div"); row.className = "tab-entry";
@@ -50,7 +61,7 @@ async function refresh() {
   if (state.providers.includes(selection)) $("provider").value = selection;
   if (!initialized) { $("model").value = state.model; initialized = true; }
   $("provider-note").textContent = state.providers.length ? "Browser reading is optional · Enter to send, Shift+Enter for a new line." : "No model provider configured. Start the preview with supported provider environment settings; existing desktop logins are not imported.";
-  $("send").disabled = sending || state.busy || !!state.approval || !state.providers.length;
+  $("send").disabled = sending || changingConversation || state.busy || !!state.approval || !state.providers.length;
   $("approval").hidden = !state.approval;
   $("approval").replaceChildren();
   if (state.approval) {
@@ -68,7 +79,7 @@ async function refresh() {
     approve.disabled = reject.disabled = sending || state.busy;
     $("approval").append(heading, detail, approve, reject);
   }
-  $("new-conversation").disabled = sending;
+  $("new-conversation").disabled = sending || changingConversation || state.busy;
   const messages = state.messages.filter((message) => message.role === "user" || message.role === "assistant");
   const signature = JSON.stringify([state.sessionId, messages]);
   if (signature !== transcriptSignature) {
@@ -87,11 +98,11 @@ async function refresh() {
     }
   }
 }
-$("new-conversation").addEventListener("click", () => run(() => call({ type: "new-conversation" })));
+$("new-conversation").addEventListener("click", () => run(() => changeConversation(() => call({ type: "new-conversation" }))));
 $("browser-form").addEventListener("submit", (event) => { event.preventDefault(); run(() => call({ type: "open-tab", url: $("url").value })); });
 $("cancel").addEventListener("click", () => run(() => call({ type: "cancel" })));
 $("composer").addEventListener("submit", async (event) => {
-  event.preventDefault(); if (sending || !$("message").value.trim()) return;
+  event.preventDefault(); if (sending || changingConversation || !$("message").value.trim()) return;
   clearError(); sending = true; $("message").readOnly = true; $("send").disabled = true; $("cancel").hidden = false;
   const message = $("message").value;
   const timer = setInterval(() => refresh().catch(error), 700);

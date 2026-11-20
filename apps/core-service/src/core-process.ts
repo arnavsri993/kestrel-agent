@@ -4,5 +4,5 @@ export interface CoreProcess {
 	on(event: "exit", listener: (code: number | null) => void): unknown;
 	once(event: "exit", listener: (code: number | null) => void): unknown;
 	postMessage(message: unknown): void;
-	kill(): boolean;
+	kill(signal?: NodeJS.Signals): boolean;
 }

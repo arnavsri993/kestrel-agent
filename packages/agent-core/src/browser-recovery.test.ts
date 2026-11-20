@@ -26,6 +26,24 @@ describe("typed browser recovery guidance", () => {
 		expect(browserRecoveryReason(new Error(message))).toBe(reasonCode);
 	});
 
+	it("classifies both orders within a line and retains cancellation precedence", () => {
+		expect(browserRecoveryReason(new Error("Expired: SIGN-IN"))).toBe("auth_required");
+		expect(browserRecoveryReason(new Error("blocked popup"))).toBe("popup_denied");
+		expect(browserRecoveryReason(new Error("frame was detached"))).toBe("navigation_changed");
+		expect(browserRecoveryReason(new Error("cancelled: login required"))).toBeUndefined();
+		for (const separator of ["\n", "\r", "\u2028", "\u2029"]) {
+			expect(browserRecoveryReason(new Error(`login${separator}required`))).toBeUndefined();
+			expect(browserRecoveryReason(new Error(`popup${separator}blocked`))).toBeUndefined();
+			expect(browserRecoveryReason(new Error(`frame${separator}detached`))).toBeUndefined();
+		}
+	});
+
+	it("handles long repeated near-miss error messages", () => {
+		for (const message of ["authentication".repeat(30000), "popup".repeat(30000), "denied".repeat(30000), "execution context".repeat(30000), "frame".repeat(30000)]) {
+			expect(browserRecoveryReason(new Error(message))).toBeUndefined();
+		}
+	});
+
 	it("returns advisory read-only reobservation hints without permitting replay", () => {
 		const error = toBrowserRecoveryError(
 			new Error("Browser target ref is stale. Take a new snapshot."),

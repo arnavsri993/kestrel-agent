@@ -166,7 +166,24 @@ try {
   assert.equal(deniedMutation.ok, false, "Host ceiling must deny even explicitly approved mutation calls");
   // Approval is tied to this conversation and execution, survives shell reload,
   // and cannot be replayed after the one navigation has been dispatched.
+  // Hold Core's conversation switch so this also exercises a slow local host.
+  // A composer must not send into the old session or lose newly typed text.
+  await page.evaluate(() => {
+    const w = window as any, original = w.kestrelHost;
+    let release: () => void;
+    const hold = new Promise<void>(resolve => { release = resolve; });
+    w.releaseConversationSwitch = () => { w.kestrelHost = original; release(); };
+    w.kestrelHost = async (command: any) => {
+      if (command.type === "new-conversation") await hold;
+      return original(command);
+    };
+  });
   await page.getByRole("button", { name: "＋ New conversation" }).click();
+  await expect(page.getByLabel("Message", { exact: true })).toHaveJSProperty("readOnly", true);
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "＋ New conversation" })).toBeDisabled();
+  await page.evaluate(() => (window as any).releaseConversationSwitch());
+  await expect(page.getByLabel("Message", { exact: true })).toHaveJSProperty("readOnly", false);
   await page.getByLabel("Allow navigation requests for this message").check();
   await page.getByLabel("Message", { exact: true }).fill("Navigate the browser to the next page");
   await page.getByRole("button", { name: "Send", exact: true }).click();

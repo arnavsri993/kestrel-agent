@@ -1,0 +1,68 @@
+import { describe, expect, it } from "vitest";
+import { coreRequestTimeoutMs, nativeRequestTimeoutMs } from "./request-timeouts";
+
+describe("shared request execution and native transport deadlines", () => {
+	it("retains Core's bounded agent and transcription budgets", () => {
+		for (const type of ["runtime-run-agent", "runtime-resume-agent", "runtime-retry-agent", "runtime-call-tool", "orchestration-delegate", "writing-generate", "pet-install", "pet-hatch-drafts", "pet-hatch-complete"])
+			expect(coreRequestTimeoutMs({ type })).toBe(1_800_000);
+		expect(coreRequestTimeoutMs({ type: "media-transcribe" })).toBe(125_000);
+		expect(coreRequestTimeoutMs({ type: "snapshot" })).toBe(30_000);
+	});
+	it("leaves room for bounded connection setup and Core's cancellation response", () => {
+		for (const type of ["snapshot", "runtime-run-agent", "media-transcribe", "oauth-chatgpt-connect", "provider-account-connect", "local-runtime-bootstrap"]) {
+			const request = { type };
+			const broker = nativeRequestTimeoutMs(request, "broker");
+			const worker = nativeRequestTimeoutMs(request, "worker");
+			const renderer = nativeRequestTimeoutMs(request, "renderer");
+			expect(worker).toBeGreaterThan(broker + 42_000);
+			expect(renderer).toBeGreaterThan(worker);
+			expect(broker).toBeGreaterThan(coreRequestTimeoutMs(request));
+			expect(renderer).toBeLessThan(32 * 60_000);
+		}
+	});
+	it("allows local chat warm-up and Core restart within a bounded setup budget", () => {
+		for (const type of ["local-runtime-bootstrap", "local-model-pull"]) {
+			expect(nativeRequestTimeoutMs({ type }, "broker")).toBe(1_810_000);
+			expect(nativeRequestTimeoutMs({ type }, "worker")).toBe(1_855_000);
+			expect(nativeRequestTimeoutMs({ type }, "renderer")).toBe(1_860_000);
+		}
+	});
+	it("allows time for native pickers and default-browser consent", () => {
+		for (const type of ["select-workspace-folder", "select-context-files", "set-default-browser", "request-microphone-access", "memory-recovery-save-file", "memory-recovery-open-file", "export-diagnostic-report"]) {
+			expect(nativeRequestTimeoutMs({ type }, "broker")).toBe(610_000);
+			expect(nativeRequestTimeoutMs({ type }, "renderer")).toBe(660_000);
+		}
+	});
+	it("allows backup selection, verified copying and clean Core restart within the same bounded transport budget", () => {
+		expect(nativeRequestTimeoutMs({ type: "create-local-backup" }, "broker")).toBe(910_000);
+		expect(nativeRequestTimeoutMs({ type: "create-local-backup" }, "worker")).toBe(955_000);
+		expect(nativeRequestTimeoutMs({ type: "create-local-backup" }, "renderer")).toBe(960_000);
+		expect(nativeRequestTimeoutMs({ type: "reveal-created-local-backup" }, "broker")).toBe(610_000);
+	});
+	it("keeps stopped-Core repair within matching bounded transport deadlines", () => {
+		for (const type of ["native-embedding-recovery-review", "native-embedding-recovery-apply"]) {
+			expect(nativeRequestTimeoutMs({ type }, "broker")).toBe(190_000);
+			expect(nativeRequestTimeoutMs({ type }, "worker")).toBe(235_000);
+			expect(nativeRequestTimeoutMs({ type }, "renderer")).toBe(240_000);
+		}
+	});
+	it("allows the same bounded login budget for managed and shared Codex accounts", () => {
+		expect(nativeRequestTimeoutMs({ type: "provider-account-connect" }, "broker")).toBe(610_000);
+		expect(nativeRequestTimeoutMs({ type: "provider-account-connect" }, "renderer")).toBe(nativeRequestTimeoutMs({ type: "oauth-chatgpt-connect" }, "renderer"));
+	});
+	it("retains bounded cancellation time for native Google and external secret mutations", () => {
+		for (const type of ["oauth-google-connect", "oauth-google-disconnect", "external-secret-save", "external-secret-sync", "external-secret-install-bitwarden", "external-secret-remove"]) {
+			expect(nativeRequestTimeoutMs({ type }, "broker")).toBe(610_000);
+			expect(nativeRequestTimeoutMs({ type }, "worker")).toBe(655_000);
+			expect(nativeRequestTimeoutMs({ type }, "renderer")).toBe(660_000);
+		}
+	});
+	it("gives all six plugin mutations the same ten-minute execution and transport budgets", () => {
+		const executionBudget = 10 * 60_000;
+		for (const type of ["plugin-import-publisher", "plugin-remove-publisher", "plugin-install-bundle", "plugin-update-bundle", "plugin-remove-installed", "plugin-restore-removed"]) {
+			expect(nativeRequestTimeoutMs({ type }, "broker")).toBe(executionBudget + 10_000);
+			expect(nativeRequestTimeoutMs({ type }, "worker")).toBe(executionBudget + 55_000);
+			expect(nativeRequestTimeoutMs({ type }, "renderer")).toBe(executionBudget + 60_000);
+		}
+	});
+});

@@ -30,6 +30,59 @@ type CapabilityDefinition = {
  * This is intentionally a conservative registry.  An API is never promoted
  * from unknown merely because Chromium happens to accept part of it today.
  */
+export type ExtensionCompatibilityRuntimeBackend = "electron" | "chromium";
+
+/**
+ * Chromium/CEF capability reasons. Kept separate so Electron-era reports are
+ * never rewritten in place when the native adapter starts producing evidence.
+ */
+export const CHROMIUM_EXTENSION_CAPABILITY_REGISTRY: readonly CapabilityDefinition[] =
+	[
+		{
+			capability: "chrome.storage",
+			status: "partial",
+			reason: "Native Chromium verifies local extension storage. The sync namespace retains a local cache, but Kestrel does not provide account or cross-device synchronization.",
+		},
+		{
+			capability: "chrome.storage.local",
+			status: "full",
+			reason:
+				"Native Chromium smokes observe chrome.storage.local across reloads.",
+		},
+		{
+			capability: "chrome.storage.sync",
+			status: "partial",
+			reason: "Native Chromium smokes verify sync-namespace reads and writes across restart as a local cache. Account and cross-device synchronization are unavailable.",
+		},
+		{
+			capability: "chrome.storage.managed",
+			status: "unsupported",
+			reason: "Kestrel does not enable chrome.storage.managed in the native host.",
+		},
+		{
+			capability: "chrome.runtime.sendMessage",
+			status: "full",
+			reason:
+				"Native Chromium smokes observe chrome.runtime messaging for MV3 workers.",
+		},
+		{
+			capability: "chrome.runtime.onMessage",
+			status: "full",
+			reason:
+				"Native Chromium smokes observe chrome.runtime messaging for MV3 workers.",
+		},
+		{
+			capability: "manifest.content_scripts",
+			status: "full",
+			reason: "Native Chromium loads Manifest V3 content scripts on user tabs.",
+		},
+		{
+			capability: "manifest.background.service_worker",
+			status: "full",
+			reason: "Native Chromium runs Manifest V3 service workers for user extensions.",
+		},
+	];
+
 export const EXTENSION_CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
 	{
 		capability: "chrome.storage",
@@ -441,47 +494,87 @@ function manifestInspection(manifest: Record<string, unknown>): ExtensionManifes
 	};
 }
 
-function capabilityFor(value: string): CapabilityDefinition {
+function capabilityFor(
+	value: string,
+	runtimeBackend: ExtensionCompatibilityRuntimeBackend = "electron",
+): CapabilityDefinition {
 	const normalized = value.startsWith("browser.")
 		? `chrome.${value.slice("browser.".length)}`
 		: value;
-	const exact = [...EXTENSION_CAPABILITY_REGISTRY]
+	const registry =
+		runtimeBackend === "chromium"
+			? [
+					...CHROMIUM_EXTENSION_CAPABILITY_REGISTRY,
+					...EXTENSION_CAPABILITY_REGISTRY,
+				]
+			: EXTENSION_CAPABILITY_REGISTRY;
+	const exact = [...registry]
 		.sort((left, right) => right.capability.length - left.capability.length)
 		.find(
 			(entry) =>
 				normalized === entry.capability ||
 				normalized.startsWith(`${entry.capability}.`),
 		);
-	return (
-		exact ?? {
-			capability: normalized,
-			status: "unknown",
-			reason: "Kestrel has not verified this Chrome extension capability in Electron.",
+	if (exact) {
+		if (
+			runtimeBackend === "chromium" &&
+			CHROMIUM_EXTENSION_CAPABILITY_REGISTRY.some(
+				(entry) => entry.capability === exact.capability,
+			)
+		) {
+			return exact;
 		}
-	);
+		if (runtimeBackend === "chromium") {
+			return {
+				...exact,
+				reason: exact.reason.replace(/\bElectron\b/g, "Chromium"),
+			};
+		}
+		return exact;
+	}
+	return {
+		capability: normalized,
+		status: "unknown",
+		reason:
+			runtimeBackend === "chromium"
+				? "Kestrel has not verified this Chrome extension capability in native Chromium."
+				: "Kestrel has not verified this Chrome extension capability in Electron.",
+	};
 }
 
-function findingFor(capability: string, evidence: ExtensionCompatibilityFinding["evidence"]): ExtensionCompatibilityFinding {
-	const definition = capabilityFor(capability);
+function findingFor(
+	capability: string,
+	evidence: ExtensionCompatibilityFinding["evidence"],
+	runtimeBackend: ExtensionCompatibilityRuntimeBackend = "electron",
+): ExtensionCompatibilityFinding {
+	const definition = capabilityFor(capability, runtimeBackend);
+	const usesChromiumEvidence =
+		runtimeBackend === "chromium" &&
+		CHROMIUM_EXTENSION_CAPABILITY_REGISTRY.some(
+			(entry) => entry.capability === definition.capability,
+		);
 	return {
 		capability: definition.capability,
 		status: definition.status,
 		reason: definition.reason,
-		evidence,
+		evidence: usesChromiumEvidence ? "chromium_documented" : evidence,
 	};
 }
 
 function findingForDeclaredPermission(
 	permission: string,
 	evidence: ExtensionCompatibilityFinding["evidence"],
+	runtimeBackend: ExtensionCompatibilityRuntimeBackend = "electron",
 ): ExtensionCompatibilityFinding {
 	const capability = DECLARED_PERMISSION_CAPABILITIES[permission];
-	if (capability) return findingFor(capability, evidence);
+	if (capability) return findingFor(capability, evidence, runtimeBackend);
 	return {
 		capability: `permission.${permission}`,
 		status: "unknown",
 		reason:
-			"Kestrel records this declared Chrome extension permission but has not classified its runtime behavior in Electron.",
+			runtimeBackend === "chromium"
+				? "Kestrel records this declared Chrome extension permission but has not classified its runtime behavior in native Chromium."
+				: "Kestrel records this declared Chrome extension permission but has not classified its runtime behavior in Electron.",
 		evidence,
 	};
 }
@@ -522,11 +615,11 @@ function summaryForState(state: ExtensionCompatibilityState): string {
 		case "expected_compatible":
 			return "No unsupported requirements were detected. Kestrel will verify persistence on the next browser start.";
 		case "partial":
-			return "This extension uses capability areas that Electron supports only in part.";
+			return "This extension has requirements with partial support in this Kestrel runtime.";
 		case "unsupported":
-			return "This extension requires a capability Electron documents as unsupported.";
+			return "This extension requires a capability unavailable in this Kestrel runtime.";
 		case "unknown":
-			return "This extension uses capability areas Kestrel has not verified in Electron.";
+			return "This extension has requirements Kestrel has not yet verified in this runtime.";
 	}
 }
 
@@ -627,7 +720,9 @@ function scanSource(
 
 export function analyzeExtensionCompatibility(
 	extensionDir: string,
+	options?: { runtimeBackend?: ExtensionCompatibilityRuntimeBackend },
 ): ExtensionCompatibilityReport {
+	const runtimeBackend = options?.runtimeBackend ?? "electron";
 	const manifestPath = join(extensionDir, "manifest.json");
 	if (!existsSync(manifestPath)) throw new Error("Missing manifest.json in extension directory.");
 	let parsed: unknown;
@@ -652,40 +747,95 @@ export function analyzeExtensionCompatibility(
 	];
 	const findings: ExtensionCompatibilityFinding[] = [];
 	for (const permission of inspection.permissions)
-		findings.push(findingForDeclaredPermission(permission, "manifest"));
+		findings.push(
+			findingForDeclaredPermission(permission, "manifest", runtimeBackend),
+		);
 	for (const permission of inspection.optionalPermissions)
-		findings.push(findingForDeclaredPermission(permission, "manifest"));
+		findings.push(
+			findingForDeclaredPermission(permission, "manifest", runtimeBackend),
+		);
 	if (inspection.contentScriptCount > 0)
-		findings.push(findingFor("manifest.content_scripts", "manifest"));
+		findings.push(
+			findingFor("manifest.content_scripts", "manifest", runtimeBackend),
+		);
 	if (inspection.hostPermissions.length > 0)
-		findings.push(findingFor("manifest.host_permissions", "manifest"));
+		findings.push(
+			findingFor("manifest.host_permissions", "manifest", runtimeBackend),
+		);
 	if (inspection.background === "service_worker")
-		findings.push(findingFor("manifest.background.service_worker", "manifest"));
+		findings.push(
+			findingFor(
+				"manifest.background.service_worker",
+				"manifest",
+				runtimeBackend,
+			),
+		);
 	if (inspection.background === "page")
-		findings.push(findingFor("manifest.background.page", "manifest"));
+		findings.push(
+			findingFor("manifest.background.page", "manifest", runtimeBackend),
+		);
 	if (inspection.commands.length > 0)
-		findings.push(findingFor("manifest.commands", "manifest"));
-	if (inspection.hasAction) findings.push(findingFor("manifest.action", "manifest"));
+		findings.push(findingFor("manifest.commands", "manifest", runtimeBackend));
+	if (inspection.hasAction)
+		findings.push(findingFor("manifest.action", "manifest", runtimeBackend));
 	if (inspection.hasSidePanel)
-		findings.push(findingFor("manifest.side_panel", "manifest"));
+		findings.push(
+			findingFor("manifest.side_panel", "manifest", runtimeBackend),
+		);
 	if (inspection.hasDeclarativeNetRequest)
-		findings.push(findingFor("manifest.declarative_net_request", "manifest"));
+		findings.push(
+			findingFor(
+				"manifest.declarative_net_request",
+				"manifest",
+				runtimeBackend,
+			),
+		);
 	if (inspection.hasExternallyConnectable)
-		findings.push(findingFor("manifest.externally_connectable", "manifest"));
+		findings.push(
+			findingFor(
+				"manifest.externally_connectable",
+				"manifest",
+				runtimeBackend,
+			),
+		);
 	if (inspection.webAccessibleResourceCount > 0)
-		findings.push(findingFor("manifest.web_accessible_resources", "manifest"));
+		findings.push(
+			findingFor(
+				"manifest.web_accessible_resources",
+				"manifest",
+				runtimeBackend,
+			),
+		);
 	if (inspection.optionalPermissions.length > 0)
-		findings.push(findingFor("manifest.optional_permissions", "manifest"));
+		findings.push(
+			findingFor("manifest.optional_permissions", "manifest", runtimeBackend),
+		);
 	if (inspection.optionalHostPermissions.length > 0)
 		findings.push(
-			findingFor("manifest.optional_host_permissions", "manifest"),
+			findingFor(
+				"manifest.optional_host_permissions",
+				"manifest",
+				runtimeBackend,
+			),
 		);
 	if (inspection.minimumChromeVersion)
-		findings.push(findingFor("manifest.minimum_chrome_version", "manifest"));
+		findings.push(
+			findingFor(
+				"manifest.minimum_chrome_version",
+				"manifest",
+				runtimeBackend,
+			),
+		);
 	if (inspection.incognito)
-		findings.push(findingFor("manifest.incognito", "manifest"));
+		findings.push(findingFor("manifest.incognito", "manifest", runtimeBackend));
 	if (inspection.contentSecurityPolicy)
-		findings.push(findingFor("manifest.content_security_policy", "manifest"));
+		findings.push(
+			findingFor(
+				"manifest.content_security_policy",
+				"manifest",
+				runtimeBackend,
+			),
+		);
 	if (inspection.manifestVersion !== 2 && inspection.manifestVersion !== 3) {
 		findings.push({
 			capability: "manifest.manifest_version",
@@ -703,7 +853,7 @@ export function analyzeExtensionCompatibility(
 		});
 	}
 	for (const usage of source.usages)
-		findings.push(findingFor(usage, "static_analysis"));
+		findings.push(findingFor(usage, "static_analysis", runtimeBackend));
 	if (source.dynamicApiAccessDetected) {
 		findings.push({
 			capability: "dynamic Chrome API access",

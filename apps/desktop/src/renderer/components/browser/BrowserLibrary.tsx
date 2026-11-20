@@ -82,7 +82,7 @@ export function BrowserHistory({
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return [...history]
-      .reverse()
+      .sort((a, b) => Date.parse(b.visitedAt) - Date.parse(a.visitedAt))
       .filter(
         (entry) =>
           !normalized ||
@@ -100,7 +100,7 @@ export function BrowserHistory({
       className="browser-library"
       title="Browsing history"
       titleId="history-title"
-      description="Pages you've visited, newest first."
+      description="Showing up to 5,000 recent entries, newest first."
       measure="wide"
       actions={
         <>
@@ -126,6 +126,7 @@ export function BrowserHistory({
         </>
       }
     >
+      {browser.error && <p role="alert" data-testid="history-sync-error">{browser.error}</p>}
       {filtered.length === 0 ? (
         <LibraryEmptyState
           className="library-empty"
@@ -155,7 +156,7 @@ export function BrowserHistory({
                   {new URL(entry.url).hostname.charAt(0).toUpperCase()}
                 </span>
                 <span>
-                  <strong>{entry.title}</strong>
+                  <strong>{entry.title}{entry.provenance === "imported" && " · Imported"}</strong>
                   <small>{entry.url}</small>
                 </span>
                 <time dateTime={entry.visitedAt}>

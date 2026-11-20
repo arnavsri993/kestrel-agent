@@ -85,6 +85,9 @@ describe("signed plugin installer", () => {
 			version: "2.0.0",
 			replacedVersion: "1.0.0",
 		});
+		expect(updated.replacedRecoveryPath).toBeTruthy();
+		expect(existsSync(updated.replacedRecoveryPath!)).toBe(true);
+		expect(installer.inspect(updated.replacedRecoveryPath!).version).toBe("1.0.0");
 		expect(
 			readFileSync(
 				join(managedRoot, "example", "skills", "example", "SKILL.md"),

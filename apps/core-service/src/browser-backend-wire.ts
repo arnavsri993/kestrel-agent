@@ -58,18 +58,21 @@ export const DesktopActionSchema = z.discriminatedUnion("type", [
 			type: z.literal("click"),
 			x: z.number().int().gte(0).lte(20_000),
 			y: z.number().int().gte(0).lte(20_000),
+			captureId: z.string().uuid().optional(),
 		})
 		.strict(),
 	z
 		.object({
 			type: z.literal("type"),
 			text: z.string().min(1).max(20_000),
+			captureId: z.string().uuid().optional(),
 		})
 		.strict(),
 	z
 		.object({
 			type: z.literal("key"),
 			key: z.enum(NAMED_KEYS),
+			captureId: z.string().uuid().optional(),
 		})
 		.strict(),
 ]);

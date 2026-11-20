@@ -28,6 +28,7 @@ import {
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import { BookmarksBar } from "./BookmarksBar";
+import { nativeChromiumFrameShell, nativeChromiumPanel, nativeChromiumSurface, useNativeDocumentTabId } from "../../native-extension-transport";
 import { BrowserToolbar } from "./BrowserToolbar";
 import { BookmarkDialog, type BookmarkDialogSaveInput } from "./BookmarkDialog";
 import { ChromeWebStoreInstallBar } from "./ChromeWebStoreInstallBar";
@@ -107,7 +108,7 @@ export function BrowserWorkspace({
 	onOpenLifeMemory?(): void;
 	projects?: Project[];
 	onProjectsChange(projects: Project[]): void;
-	onSubmitNewTabDraft(draft: NewTabComposerDraft): boolean;
+	onSubmitNewTabDraft(draft: NewTabComposerDraft): boolean | Promise<boolean>;
 }) {
   const reducedMotion = useReducedMotion() ?? false;
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -228,7 +229,9 @@ export function BrowserWorkspace({
     void openOrganizeTabs();
   }, [openOrganizeTabs, organizeTabsRequestId]);
 
-  const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
+  const nativeDocumentTabId = useNativeDocumentTabId();
+  const presentationTabId = nativeChromiumSurface && !nativeChromiumPanel ? nativeDocumentTabId : state?.activeTabId;
+  const activeTab = state?.tabs.find((tab) => tab.id === presentationTabId);
   const prepareTabTransfer = useCallback(async (tabId: string) => {
     const response = await window.kestrel.request({
       type: "browser-prepare-tab-transfer",
@@ -331,7 +334,7 @@ export function BrowserWorkspace({
       setBookmarkDialog(null);
   }, [bookmarkDialog, state?.bookmarks, state?.tabs]);
   const nativePageEligible = Boolean(
-    activeTab?.url &&
+    !nativeChromiumSurface && activeTab?.url &&
       !activeTab.error &&
       !activeTab.blockedNavigation &&
       !activeAppPage &&
@@ -376,7 +379,6 @@ export function BrowserWorkspace({
 	}, [activeChromeWebStoreExtensionId]);
   const inspectChromeWebStoreExtension = useCallback(
     async (urlOrId: string) => {
-			setInstalledChromeWebStoreExtension(null);
       const response = await window.kestrel.request({
         type: "browser-inspect-extension-url",
         urlOrId,
@@ -460,6 +462,7 @@ export function BrowserWorkspace({
   }, []);
 
   const syncBounds = useCallback((visibleOverride?: boolean) => {
+    if (nativeChromiumSurface) return;
     const node = viewportRef.current;
     if (!node) return;
     const rect = node.getBoundingClientRect();
@@ -513,6 +516,7 @@ export function BrowserWorkspace({
   scheduleBoundsSyncRef.current = scheduleBoundsSync;
 
   useLayoutEffect(() => {
+    if (nativeChromiumSurface) return;
     const node = viewportRef.current;
     if (!node) return;
     const syncFromRef = () => syncBoundsRef.current();
@@ -558,6 +562,7 @@ export function BrowserWorkspace({
 
   useEffect(
     () => () => {
+      if (nativeChromiumSurface) return;
       pagePreviewRequestRef.current += 1;
       lastBoundsRef.current = "";
       void setContentBounds({ x: 0, y: 0, width: 0, height: 0 }, false).catch(
@@ -616,6 +621,7 @@ export function BrowserWorkspace({
 
   useEffect(() => {
     function shortcuts(event: KeyboardEvent) {
+      if (nativeChromiumSurface) return;
       if (event.defaultPrevented) return;
       if (bookmarkDialogPresent) return;
 
@@ -867,24 +873,25 @@ export function BrowserWorkspace({
     );
   }
 
-  const showBookmarksBar = state.settings.showBookmarksBar && !activeTab.url;
+  const showBookmarksBar = !nativeChromiumSurface && state.settings.showBookmarksBar && !activeTab.url;
+  const tabLayout = nativeChromiumFrameShell ? "horizontal" : state.settings.tabLayout;
 
   return (
     <main
-      className={`browser-workspace browser-workspace-${state.settings.tabLayout}${
+      className={`browser-workspace browser-workspace-${tabLayout}${
         showBookmarksBar ? " browser-workspace-bookmarks" : ""
       }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}${
         findOpen ? " browser-workspace-find-open" : ""
-      }`}
+      }${nativeChromiumFrameShell ? " browser-workspace-native-frame-shell" : ""}`}
       aria-label="Browser"
     >
       {navigationSidebar}
-      <TabStrip
+      {(!nativeChromiumSurface || nativeChromiumFrameShell) && <TabStrip
         tabs={state.tabs}
         originFavicons={state.originFavicons}
         tabFolders={state.tabFolders}
         activeTabId={state.activeTabId}
-        orientation={state.settings.tabLayout}
+        orientation={tabLayout}
         onSelect={(tabId) => void selectTab(tabId)}
         onClose={(tabId) => closeTab(tabId)}
         onCreate={() => void createTab()}
@@ -916,17 +923,20 @@ export function BrowserWorkspace({
         onTabSizingChange={(tabSizing) => {
           void browser.updateSettings({ tabSizing });
         }}
-        onToggleOrientation={() => {
-          void browser.updateSettings({
-            tabLayout:
-              state.settings.tabLayout === "vertical"
-                ? "horizontal"
-                : "vertical",
-          });
-        }}
-      />
-      <BrowserToolbar
+        {...(!nativeChromiumFrameShell && {
+          onToggleOrientation: () => {
+            void browser.updateSettings({
+              tabLayout:
+                state.settings.tabLayout === "vertical"
+                  ? "horizontal"
+                  : "vertical",
+            });
+          },
+        })}
+      />}
+      {(!nativeChromiumSurface || nativeChromiumFrameShell) && <BrowserToolbar
         tab={activeTab}
+        showExtensionButtons={!nativeChromiumFrameShell}
         history={state.history}
         bookmarks={state.bookmarks}
         tabs={state.tabs}
@@ -1013,7 +1023,7 @@ export function BrowserWorkspace({
           }).catch(() => undefined);
         }}
         onOpenMenu={onOpenMenu}
-      />
+      />}
       {showBookmarksBar && (
         <BookmarksBar
           bookmarks={state.bookmarks}
@@ -1297,6 +1307,7 @@ export function BrowserWorkspace({
           <ExtensionCompatibilityDialog
             key={`extension-compatibility-${extensionInspection.inspectionId}`}
             inspection={extensionInspection}
+            installedVersion={installedChromeWebStoreExtension?.id === extensionInspection.id ? installedChromeWebStoreExtension.version : undefined}
             onCancel={closeExtensionCompatibilityDialog}
             onInstall={installReviewedChromeWebStoreExtension}
           />

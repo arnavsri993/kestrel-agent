@@ -193,6 +193,82 @@ describe("desktop credential broker", () => {
 		).toEqual(key);
 	});
 
+	it("uses an already-opened host key without replacing an existing database or writing another key", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-native-host-key-")); roots.push(root);
+		mkdirSync(join(root, "database"));
+		const database = join(root, "database/kestrel.sqlite"); writeFileSync(database, "preserved-database-fixture");
+		const key = Buffer.alloc(32, 17); let calls = 0;
+		const create = () => new CredentialBroker(root, new PlaintextSecretProtection(), { keyProvider: async () => { ++calls; return key; } });
+		const broker = create();
+		await broker.setCredential("openai", "native-host-fixture-secret");
+		expect((await broker.providerEnvironment({})).OPENAI_API_KEY).toBe("native-host-fixture-secret");
+		expect((await create().providerEnvironment({})).OPENAI_API_KEY).toBe("native-host-fixture-secret");
+		expect(calls).toBe(2);
+		expect(readFileSync(database, "utf8")).toBe("preserved-database-fixture");
+		expect(existsSync(join(root, "secure/database-key.bin"))).toBe(false);
+		expect(readFileSync(join(root, "secure/credentials/openai.bin"), "utf8")).not.toContain("native-host-fixture-secret");
+	});
+
+	it("borrows only an already-resolved host key and wipes each callback copy", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-native-host-key-borrow-")); roots.push(root);
+		mkdirSync(join(root, "database"));
+		const database = join(root, "database/kestrel.sqlite"); writeFileSync(database, "preserved-database-fixture");
+		const key = Buffer.alloc(32, 29);
+		let protectionCalls = 0, providerCalls = 0, releaseProvider!: (value: Buffer) => void, announceProvider!: () => void;
+		const providerStarted = new Promise<void>(resolve => { announceProvider = resolve; });
+		const providerGate = new Promise<Buffer>(resolve => { releaseProvider = resolve; });
+		const broker = new CredentialBroker(root, {
+			isEncryptionAvailable: () => { protectionCalls += 1; return true; },
+			encryptString: async value => Buffer.from(value),
+			decryptString: async value => value.toString(),
+		}, { keyProvider: async () => { providerCalls += 1; announceProvider(); return providerGate; } });
+
+		let refusedCallback = false;
+		await expect(broker.withCachedDatabaseKey(() => { refusedCallback = true; })).rejects.toBeInstanceOf(SecureStorageError);
+		expect(refusedCallback).toBe(false);
+		expect(protectionCalls).toBe(0); expect(providerCalls).toBe(0);
+
+		const loading = broker.getDatabaseKey();
+		await providerStarted;
+		await expect(broker.withCachedDatabaseKey(() => { refusedCallback = true; })).rejects.toBeInstanceOf(SecureStorageError);
+		expect(refusedCallback).toBe(false);
+		expect(protectionCalls).toBe(1); expect(providerCalls).toBe(1);
+		releaseProvider(key);
+		const resolved = await loading;
+		expect(resolved).toEqual(key);
+
+		let callbackCopy: Buffer | undefined;
+		await expect(broker.withCachedDatabaseKey(copy => { callbackCopy = copy; throw new Error("callback fixture failure"); })).rejects.toThrow("callback fixture failure");
+		expect(callbackCopy).toBeDefined();
+		expect(callbackCopy).not.toBe(resolved);
+		expect(callbackCopy).toEqual(Buffer.alloc(32));
+		let successfulCallbackCopy: Buffer | undefined;
+		const returnedCallbackBuffer = await broker.withCachedDatabaseKey(copy => {
+			successfulCallbackCopy = Buffer.from(copy);
+			return copy;
+		});
+		expect(successfulCallbackCopy).toEqual(key);
+		expect(returnedCallbackBuffer).toEqual(Buffer.alloc(32));
+		expect(await broker.getDatabaseKey()).toBe(resolved);
+		expect(protectionCalls).toBe(1); expect(providerCalls).toBe(1);
+		expect(existsSync(join(root, "secure/database-key.bin"))).toBe(false);
+		expect(readFileSync(database, "utf8")).toBe("preserved-database-fixture");
+	});
+
+	it("fails closed for an unavailable or invalid host key and never reflects resolver secrets", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-native-host-key-failure-")); roots.push(root);
+		for (const keyProvider of [async () => Buffer.alloc(31), async () => { throw new Error("private-resolver-fixture"); }]) {
+			const broker = new CredentialBroker(root, new PlaintextSecretProtection(), { keyProvider });
+			await expect(broker.getDatabaseKey()).rejects.toBeInstanceOf(SecureStorageError);
+			await expect(broker.getDatabaseKey()).rejects.not.toThrow("private-resolver-fixture");
+		}
+		let called = false;
+		const unavailable = new CredentialBroker(root, { isEncryptionAvailable: () => false, encryptString: async () => Buffer.alloc(0), decryptString: async () => "" }, { keyProvider: async () => { called = true; return Buffer.alloc(32); } });
+		await expect(unavailable.getDatabaseKey()).rejects.toBeInstanceOf(SecureStorageError);
+		expect(called).toBe(false);
+		expect(existsSync(join(root, "secure/database-key.bin"))).toBe(false);
+	});
+
 	it("migrates safeStorage-wrapped database keys to plaintext on first read", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-safestorage-"));
 		roots.push(root);

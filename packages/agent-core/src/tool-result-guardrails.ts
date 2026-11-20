@@ -1,14 +1,14 @@
-import { createHash } from "node:crypto";
 import type { RuntimeToolExecution } from "@kestrel/shared-types";
+import { screenshotTextOutput } from "./screenshot-model-context";
 
 interface RedactionState {
 	redactions: number;
-	tokens: Map<string, string>;
 	nextTokenByKind: Map<string, number>;
 }
 
-const PRIVATE_KEY_PATTERN =
-	/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
+// Match through KEY before checking the trailing delimiter so malformed
+// headers cannot hide key material. Words and whitespace do not overlap.
+const PRIVATE_KEY_MARKER = /-----(BEGIN|END)[ \t\r\n]+((?:[A-Z0-9]+[ \t\r\n]+)*)PRIVATE[ \t\r\n]+KEY/gi;
 const SENSITIVE_ASSIGNMENT_PATTERN =
 	/\b(api[_ -]?key|access[_ -]?token|auth(?:orization)?|client[_ -]?secret|password|secret|private[_ -]?key|session[_ -]?cookie|credential)\b(\s*[:=]\s*)(["'`]?)([^\s"'`,;&}]{8,})(\3)/gi;
 const ANTHROPIC_KEY_PATTERN = /\bsk-ant-[A-Za-z0-9_-]{16,}\b/g;
@@ -32,22 +32,16 @@ export const MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS = 250_000;
 function createRedactionState(): RedactionState {
 	return {
 		redactions: 0,
-		tokens: new Map(),
 		nextTokenByKind: new Map(),
 	};
 }
 
-function tokenFor(kind: string, value: string, state: RedactionState): string {
-	const fingerprint = createHash("sha256").update(value).digest("hex");
-	const existing = state.tokens.get(fingerprint);
-	if (existing) {
-		state.redactions += 1;
-		return existing;
-	}
+// Mark occurrences, never secret identities. Reusing a marker for equal values
+// lets known candidate values reveal an unknown secret in the same receipt.
+function tokenFor(kind: string, state: RedactionState): string {
 	const next = (state.nextTokenByKind.get(kind) ?? 0) + 1;
 	state.nextTokenByKind.set(kind, next);
 	const token = `[${kind}_${next}]`;
-	state.tokens.set(fingerprint, token);
 	state.redactions += 1;
 	return token;
 }
@@ -80,44 +74,67 @@ function isSensitiveKey(key: string): boolean {
 	);
 }
 
+// Scan each marker once. Ambiguous nested, mismatched or incomplete blocks
+// redact the remainder because it may still contain key material.
+function redactPrivateKeys(value: string, state: RedactionState): string {
+	PRIVATE_KEY_MARKER.lastIndex = 0;
+	const parts: string[] = [];
+	let cursor = 0;
+	let begin: RegExpExecArray | null;
+	while ((begin = PRIVATE_KEY_MARKER.exec(value))) {
+		if (begin[1]!.toUpperCase() !== "BEGIN") continue;
+		const beginComplete = value.startsWith("-----", PRIVATE_KEY_MARKER.lastIndex);
+		if (beginComplete) PRIVATE_KEY_MARKER.lastIndex += 5;
+		const end = beginComplete ? PRIVATE_KEY_MARKER.exec(value) : null;
+		const label = (marker: RegExpExecArray) => marker[2]!.trim().replace(/[ \t\r\n]+/g, " ").toUpperCase();
+		const matches = end?.[1]?.toUpperCase() === "END" && label(end) === label(begin) &&
+			value.startsWith("-----", PRIVATE_KEY_MARKER.lastIndex);
+		const blockEnd = matches ? PRIVATE_KEY_MARKER.lastIndex + 5 : value.length;
+		if (matches) PRIVATE_KEY_MARKER.lastIndex = blockEnd;
+		parts.push(value.slice(cursor, begin.index), tokenFor("PRIVATE_KEY", state));
+		cursor = blockEnd;
+		if (!matches) break;
+	}
+	if (cursor === 0) return value;
+	parts.push(value.slice(cursor));
+	return parts.join("");
+}
+
 function redactText(value: string, state: RedactionState): string {
-	let redacted = value.replace(
-		PRIVATE_KEY_PATTERN,
-		(match) => tokenFor("PRIVATE_KEY", match, state),
-	);
+	let redacted = redactPrivateKeys(value, state);
 	redacted = redacted.replace(
 		SENSITIVE_ASSIGNMENT_PATTERN,
-		(_match, key: string, separator: string, quote: string, secret: string) =>
-			`${key}${separator}${quote}${tokenFor(assignmentKind(key), secret, state)}${quote}`,
+		(_match, key: string, separator: string, quote: string) =>
+			`${key}${separator}${quote}${tokenFor(assignmentKind(key), state)}${quote}`,
 	);
 	redacted = redacted.replace(
 		ANTHROPIC_KEY_PATTERN,
-		(match) => tokenFor("ANTHROPIC_API_KEY", match, state),
+		() => tokenFor("ANTHROPIC_API_KEY", state),
 	);
 	redacted = redacted.replace(
 		OPENAI_KEY_PATTERN,
-		(match) => tokenFor("OPENAI_API_KEY", match, state),
+		() => tokenFor("OPENAI_API_KEY", state),
 	);
 	redacted = redacted.replace(
 		GITHUB_TOKEN_PATTERN,
-		(match) => tokenFor("GITHUB_TOKEN", match, state),
+		() => tokenFor("GITHUB_TOKEN", state),
 	);
 	redacted = redacted.replace(
 		GOOGLE_API_KEY_PATTERN,
-		(match) => tokenFor("GOOGLE_API_KEY", match, state),
+		() => tokenFor("GOOGLE_API_KEY", state),
 	);
 	redacted = redacted.replace(
 		AWS_ACCESS_KEY_PATTERN,
-		(match) => tokenFor("AWS_ACCESS_KEY", match, state),
+		() => tokenFor("AWS_ACCESS_KEY", state),
 	);
 	redacted = redacted.replace(
 		SLACK_TOKEN_PATTERN,
-		(match) => tokenFor("SLACK_TOKEN", match, state),
+		() => tokenFor("SLACK_TOKEN", state),
 	);
 	return redacted.replace(
 		BEARER_TOKEN_PATTERN,
-		(_match, prefix: string, token: string) =>
-			`${prefix}${tokenFor("BEARER_TOKEN", token, state)}`,
+		(_match, prefix: string) =>
+			`${prefix}${tokenFor("BEARER_TOKEN", state)}`,
 	);
 }
 
@@ -133,11 +150,11 @@ function redactValue(
 ): unknown {
 	if (typeof value === "string")
 		return key && isSensitiveKey(key)
-			? tokenFor(assignmentKind(key), value, state)
+			? tokenFor(assignmentKind(key), state)
 			: redactText(value, state);
 	if (typeof value === "number" || typeof value === "boolean")
 		return key && isSensitiveKey(key)
-			? tokenFor(assignmentKind(key), String(value), state)
+			? tokenFor(assignmentKind(key), state)
 			: value;
 	if (Array.isArray(value)) return value.map((item) => redactValue(item, state));
 	if (value && typeof value === "object") {
@@ -154,7 +171,7 @@ function redactValue(
 /**
  * Format a tool result for conversation history and model context.
  *
- * The encrypted execution record remains unchanged; only the model-facing
+ * The original execution record remains unchanged; only the model-facing
  * copy is redacted so a local read of a secret-bearing file or external page
  * cannot replay that secret into a hosted model on a later turn.
  */
@@ -163,7 +180,7 @@ export function modelVisibleToolResult(execution: RuntimeToolExecution): string 
 	const output =
 		execution.output === undefined
 			? undefined
-			: redactValue(execution.output, state);
+			: redactValue(screenshotTextOutput(execution), state);
 	const error = execution.error
 		? redactText(execution.error, state)
 		: undefined;

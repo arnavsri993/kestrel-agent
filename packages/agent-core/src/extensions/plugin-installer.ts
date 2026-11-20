@@ -50,6 +50,8 @@ export interface PluginBundleDigest {
 export interface InstalledPlugin extends VerifiedPluginBundle {
 	installedRoot: string;
 	replacedVersion?: string;
+	/** Exact preserved predecessor, for transactional host rollback. */
+	replacedRecoveryPath?: string;
 }
 
 export interface RemovedPlugin {
@@ -375,6 +377,7 @@ export class PluginInstaller {
 				...bundle,
 				installedRoot: destination,
 				replacedVersion: current.version,
+				replacedRecoveryPath: backup,
 			};
 		} catch (error) {
 			if (existsSync(destination))

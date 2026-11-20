@@ -61,6 +61,136 @@ afterEach(() => {
 });
 
 describe("CoreSupervisor recovery", () => {
+	it("restores only its retained protected configuration after a clean maintenance stop", async () => {
+		const children: FakeCoreProcess[] = [];
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: () => { const child = new FakeCoreProcess(); children.push(child); return child; } });
+		await expect(supervisor.resumeLastConfiguration()).rejects.toThrow("clean maintenance stop");
+		expect(children).toHaveLength(0);
+		const original = { ...config, workspaceRoots: ["/tmp/selected"], secureEnvironment: { OPENAI_API_KEY: "retained-fixture-value" }, hostToolNames: ["browser.visible-tabs"] };
+		const started = supervisor.start(original); children[0]!.ready(); await started;
+		await expect(supervisor.resumeLastConfiguration()).rejects.toThrow("clean maintenance stop");
+		children[0]!.exitOnShutdown = true; await supervisor.stop({ requireCleanExit: true });
+		original.secureEnvironment.OPENAI_API_KEY = "later-caller-value"; original.workspaceRoots.push("/tmp/unreviewed"); original.hostToolNames.push("unreviewed-tool");
+		const resumed = supervisor.resumeLastConfiguration();
+		expect(children).toHaveLength(2);
+		expect(children[1]!.messages[0]).toMatchObject({ type: "bootstrap", config: { workspaceRoots: ["/tmp/selected"], secureEnvironment: { OPENAI_API_KEY: "retained-fixture-value" }, hostToolNames: ["browser.visible-tabs"] } });
+		await expect(supervisor.resumeLastConfiguration()).rejects.toThrow("clean maintenance stop");
+		children[1]!.ready(); await resumed; children[1]!.exitOnShutdown = true; await supervisor.stop();
+	});
+	it("does not resume a forced or unconfirmed maintenance stop", async () => {
+		vi.useFakeTimers(); const child = new FakeCoreProcess(); const factory = vi.fn(() => child);
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: factory });
+		const started = supervisor.start(config); child.ready(); await started;
+		const stopped = supervisor.stop(); await vi.advanceTimersByTimeAsync(2500); await stopped;
+		await expect(supervisor.resumeLastConfiguration()).rejects.toThrow("clean maintenance stop"); expect(factory).toHaveBeenCalledTimes(1);
+	});
+	it("rejects raw invalid pending metadata without spawning a child", async () => {
+		const spawn = vi.fn(() => new FakeCoreProcess());
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: spawn });
+		const project = { id: "project-one", name: "Project", path: "/tmp/project", order: 0, createdAt: "2026-07-22T15:00:00.000Z", updatedAt: "2026-07-22T15:00:00.000Z" };
+		for (const pending of ["abc", ["same", "same"], [""], [project.id], Array(1)]) {
+			await expect(supervisor.start({ ...config, projects: [project], pendingProjectIds: pending as string[] })).rejects.toThrow();
+			expect(spawn).not.toHaveBeenCalled();
+		}
+	});
+	it("copies pending project IDs for bootstrap and recovery", async () => {
+		vi.useFakeTimers();
+		const processes: FakeCoreProcess[] = [];
+		const supervisor = new CoreSupervisor(undefined, undefined, {
+			processFactory: () => { const child = new FakeCoreProcess(); processes.push(child); return child; },
+			restartDelaysMs: [10], startupTimeoutMs: 500,
+		});
+		const pendingProjectIds = ["pending-project"];
+		const started = supervisor.start({ ...config, pendingProjectIds });
+		processes[0]!.ready();
+		await started;
+		pendingProjectIds.push("caller-mutation");
+		const recovered = once(supervisor, "recovered");
+		processes[0]!.crash();
+		await vi.advanceTimersByTimeAsync(10);
+		expect(processes[1]!.messages[0]).toMatchObject({ type: "bootstrap", config: { pendingProjectIds: ["pending-project"] } });
+		processes[1]!.ready();
+		await recovered;
+		processes[1]!.exitOnShutdown = true;
+		await supervisor.stop();
+	});
+	it("retains a non-exiting owner, escalates termination, and blocks a replacement", async () => {
+		vi.useFakeTimers();
+		const child = new FakeCoreProcess();
+		const signals: Array<NodeJS.Signals | undefined> = [];
+		child.kill = (signal?: NodeJS.Signals) => { signals.push(signal); return true; };
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: () => child });
+		const started = supervisor.start(config); child.ready(); await started;
+		const stop = supervisor.stop();
+		const rejected = expect(stop).rejects.toMatchObject({ exitConfirmed: false });
+		await vi.advanceTimersByTimeAsync(7_000);
+		await rejected;
+		expect(signals).toEqual([undefined, "SIGKILL"]);
+		expect(supervisor.hasProcess).toBe(true);
+		await expect(supervisor.start(config)).rejects.toThrow("still stopping");
+		child.crash(9);
+		expect(supervisor.hasProcess).toBe(false);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("does not declare a forced exit clean and shares concurrent shutdown ownership", async () => {
+		vi.useFakeTimers();
+		const child = new FakeCoreProcess();
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: () => child });
+		const started = supervisor.start(config); child.ready(); await started;
+		const ordinary = supervisor.stop();
+		const strict = supervisor.stop({ requireCleanExit: true });
+		const rejected = expect(strict).rejects.toMatchObject({ exitConfirmed: true });
+		await vi.advanceTimersByTimeAsync(2_000);
+		await ordinary; await rejected;
+		expect(child.messages.filter(message => (message as { type: string }).type === "shutdown")).toHaveLength(1);
+		expect(supervisor.hasProcess).toBe(false);
+	});
+	it("expedites the same maintenance stop on Quit without waiting for its clean-stop deadline", async () => {
+		vi.useFakeTimers();
+		const child = new FakeCoreProcess();
+		const terminate = vi.spyOn(child, "kill");
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: () => child });
+		const started = supervisor.start(config); child.ready(); await started;
+		const maintenance = supervisor.stop({ requireCleanExit: true, gracefulTimeoutMs: 60_000 });
+		const rejected = expect(maintenance).rejects.toMatchObject({ exitConfirmed: true });
+		const quitting = supervisor.stop({ gracefulTimeoutMs: 0 });
+		await vi.advanceTimersByTimeAsync(250);
+		await quitting;
+		await rejected;
+		expect(terminate).toHaveBeenCalledOnce();
+		expect(supervisor.hasProcess).toBe(false);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("observes the exit before browser cleanup and accepts only a clean backup stop", async () => {
+		let finishCleanup!: () => void;
+		const cleanup = new Promise<void>(resolve => { finishCleanup = resolve; });
+		const child = new FakeCoreProcess();
+		const supervisor = new CoreSupervisor(undefined, () => cleanup, { processFactory: () => child });
+		const started = supervisor.start(config); child.ready(); await started;
+		const stopped = supervisor.stop({ requireCleanExit: true });
+		await expect(supervisor.start(config)).rejects.toThrow("still stopping");
+		child.emit("exit", 0); finishCleanup(); await stopped;
+		expect(supervisor.hasProcess).toBe(false);
+	});
+
+	it.each(["timeout", "start-error"])("retains an uncertain %s startup owner until actual exit", async (failure) => {
+		vi.useFakeTimers();
+		const child = new FakeCoreProcess();
+		child.kill = () => true;
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: () => child, startupTimeoutMs: 20 });
+		const started = supervisor.start(config);
+		const rejected = expect(started).rejects.toThrow();
+		if (failure === "timeout") await vi.advanceTimersByTimeAsync(20);
+		else child.emit("message", { type: "start-error", error: "Generated startup failure" });
+		await rejected;
+		expect(supervisor.hasProcess).toBe(true);
+		await expect(supervisor.start(config)).rejects.toThrow("already running");
+		child.ready(); expect(supervisor.isReady).toBe(false);
+		child.crash(); expect(supervisor.hasProcess).toBe(false);
+	});
+
 	it.each(["throw", "reject"])("stops the core even when browser cleanup fails via %s", async (failure) => {
 		const child = new FakeCoreProcess();
 		child.exitOnShutdown = true;

@@ -6,16 +6,21 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
+import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const app = await buildNativeChromiumHost();
+const app = process.env.KESTREL_NATIVE_TEST_APP
+	? resolve(process.env.KESTREL_NATIVE_TEST_APP)
+	: await buildNativeChromiumHost();
 const executable = join(app, "Contents", "MacOS", "Kestrel");
 // Older CEF builds started GCM registration shortly after startup, after the
 // host-ready marker. Keep each clean-profile instance alive long enough to
 // prove that the bundled runtime remains quiet after its UI and Core relay are
 // both active.
 const backgroundRegistrationObservationMs = 15_000;
-const missingProfile = spawnSync(executable, [], {
+// Select the explicit desktop route so a no-profile probe fails closed instead
+// of opening Kestrel's first-run default-profile chooser.
+const missingProfile = spawnSync(executable, ["--kestrel-chromium-desktop"], {
 	encoding: "utf8",
 	timeout: 10_000,
 });
@@ -26,7 +31,7 @@ assert.equal(
 );
 assert.match(
 	`${missingProfile.stdout}${missingProfile.stderr}`,
-	/requires an explicit isolated profile path/,
+	/Native Chromium requires an explicit isolated profile/,
 );
 const directProfile = await mkdtemp(
 	join(tmpdir(), "kestrel-native-chromium-direct-profile-"),
@@ -87,6 +92,33 @@ function processTree(rootPid) {
 }
 const activeChildren = new Set();
 
+function waitForExit(child, timeoutMs) {
+	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+	return new Promise((resolvePromise) => {
+		const timer = setTimeout(() => {
+			child.removeListener("exit", onExit);
+			resolvePromise(false);
+		}, timeoutMs);
+		function onExit() {
+			clearTimeout(timer);
+			resolvePromise(true);
+		}
+		child.once("exit", onExit);
+	});
+}
+
+async function waitForProfileProcessesToExit(profiles, timeoutMs) {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const rows = execFileSync("/bin/ps", ["-axo", "command="], { encoding: "utf8" })
+			.split("\n")
+			.filter((command) => profiles.some((profile) => command.includes(profile)));
+		if (rows.length === 0) return true;
+		await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+	}
+	return false;
+}
+
 async function startNativeHost(args, requiredMarkers, label) {
 	let output = "";
 	const child = spawn(executable, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -131,7 +163,7 @@ async function startNativeHost(args, requiredMarkers, label) {
 function assertHostSecurity(output, label) {
 	assert.match(
 		output,
-		/KESTREL_NATIVE_CHROMIUM_HOST_READY pid=\d+ credential_storage=disabled background_networking=disabled/,
+		/KESTREL_NATIVE_CHROMIUM_HOST_READY pid=\d+ credential_storage=profile-sealed chromium_keychain=mock background_networking=disabled/,
 		`${label} must avoid Keychain and background networking: ${output}`,
 	);
 	assert.doesNotMatch(
@@ -178,8 +210,8 @@ function assertSandboxedWorkers(child, label) {
 function assertFullRendererSetupStatus(output) {
 	assert.match(
 		output,
-		/KESTREL_NATIVE_CHROMIUM_CREDENTIAL_STATUS_EMPTY/,
-		`The native full renderer must receive an empty credential status without Keychain: ${output}`,
+		/KESTREL_NATIVE_CHROMIUM_CREDENTIAL_LIST_OK mode=profile-sealed/,
+		`The native full renderer must receive profile-sealed credential status without Keychain: ${output}`,
 	);
 	assert.match(
 		output,
@@ -194,11 +226,14 @@ function assertFullRendererSetupStatus(output) {
 }
 
 try {
+	await markDisposableNativeTestProfile(directProfile);
 	const direct = await startNativeHost(
 		[
 			"--kestrel-cache-path",
 			directProfile,
 			"--kestrel-ephemeral-core",
+			"--kestrel-durable-profile",
+			"--kestrel-test-profile-key",
 			"--kestrel-renderer",
 			"--kestrel-smoke-user-browser-url",
 			directUserBrowserUrl,
@@ -232,12 +267,15 @@ try {
 	assertFullRendererSetupStatus(directOutput);
 
 	for (const [index, bridgeProfile] of bridgeProfiles.entries()) {
+		await markDisposableNativeTestProfile(bridgeProfile);
 		const label = `the static-shell bridge browser smoke #${index + 1}`;
 		const bridge = await startNativeHost(
 		[
 			"--kestrel-cache-path",
 			bridgeProfile,
 			"--kestrel-ephemeral-core",
+			"--kestrel-durable-profile",
+			"--kestrel-test-profile-key",
 			"--kestrel-smoke-bridge-user-browser-url",
 			bridgeUserBrowserUrl,
 			"--kestrel-exit-after-ready-ms",
@@ -276,10 +314,28 @@ try {
 	}
 	console.log("Native Chromium host: bundled CEF, isolated profiles, standalone Node Core relay, full Kestrel renderer, bridge-created user tab, sandbox-default process tree, and orderly shutdown passed.");
 } finally {
-	for (const child of activeChildren) {
-		if (child.exitCode === null) child.kill("SIGTERM");
+	const children = [...activeChildren];
+	let shutdownError;
+	for (const child of children) {
+		if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+	}
+	for (const child of children) {
+		const graceful = await waitForExit(child, 5_000);
+		if (!graceful) {
+			child.kill("SIGKILL");
+			const stopped = await waitForExit(child, 5_000);
+			if (!stopped) shutdownError ??= new Error("Native Chromium smoke process did not exit; preserving its generated profiles.");
+		}
 	}
 	await new Promise((resolvePromise) => userBrowserServer.close(resolvePromise));
+	try {
+		if (!await waitForProfileProcessesToExit([directProfile, ...bridgeProfiles], 5_000)) {
+			shutdownError ??= new Error("Native Chromium helpers still reference generated profiles; preserving them.");
+		}
+	} catch (error) {
+		shutdownError ??= error;
+	}
+	if (shutdownError) throw shutdownError;
 	await rm(directProfile, { recursive: true, force: true });
 	await Promise.all(
 		bridgeProfiles.map((profile) => rm(profile, { recursive: true, force: true })),

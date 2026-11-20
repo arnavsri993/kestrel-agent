@@ -40,11 +40,14 @@ int main(int argc, char* argv[]) {
 
   CefMainArgs main_args(argc, argv);
   bool extension_workbench = false;
+  bool user_extensions_enabled = false;
   for (int index = 1; index < argc; ++index) {
     if (std::strcmp(argv[index], "--kestrel-extension-workbench") == 0)
       extension_workbench = true;
+    if (std::strcmp(argv[index], "--kestrel-user-extensions") == 0)
+      user_extensions_enabled = true;
   }
-  CefRefPtr<KestrelChromiumApp> app(
-      new KestrelChromiumApp({}, extension_workbench));
+  CefRefPtr<KestrelChromiumApp> app(new KestrelChromiumApp(
+      {}, extension_workbench, user_extensions_enabled));
   return CefExecuteProcess(main_args, app.get(), nullptr);
 }

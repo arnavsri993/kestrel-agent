@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	PROVIDER_CONNECT_TIMEOUT_MS,
+	PROVIDER_RESPONSE_TIMEOUT_MS,
+	MAX_TRUSTED_PROVIDER_CONNECT_TIMEOUT_MS,
 	providerFetch,
 	quotaFromResponseHeaders,
 } from "./http";
@@ -86,32 +88,71 @@ describe("provider HTTP helpers", () => {
 		}
 	});
 
-	it("bounds provider connect with AbortSignal.any and the caller signal", async () => {
+	it("keeps caller cancellation attached after response headers", async () => {
 		let requestSignal: AbortSignal | undefined;
 		const originalFetch = globalThis.fetch;
 		globalThis.fetch = async (_input, init) => {
 			requestSignal = init?.signal ?? undefined;
-			return new Response(null, { status: 204 });
+			return new Response(
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						requestSignal?.addEventListener("abort", () =>
+							controller.error(requestSignal?.reason),
+						);
+					},
+				}),
+			);
 		};
 		const caller = new AbortController();
 		try {
-			await providerFetch("fixture", "https://provider.example.test", {
-				signal: caller.signal,
-			});
+			const response = await providerFetch(
+				"fixture",
+				"https://provider.example.test",
+				{ signal: caller.signal },
+				{ connectTimeoutMs: MAX_TRUSTED_PROVIDER_CONNECT_TIMEOUT_MS },
+			);
 			expect(requestSignal).toBeDefined();
 			expect(requestSignal!.aborted).toBe(false);
 			caller.abort();
 			expect(requestSignal!.aborted).toBe(true);
+			await expect(response.body!.getReader().read()).rejects.toMatchObject({
+				name: "AbortError",
+			});
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
 	});
 
-	it("times out hung provider connects before the agent-level deadline", async () => {
-		const timeoutController = new AbortController();
-		const timeoutSpy = vi
-			.spyOn(AbortSignal, "timeout")
-			.mockReturnValue(timeoutController.signal);
+	it("clears the connect deadline at headers so a slow response body can continue", async () => {
+		vi.useFakeTimers();
+		let requestSignal: AbortSignal | undefined;
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async (_input, init) => {
+			requestSignal = init?.signal ?? undefined;
+			return new Response(
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						requestSignal?.addEventListener("abort", () =>
+							controller.error(requestSignal?.reason),
+						);
+					},
+				}),
+			);
+		};
+		try {
+			const response = await providerFetch("fixture", "https://provider.example.test", {});
+			await vi.advanceTimersByTimeAsync(PROVIDER_CONNECT_TIMEOUT_MS);
+			expect(requestSignal?.aborted).toBe(false);
+			expect(response.status).toBe(200);
+		} finally {
+			vi.useRealTimers();
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("times out hung provider connects and clears its deadline on failure", async () => {
+		vi.useFakeTimers();
+		const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
 		const originalFetch = globalThis.fetch;
 		globalThis.fetch = async (_input, init) =>
 			new Promise((_resolve, reject) => {
@@ -127,13 +168,61 @@ describe("provider HTTP helpers", () => {
 				"https://provider.example.test",
 				{},
 			);
-			timeoutController.abort(new DOMException("Timed out", "TimeoutError"));
-			await expect(pending).rejects.toMatchObject({
+			const rejection = expect(pending).rejects.toMatchObject({
 				message: `Provider connect timed out after ${PROVIDER_CONNECT_TIMEOUT_MS / 1_000}s.`,
 				providerId: "fixture",
 				retryable: true,
 			});
-			expect(timeoutSpy).toHaveBeenCalledWith(PROVIDER_CONNECT_TIMEOUT_MS);
+			await vi.advanceTimersByTimeAsync(PROVIDER_CONNECT_TIMEOUT_MS);
+			await rejection;
+			expect(clearTimeoutSpy).toHaveBeenCalled();
+		} finally {
+			clearTimeoutSpy.mockRestore();
+			vi.useRealTimers();
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("rejects trusted connect deadlines above the fixed cap", async () => {
+		await expect(
+			providerFetch(
+				"fixture",
+				"https://provider.example.test",
+				{},
+				{ connectTimeoutMs: MAX_TRUSTED_PROVIDER_CONNECT_TIMEOUT_MS + 1 },
+			),
+		).rejects.toThrow("Provider connect timeout is outside the trusted bound.");
+	});
+
+	it("bounds a response body without a caller signal", async () => {
+		const lifetimeController = new AbortController();
+		const timeoutSpy = vi
+			.spyOn(AbortSignal, "timeout")
+			.mockReturnValue(lifetimeController.signal);
+		let requestSignal: AbortSignal | undefined;
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async (_input, init) => {
+			requestSignal = init?.signal ?? undefined;
+			return new Response(
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						requestSignal?.addEventListener("abort", () =>
+							controller.error(requestSignal?.reason),
+						);
+					},
+				}),
+			);
+		};
+		try {
+			const response = await providerFetch("fixture", "https://provider.example.test", {});
+			expect(requestSignal?.aborted).toBe(false);
+			expect(PROVIDER_RESPONSE_TIMEOUT_MS).toBeLessThanOrEqual(30 * 60_000);
+			expect(timeoutSpy).toHaveBeenCalledWith(PROVIDER_RESPONSE_TIMEOUT_MS);
+			lifetimeController.abort(new DOMException("Response timed out", "TimeoutError"));
+			expect(requestSignal?.aborted).toBe(true);
+			await expect(response.body!.getReader().read()).rejects.toMatchObject({
+				name: "TimeoutError",
+			});
 		} finally {
 			timeoutSpy.mockRestore();
 			globalThis.fetch = originalFetch;

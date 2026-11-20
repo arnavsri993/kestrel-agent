@@ -32,9 +32,10 @@ import {
 	recordBrowserRecoveryToolSuccess,
 	type BrowserRecoveryBudgetState,
 } from "./browser-recovery";
-import { prematureBrowserCompletionErrorForRun } from "./agent-run-completion";
+import { computerCompletionError, prematureBrowserCompletionErrorForRun } from "./agent-run-completion";
 import type { AgentRuntime } from "./runtime";
 import { modelVisibleToolResult } from "./tool-result-guardrails";
+import { isScreenshotTool, screenshotModelContext, screenshotObservationKey, screenshotRouteDigest } from "./screenshot-model-context";
 import { UsageGovernor } from "./usage-governor";
 import {
 	decideAdaptiveExecution,
@@ -1030,13 +1031,22 @@ export class AgentLoop {
 				this.saveActiveRun(run);
 				const workspaceRoot = this.runtime.activeWorkspaceRoot(session.id);
 				let poolResult;
+				let observedScreenshotExecutionId: string | undefined;
 				const lease = this.usageGovernor.acquire();
 				try {
 					this.runtime.assertConversationResourceAccess(run.sessionId, run.id);
+					const screenshotContext = screenshotModelContext({
+						run, messages: modelMessages,
+						observation: this.database.getPrivateState(screenshotObservationKey(run.id)),
+						getExecution: id => this.database.getToolExecution(id),
+						supportsImages: id => this.providers.list().some(provider => provider.id === id && provider.capabilities.images),
+						now: this.now().getTime(),
+					});
+					observedScreenshotExecutionId = screenshotContext.observedExecutionId;
 					poolResult = await this.providers.complete(
 						{
-							model: run.model,
-							messages: modelMessages,
+							model: screenshotContext.pinnedProvider?.model ?? run.model,
+							messages: screenshotContext.messages,
 							tools,
 							metadata: {
 								session_id: session.id,
@@ -1054,11 +1064,15 @@ export class AgentLoop {
 									: {}),
 						},
 						{
-							...(run.providerIds.includes("auto")
+							...(screenshotContext.pinnedProvider
+								? { providerIds: [screenshotContext.pinnedProvider.id] }
+								: run.providerIds.includes("auto")
 								? {}
 								: { providerIds: run.providerIds }),
-							automaticRouting: run.providerIds.includes("auto"),
-							...(run.providerModels
+							automaticRouting: !screenshotContext.pinnedProvider && run.providerIds.includes("auto"),
+							...(screenshotContext.pinnedProvider
+								? { providerModels: { [screenshotContext.pinnedProvider.id]: screenshotContext.pinnedProvider.model } }
+								: run.providerModels
 								? { providerModels: run.providerModels }
 								: {}),
 							costScore: (providerId, model) =>
@@ -1244,6 +1258,15 @@ export class AgentLoop {
 				if (result.toolCalls.length === 0) {
 					if (consumeSteering() > 0) continue;
 					const prematureCompletion =
+						computerCompletionError({ runId: run.id, sessionId: session.id,
+							observedExecutionId: observedScreenshotExecutionId,
+							listExecutions: id => {
+								// Do not decrypt every historical screenshot merely to
+								// finish a conversation. Inspect input rows and this frame.
+								const actions = this.database.listToolExecutions(id, "computer.act");
+								const frame = observedScreenshotExecutionId ? this.database.getToolExecution(observedScreenshotExecutionId) : undefined;
+								return frame ? [...actions, frame] : actions;
+							} }) ??
 						prematureBrowserCompletionErrorForRun(this.database, {
 							runId: run.id,
 							sessionId: session.id,
@@ -1383,6 +1406,12 @@ export class AgentLoop {
 								saveBrowserRecoveryState();
 							}
 						}
+					}
+					if (execution.status === "verified" && isScreenshotTool(execution.toolName)) {
+						this.database.setPrivateState(screenshotObservationKey(run.id), {
+							version: 1, executionId: execution.id, providerId: result.providerId,
+							model: result.model, routeSha256: screenshotRouteDigest(run),
+						});
 					}
 					const content = modelVisibleToolResult(modelExecution);
 					if (execution.status === "blocked") {

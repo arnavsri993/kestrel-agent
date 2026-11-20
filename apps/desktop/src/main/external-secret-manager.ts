@@ -1,15 +1,16 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { constants, type BigIntStats } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import {
 	chmod,
 	lstat,
 	mkdir,
 	open,
 	readFile,
+	readdir,
 	realpath,
 	rename,
 	rm,
-	writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
@@ -51,6 +52,405 @@ type SourceVerification = {
 type VerificationState = Partial<
 	Record<ExternalSecretProviderId, SourceVerification>
 >;
+
+interface PrivateFileIdentity {
+	dev: string;
+	ino: string;
+	uid: string;
+	mode: number;
+	nlink: number;
+	size: number;
+	mtimeNs: string;
+	ctimeNs: string;
+}
+
+interface PrivateDirectoryIdentity {
+	dev: string;
+	ino: string;
+	uid: string;
+	mode: number;
+}
+
+interface VerificationSnapshot {
+	verification: VerificationState;
+	valid: boolean;
+	directory?: PrivateDirectoryIdentity;
+	file?: PrivateFileIdentity;
+}
+
+const VERIFICATION_MAX_BYTES = 64 * 1024;
+const BITWARDEN_MANIFEST_MAX_BYTES = 16 * 1024;
+const BITWARDEN_BINARY_MAX_BYTES = 128 * 1024 * 1024;
+const PROVIDER_IDS = ["onepassword", "bitwarden", "command"] as const;
+const CREDENTIAL_IDS = new Set(Object.keys(BROKERED_CREDENTIALS));
+
+function verificationDetail(state: SourceVerification["state"]): string {
+	return state === "verified"
+		? "Supported provider credentials resolved."
+		: "Secret source could not be verified.";
+}
+
+function sameFileIdentity(
+	left: PrivateFileIdentity,
+	right: PrivateFileIdentity,
+): boolean {
+	return Object.keys(left).every((key) =>
+		left[key as keyof PrivateFileIdentity] === right[key as keyof PrivateFileIdentity],
+	);
+}
+
+function fileIdentity(stat: BigIntStats): PrivateFileIdentity {
+	return {
+		dev: String(stat.dev),
+		ino: String(stat.ino),
+		uid: String(stat.uid),
+		mode: Number(stat.mode) & 0o7777,
+		nlink: Number(stat.nlink),
+		size: Number(stat.size),
+		mtimeNs: String(stat.mtimeNs),
+		ctimeNs: String(stat.ctimeNs),
+	};
+}
+
+function directoryIdentity(stat: BigIntStats): PrivateDirectoryIdentity {
+	return {
+		dev: String(stat.dev),
+		ino: String(stat.ino),
+		uid: String(stat.uid),
+		mode: Number(stat.mode) & 0o7777,
+	};
+}
+
+function sameDirectoryIdentity(
+	left: PrivateDirectoryIdentity,
+	right: PrivateDirectoryIdentity,
+): boolean {
+	return left.dev === right.dev && left.ino === right.ino &&
+		left.uid === right.uid && left.mode === right.mode;
+}
+
+function parseVerificationState(value: unknown): VerificationState | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const result: VerificationState = {};
+	for (const [providerId, raw] of Object.entries(value)) {
+		if (!(PROVIDER_IDS as readonly string[]).includes(providerId) ||
+			!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+		const record = raw as Record<string, unknown>;
+		if (Object.keys(record).sort().join(",") !==
+			["detail", "lastSyncedAt", "resolvedCredentialIds", "state"].sort().join(",") ||
+			(record.state !== "verified" && record.state !== "error") ||
+			typeof record.detail !== "string" || record.detail.length > 512 ||
+			typeof record.lastSyncedAt !== "string" ||
+			!Array.isArray(record.resolvedCredentialIds) ||
+			record.resolvedCredentialIds.length > CREDENTIAL_IDS.size) return undefined;
+		const parsedDate = new Date(record.lastSyncedAt);
+		if (!Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString() !== record.lastSyncedAt)
+			return undefined;
+		const ids: BrokeredCredentialId[] = [];
+		for (const id of record.resolvedCredentialIds) {
+			if (typeof id !== "string" || !CREDENTIAL_IDS.has(id) || ids.includes(id as BrokeredCredentialId))
+				return undefined;
+			ids.push(id as BrokeredCredentialId);
+		}
+		if ((record.state === "verified" && ids.length === 0) ||
+			(record.state === "error" && ids.length !== 0)) return undefined;
+		const state = record.state;
+		result[providerId as ExternalSecretProviderId] = {
+			state,
+			detail: verificationDetail(state),
+			resolvedCredentialIds: ids,
+			lastSyncedAt: record.lastSyncedAt,
+		};
+	}
+	return result;
+}
+
+function sameIdentity(left: PrivateFileIdentity, right: PrivateFileIdentity): boolean {
+	return sameFileIdentity(left, right);
+}
+
+async function hashPrivateFile(path: string, expectedMode: number): Promise<{ sha256: string; bytes: number }> {
+	const owner = typeof process.getuid === "function" ? process.getuid() : undefined;
+	const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+	try {
+		const before = await handle.stat({ bigint: true });
+		const identity = fileIdentity(before);
+		if (!before.isFile() || identity.nlink !== 1 || identity.mode !== expectedMode ||
+			identity.size > BITWARDEN_BINARY_MAX_BYTES ||
+			(owner !== undefined && Number(before.uid) !== owner))
+			throw new Error("The managed Bitwarden CLI file is unsafe.");
+		const digest = createHash("sha256");
+		let bytes = 0;
+		for (;;) {
+			const buffer = Buffer.alloc(64 * 1024);
+			const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+			if (!bytesRead) break;
+			bytes += bytesRead;
+			if (bytes > BITWARDEN_BINARY_MAX_BYTES)
+				throw new Error("The managed Bitwarden CLI binary exceeds its size limit.");
+			digest.update(buffer.subarray(0, bytesRead));
+		}
+		const after = fileIdentity(await handle.stat({ bigint: true }));
+		const pathIdentity = fileIdentity(await lstat(path, { bigint: true }));
+		if (!sameIdentity(identity, after) || !sameIdentity(identity, pathIdentity) || bytes !== identity.size)
+			throw new Error("The managed Bitwarden CLI file changed during verification.");
+		return { sha256: digest.digest("hex"), bytes };
+	} finally {
+		await handle.close();
+	}
+}
+
+async function readPrivateFile(path: string, expectedMode: number, maxBytes: number): Promise<Buffer> {
+	const owner = typeof process.getuid === "function" ? process.getuid() : undefined;
+	const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+	try {
+		const beforeStat = await handle.stat({ bigint: true });
+		const before = fileIdentity(beforeStat);
+		if (!beforeStat.isFile() || before.mode !== expectedMode || before.nlink !== 1 || before.size > maxBytes ||
+			(owner !== undefined && Number(before.uid) !== owner))
+			throw new Error("The managed Bitwarden CLI file is unsafe.");
+		const parts: Buffer[] = [];
+		let bytes = 0;
+		for (;;) {
+			const buffer = Buffer.alloc(Math.min(8192, maxBytes + 1 - bytes));
+			const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+			if (!bytesRead) break;
+			bytes += bytesRead;
+			if (bytes > maxBytes) throw new Error("The managed Bitwarden CLI file exceeds its limit.");
+			parts.push(buffer.subarray(0, bytesRead));
+		}
+		const after = fileIdentity(await handle.stat({ bigint: true }));
+		const pathAfter = fileIdentity(await lstat(path, { bigint: true }));
+		if (!sameIdentity(before, after) || !sameIdentity(before, pathAfter) || bytes !== before.size)
+			throw new Error("The managed Bitwarden CLI file changed during verification.");
+		return Buffer.concat(parts);
+	} finally {
+		await handle.close();
+	}
+}
+
+async function writePrivateExclusive(path: string, contents: Buffer, mode: number): Promise<PrivateFileIdentity> {
+	const handle = await open(
+		path,
+		constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+		mode,
+	);
+	let before: PrivateFileIdentity;
+	try {
+		before = fileIdentity(await handle.stat({ bigint: true }));
+		let offset = 0;
+		while (offset < contents.length) {
+			const { bytesWritten } = await handle.write(contents, offset, contents.length - offset, null);
+			if (bytesWritten <= 0) throw new Error("The managed Bitwarden CLI file could not be written.");
+			offset += bytesWritten;
+		}
+		await handle.sync();
+		const after = fileIdentity(await handle.stat({ bigint: true }));
+		if (after.dev !== before.dev || after.ino !== before.ino || after.uid !== before.uid ||
+			after.nlink !== 1 || after.mode !== mode || after.size !== contents.length)
+			throw new Error("The managed Bitwarden CLI file changed while being written.");
+		return after;
+	} finally {
+		await handle.close();
+	}
+}
+
+async function managedBitwardenDirectoryMatches(
+	directory: string,
+	expected: Record<string, unknown>,
+): Promise<boolean> {
+	try {
+		const owner = typeof process.getuid === "function" ? process.getuid() : undefined;
+		const root = await lstat(directory, { bigint: true });
+		if (!root.isDirectory() || root.isSymbolicLink() || (Number(root.mode) & 0o7777) !== 0o700 ||
+			(owner !== undefined && Number(root.uid) !== owner)) return false;
+		const marker = JSON.parse((await readPrivateFile(
+			join(directory, "workstrand-install.json"), 0o600, BITWARDEN_MANIFEST_MAX_BYTES,
+		)).toString("utf8")) as Record<string, unknown>;
+		const binary = await hashPrivateFile(join(directory, "bws"), 0o700);
+		return marker.version === expected.version && marker.sha256 === expected.sha256 &&
+			marker.binarySha256 === binary.sha256 && marker.binaryBytes === binary.bytes;
+	} catch {
+		return false;
+	}
+}
+
+/** Preserve an incomplete private managed install in a unique recovery folder. */
+export async function preservePrivateManagedBitwardenDirectoryIfIncomplete(input: {
+	finalDirectory: string;
+	expectedMarker: Record<string, unknown>;
+}): Promise<string | undefined> {
+	const owner = typeof process.getuid === "function" ? process.getuid() : undefined;
+	const parentPath = dirname(input.finalDirectory);
+	const parent = await lstat(parentPath, { bigint: true });
+	const parentIdentity = directoryIdentity(parent);
+	const parentRealPath = await realpath(parentPath);
+	if (!parent.isDirectory() || parent.isSymbolicLink() ||
+		(owner !== undefined && Number(parent.uid) !== owner) ||
+		(Number(parent.mode) & 0o7777) !== 0o700)
+		throw new Error("The managed Bitwarden CLI recovery location is unsafe.");
+
+	let current: Awaited<ReturnType<typeof lstat>>;
+	try {
+		current = await lstat(input.finalDirectory, { bigint: true });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw new Error("The managed Bitwarden CLI install cannot be preserved safely.");
+	}
+	const currentIdentity = directoryIdentity(current);
+	const currentMode = Number(current.mode) & 0o7777;
+	if (!current.isDirectory() || current.isSymbolicLink() || currentMode !== 0o700 ||
+		(owner !== undefined && Number(current.uid) !== owner) ||
+		await realpath(input.finalDirectory) !== join(parentRealPath, input.finalDirectory.slice(parentPath.length + 1)))
+		throw new Error("The managed Bitwarden CLI install cannot be preserved safely.");
+	if (await managedBitwardenDirectoryMatches(input.finalDirectory, input.expectedMarker))
+		throw new Error("A verified managed Bitwarden CLI install already exists.");
+
+	const parentHandle = await open(parentPath, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0));
+	let sourceHandle: Awaited<ReturnType<typeof open>> | undefined;
+	let recoveryHandle: Awaited<ReturnType<typeof open>> | undefined;
+	const reservation = join(parentPath, `.bws-preserved-${randomUUID()}`);
+	const preservedPath = join(reservation, "previous");
+	try {
+		sourceHandle = await open(input.finalDirectory, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0));
+		await mkdir(reservation, { mode: 0o700 });
+		recoveryHandle = await open(reservation, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0));
+		const recoveryStat = await recoveryHandle.stat({ bigint: true });
+		const recoveryIdentity = directoryIdentity(recoveryStat);
+		if (!recoveryStat.isDirectory() || recoveryStat.isSymbolicLink() ||
+			(Number(recoveryStat.mode) & 0o7777) !== 0o700 ||
+			(owner !== undefined && Number(recoveryStat.uid) !== owner) ||
+			(await readdir(reservation)).length !== 0)
+			throw new Error("The managed Bitwarden CLI recovery location changed.");
+
+		const sourceFdIdentity = directoryIdentity(await sourceHandle.stat({ bigint: true }));
+		const parentFdIdentity = directoryIdentity(await parentHandle.stat({ bigint: true }));
+		const parentPathIdentity = directoryIdentity(await lstat(parentPath, { bigint: true }));
+		const sourcePathIdentity = directoryIdentity(await lstat(input.finalDirectory, { bigint: true }));
+		if (!sameDirectoryIdentity(parentIdentity, parentFdIdentity) ||
+			!sameDirectoryIdentity(parentIdentity, parentPathIdentity) ||
+			await realpath(parentPath) !== parentRealPath ||
+			!sameDirectoryIdentity(currentIdentity, sourceFdIdentity) ||
+			!sameDirectoryIdentity(currentIdentity, sourcePathIdentity) ||
+			!sameDirectoryIdentity(recoveryIdentity, directoryIdentity(await lstat(reservation, { bigint: true }))) ||
+			(await readdir(reservation)).length !== 0)
+			throw new Error("The managed Bitwarden CLI install changed before preservation.");
+
+		// Ordinary rename is used only after identity checks. If a concurrent path
+		// change races these checks, the post-check fails and both paths are kept.
+		await rename(input.finalDirectory, preservedPath);
+		const moved = directoryIdentity(await lstat(preservedPath, { bigint: true }));
+		if (!sameDirectoryIdentity(currentIdentity, moved) ||
+			!sameDirectoryIdentity(parentIdentity, directoryIdentity(await parentHandle.stat({ bigint: true }))) ||
+			!sameDirectoryIdentity(parentIdentity, directoryIdentity(await lstat(parentPath, { bigint: true }))) ||
+			await realpath(parentPath) !== parentRealPath)
+			throw new Error("The managed Bitwarden CLI install changed during preservation.");
+		await recoveryHandle.sync();
+		await parentHandle.sync();
+		return reservation;
+	} finally {
+		await Promise.all([
+			sourceHandle?.close().catch(() => undefined),
+			recoveryHandle?.close().catch(() => undefined),
+			parentHandle.close().catch(() => undefined),
+		]);
+	}
+}
+
+/** Publish a verified binary into a new private directory without replacing existing content. */
+export async function publishPrivateManagedBitwardenDirectory(input: {
+	sourceBinary: string;
+	finalDirectory: string;
+	marker: Record<string, unknown>;
+	preserveExisting?: boolean;
+}): Promise<void> {
+	const owner = typeof process.getuid === "function" ? process.getuid() : undefined;
+	const parentPath = dirname(input.finalDirectory);
+	const parent = await lstat(parentPath, { bigint: true });
+	const parentIdentity = directoryIdentity(parent);
+	if (!parent.isDirectory() || parent.isSymbolicLink() ||
+		(owner !== undefined && Number(parent.uid) !== owner) ||
+		(Number(parent.mode) & 0o077) !== 0)
+		throw new Error("The managed Bitwarden CLI destination is unsafe.");
+	if (input.preserveExisting)
+		await preservePrivateManagedBitwardenDirectoryIfIncomplete({
+			finalDirectory: input.finalDirectory,
+			expectedMarker: input.marker,
+		});
+	await mkdir(input.finalDirectory, { mode: 0o700 });
+	const finalStat = await lstat(input.finalDirectory, { bigint: true });
+	const finalIdentity = directoryIdentity(finalStat);
+	if (!finalStat.isDirectory() || finalStat.isSymbolicLink() ||
+		(owner !== undefined && Number(finalStat.uid) !== owner) ||
+		(Number(finalStat.mode) & 0o077) !== 0)
+		throw new Error("The managed Bitwarden CLI destination is unsafe.");
+	const source = await hashPrivateFile(input.sourceBinary, 0o700);
+	const binaryPath = join(input.finalDirectory, "bws");
+	let sourceHandle: Awaited<ReturnType<typeof open>> | undefined;
+	let binaryHandle: Awaited<ReturnType<typeof open>> | undefined;
+	let binaryIdentity: PrivateFileIdentity | undefined;
+	try {
+		sourceHandle = await open(
+			input.sourceBinary,
+			constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+		);
+		binaryHandle = await open(
+			binaryPath,
+			constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+			0o700,
+		);
+		const sourceBefore = fileIdentity(await sourceHandle.stat({ bigint: true }));
+		binaryIdentity = fileIdentity(await binaryHandle.stat({ bigint: true }));
+		const digest = createHash("sha256");
+		let bytes = 0;
+		for (;;) {
+			const buffer = Buffer.alloc(64 * 1024);
+			const { bytesRead } = await sourceHandle.read(buffer, 0, buffer.length, null);
+			if (!bytesRead) break;
+			const chunk = buffer.subarray(0, bytesRead);
+			digest.update(chunk);
+			bytes += bytesRead;
+			if (bytes > BITWARDEN_BINARY_MAX_BYTES)
+				throw new Error("The managed Bitwarden CLI binary exceeds its size limit.");
+			let offset = 0;
+			while (offset < bytesRead) {
+				const { bytesWritten } = await binaryHandle.write(chunk, offset, bytesRead - offset, null);
+				if (bytesWritten <= 0) throw new Error("The managed Bitwarden CLI binary could not be copied.");
+				offset += bytesWritten;
+			}
+		}
+		const sourceAfter = fileIdentity(await sourceHandle.stat({ bigint: true }));
+		const binaryAfter = fileIdentity(await binaryHandle.stat({ bigint: true }));
+		const copiedDigest = digest.digest("hex");
+		if (!sameIdentity(sourceBefore, sourceAfter) || bytes !== source.bytes ||
+			copiedDigest !== source.sha256 || binaryAfter.dev !== binaryIdentity.dev ||
+			binaryAfter.ino !== binaryIdentity.ino || binaryAfter.uid !== binaryIdentity.uid ||
+			binaryAfter.mode !== 0o700 || binaryAfter.nlink !== 1 || binaryAfter.size !== bytes)
+			throw new Error("The managed Bitwarden CLI binary failed verification.");
+		await binaryHandle.sync();
+	} finally {
+		await Promise.all([sourceHandle?.close().catch(() => undefined), binaryHandle?.close().catch(() => undefined)]);
+	}
+	const copied = await hashPrivateFile(binaryPath, 0o700);
+	if (copied.sha256 !== source.sha256 || copied.bytes !== source.bytes)
+		throw new Error("The managed Bitwarden CLI binary failed verification.");
+	const finalParent = directoryIdentity(await lstat(parentPath, { bigint: true }));
+	const finalDirectoryNow = directoryIdentity(await lstat(input.finalDirectory, { bigint: true }));
+	if (!sameDirectoryIdentity(parentIdentity, finalParent) || !sameDirectoryIdentity(finalIdentity, finalDirectoryNow))
+		throw new Error("The managed Bitwarden CLI destination changed.");
+	const manifest = Buffer.from(`${JSON.stringify({ ...input.marker, binarySha256: copied.sha256, binaryBytes: copied.bytes }, null, 2)}\n`, "utf8");
+	if (manifest.byteLength > BITWARDEN_MANIFEST_MAX_BYTES)
+		throw new Error("The managed Bitwarden CLI manifest exceeds its limit.");
+	await writePrivateExclusive(join(input.finalDirectory, "workstrand-install.json"), manifest, 0o600);
+	const directoryHandle = await open(input.finalDirectory, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0));
+	try {
+		if (!sameDirectoryIdentity(finalIdentity, directoryIdentity(await directoryHandle.stat({ bigint: true }))))
+			throw new Error("The managed Bitwarden CLI destination changed.");
+		await directoryHandle.sync();
+	} finally {
+		await directoryHandle.close();
+	}
+}
 
 interface ExecutionOptions {
 	env: NodeJS.ProcessEnv;
@@ -271,28 +671,42 @@ export class ExternalSecretManager {
 		tokens: { onePasswordToken?: string; bitwardenToken?: string } = {},
 	): Promise<void> {
 		const normalized = validateConfiguration(configuration);
-		if (tokens.onePasswordToken) {
+		let writeAttempted = false;
+		try {
+			if (tokens.onePasswordToken) {
+				writeAttempted = true;
+				await this.broker.setOpaqueSecret(
+					ONEPASSWORD_TOKEN_SECRET_ID,
+					validateBootstrapToken(
+						tokens.onePasswordToken,
+						"The 1Password service-account token",
+					),
+				);
+			}
+			if (tokens.bitwardenToken) {
+				writeAttempted = true;
+				await this.broker.setOpaqueSecret(
+					BITWARDEN_TOKEN_SECRET_ID,
+					validateBootstrapToken(
+						tokens.bitwardenToken,
+						"The Bitwarden machine-account token",
+					),
+				);
+			}
+			writeAttempted = true;
 			await this.broker.setOpaqueSecret(
-				ONEPASSWORD_TOKEN_SECRET_ID,
-				validateBootstrapToken(
-					tokens.onePasswordToken,
-					"The 1Password service-account token",
-				),
+				CONFIGURATION_SECRET_ID,
+				JSON.stringify(normalized),
 			);
+		} finally {
+			if (writeAttempted) await this.invalidateVerification();
 		}
-		if (tokens.bitwardenToken) {
-			await this.broker.setOpaqueSecret(
-				BITWARDEN_TOKEN_SECRET_ID,
-				validateBootstrapToken(
-					tokens.bitwardenToken,
-					"The Bitwarden machine-account token",
-				),
-			);
-		}
-		await this.broker.setOpaqueSecret(
-			CONFIGURATION_SECRET_ID,
-			JSON.stringify(normalized),
-		);
+	}
+
+	async invalidateVerification(): Promise<void> {
+		await this.updateVerification((verification) => {
+			for (const providerId of PROVIDER_IDS) delete verification[providerId];
+		});
 	}
 
 	async remove(providerId: ExternalSecretProviderId): Promise<void> {
@@ -309,9 +723,7 @@ export class ExternalSecretManager {
 			await this.broker.removeOpaqueSecret(ONEPASSWORD_TOKEN_SECRET_ID);
 		if (providerId === "bitwarden")
 			await this.broker.removeOpaqueSecret(BITWARDEN_TOKEN_SECRET_ID);
-		await this.updateVerification((verification) => {
-			delete verification[providerId];
-		});
+		await this.invalidateVerification();
 	}
 
 	async status(): Promise<{
@@ -416,7 +828,20 @@ export class ExternalSecretManager {
 						: "Secret source failed.",
 				);
 			} else if (result.sourceValues) {
-				const sourceValues = result.sourceValues;
+				const sourceValues = Object.fromEntries(
+					Object.entries(result.sourceValues).filter(([id, value]) =>
+						CREDENTIAL_IDS.has(id) && typeof value === "string" && value.trim().length > 0,
+					),
+				) as Partial<Record<BrokeredCredentialId, string>>;
+				if (Object.keys(sourceValues).length === 0) {
+					await this.recordVerification(
+						providerId,
+						"error",
+						[],
+						"Secret source returned no supported credentials.",
+					);
+					continue;
+				}
 				for (const [id, value] of Object.entries(sourceValues) as Array<
 					[BrokeredCredentialId, string]
 				>) {
@@ -429,7 +854,7 @@ export class ExternalSecretManager {
 					providerId,
 					"verified",
 					Object.keys(sourceValues) as BrokeredCredentialId[],
-					`${Object.keys(sourceValues).length} supported credentials resolved.`,
+					"Supported provider credentials resolved.",
 				);
 			}
 		}
@@ -474,13 +899,14 @@ export class ExternalSecretManager {
 				"Managed Bitwarden CLI installation is available only on supported macOS builds.",
 			);
 		}
-		if (!(await this.hasManagedBitwarden())) await this.downloadBitwarden();
+		if (!(await this.hasManagedBitwarden())) await this.downloadBitwarden(true);
 		const configuration = await this.configuration();
 		configuration.bitwarden.binaryPath = this.managedBitwardenPath();
 		await this.broker.setOpaqueSecret(
 			CONFIGURATION_SECRET_ID,
 			JSON.stringify(configuration),
 		);
+		await this.invalidateVerification();
 		return (await this.status()).sources;
 	}
 
@@ -614,7 +1040,13 @@ export class ExternalSecretManager {
 			"bws",
 		);
 		if (!binary && configuration.bitwarden.autoInstall) {
-			await this.installBitwarden();
+			await this.downloadBitwarden();
+			configuration.bitwarden.binaryPath = this.managedBitwardenPath();
+			await this.broker.setOpaqueSecret(
+				CONFIGURATION_SECRET_ID,
+				JSON.stringify(configuration),
+			);
+			await this.invalidateVerification();
 			binary = this.managedBitwardenPath();
 		}
 		if (!binary)
@@ -705,7 +1137,11 @@ export class ExternalSecretManager {
 		configured: string | undefined,
 		name: "op" | "bws",
 	): Promise<string | undefined> {
-		if (configured) return this.resolveExplicitBinary(configured);
+		if (configured) {
+			if (name === "bws" && configured === this.managedBitwardenPath() &&
+				!(await this.hasManagedBitwarden())) return undefined;
+			return this.resolveExplicitBinary(configured);
+		}
 		const home = process.env.HOME;
 		const candidates =
 			name === "op"
@@ -722,6 +1158,8 @@ export class ExternalSecretManager {
 					];
 		for (const candidate of candidates) {
 			if (!candidate) continue;
+			if (name === "bws" && candidate === this.managedBitwardenPath() &&
+				!(await this.hasManagedBitwarden())) continue;
 			const resolved = await this.resolveExplicitBinary(candidate);
 			if (resolved) return resolved;
 		}
@@ -734,6 +1172,8 @@ export class ExternalSecretManager {
 		if (!path || !isAbsolute(path)) return undefined;
 		try {
 			const resolved = await realpath(path);
+			if (resolved === this.managedBitwardenPath() && !(await this.hasManagedBitwarden()))
+				return undefined;
 			const metadata = await lstat(resolved);
 			return metadata.isFile() && (metadata.mode & 0o111) !== 0
 				? resolved
@@ -753,31 +1193,44 @@ export class ExternalSecretManager {
 
 	private async hasManagedBitwarden(): Promise<boolean> {
 		try {
-			const marker = JSON.parse(
-				await readFile(
-					join(this.managedBitwardenRoot(), "workstrand-install.json"),
-					"utf8",
-				),
-			) as Record<string, unknown>;
-			const binary = await lstat(this.managedBitwardenPath());
+			const root = await lstat(this.managedBitwardenRoot(), { bigint: true });
+			if (!root.isDirectory() || root.isSymbolicLink() ||
+				(Number(root.mode) & 0o7777) !== 0o700 ||
+				(typeof process.getuid === "function" && Number(root.uid) !== process.getuid())) return false;
+			const markerPath = join(this.managedBitwardenRoot(), "workstrand-install.json");
+			const markerBytes = await readPrivateFile(markerPath, 0o600, BITWARDEN_MANIFEST_MAX_BYTES);
+			const marker = JSON.parse(markerBytes.toString("utf8")) as Record<string, unknown>;
+			const binary = await hashPrivateFile(this.managedBitwardenPath(), 0o700);
 			return (
-				binary.isFile() &&
-				(binary.mode & 0o111) !== 0 &&
 				marker.version === BWS_MANIFEST.version &&
-				marker.sha256 === BWS_MANIFEST.sha256
+				marker.sha256 === BWS_MANIFEST.sha256 &&
+				marker.binarySha256 === binary.sha256 &&
+				marker.binaryBytes === binary.bytes
 			);
 		} catch {
 			return false;
 		}
 	}
 
-	private async downloadBitwarden(): Promise<void> {
+	private async downloadBitwarden(preserveExisting = false): Promise<void> {
 		const parent = dirname(this.managedBitwardenRoot());
-		const staging = `${this.managedBitwardenRoot()}.partial`;
-		const archive = join(staging, BWS_MANIFEST.fileName);
 		await mkdir(parent, { recursive: true, mode: 0o700 });
-		await rm(staging, { recursive: true, force: true });
+		const parentStat = await lstat(parent, { bigint: true });
+		const parentIdentity = directoryIdentity(parentStat);
+		const canonicalParent = join(await realpath(this.root), "managed-tools", "bws");
+		if (!parentStat.isDirectory() || parentStat.isSymbolicLink() ||
+			(typeof process.getuid === "function" && Number(parentStat.uid) !== process.getuid()) ||
+			(Number(parentStat.mode) & 0o077) !== 0 || await realpath(parent) !== canonicalParent)
+			throw new Error("The managed Bitwarden CLI destination is unsafe.");
+		const staging = join(parent, `.bws-install-${randomUUID()}`);
+		const archive = join(staging, BWS_MANIFEST.fileName);
 		await mkdir(staging, { mode: 0o700 });
+		const stagingStat = await lstat(staging, { bigint: true });
+		const stagingIdentity = directoryIdentity(stagingStat);
+		if (!stagingStat.isDirectory() || stagingStat.isSymbolicLink() ||
+			(typeof process.getuid === "function" && Number(stagingStat.uid) !== process.getuid()) ||
+			(Number(stagingStat.mode) & 0o7777) !== 0o700)
+			throw new Error("The managed Bitwarden CLI staging directory is unsafe.");
 		try {
 			const response = await this.fetcher(BWS_MANIFEST.url, {
 				redirect: "follow",
@@ -821,10 +1274,16 @@ export class ExternalSecretManager {
 							"The Bitwarden CLI download exceeded the pinned size.",
 						);
 					digest.update(chunk.value);
-					await file.write(chunk.value);
+						let offset = 0;
+						while (offset < chunk.value.byteLength) {
+							const { bytesWritten } = await file.write(chunk.value, offset, chunk.value.byteLength - offset, null);
+							if (bytesWritten <= 0) throw new Error("The Bitwarden CLI download could not be saved.");
+							offset += bytesWritten;
+						}
 				}
 			} finally {
-				await file.close();
+					try { await file.sync(); }
+					finally { await file.close(); }
 			}
 			if (
 				bytes !== BWS_MANIFEST.bytes ||
@@ -848,13 +1307,14 @@ export class ExternalSecretManager {
 				timeoutMs: 20_000,
 				maxBuffer: 64_000,
 			});
-			await rm(archive, { force: true });
-			const binary = await lstat(join(staging, BWS_MANIFEST.binaryPath));
-			if (!binary.isFile() || binary.isSymbolicLink())
+			const stagedBinary = join(staging, BWS_MANIFEST.binaryPath);
+			const binary = await lstat(stagedBinary, { bigint: true });
+			if (!binary.isFile() || binary.isSymbolicLink() || Number(binary.nlink) !== 1 ||
+				(typeof process.getuid === "function" && Number(binary.uid) !== process.getuid()))
 				throw new Error("The extracted Bitwarden CLI executable is invalid.");
-			await chmod(join(staging, BWS_MANIFEST.binaryPath), 0o700);
+			await chmod(stagedBinary, 0o700);
 			const version = await this.execute(
-				join(staging, BWS_MANIFEST.binaryPath),
+				stagedBinary,
 				["--version"],
 				{ env: minimalEnvironment(), timeoutMs: 5_000, maxBuffer: 10_000 },
 			);
@@ -866,44 +1326,130 @@ export class ExternalSecretManager {
 				throw new Error(
 					"The installed Bitwarden CLI reported an unexpected version.",
 				);
-			await writeFile(
-				join(staging, "workstrand-install.json"),
-				`${JSON.stringify(
-					{
-						tool: "bws",
-						version: BWS_MANIFEST.version,
-						source: BWS_MANIFEST.url,
-						sha256: BWS_MANIFEST.sha256,
-						bytes: BWS_MANIFEST.bytes,
-						installedAt: this.now().toISOString(),
-					},
-					null,
-					2,
-				)}\n`,
-				{ mode: 0o600, flag: "wx" },
-			);
-			await rm(this.managedBitwardenRoot(), { recursive: true, force: true });
-			await rename(staging, this.managedBitwardenRoot());
+			const parentNow = directoryIdentity(await lstat(parent, { bigint: true }));
+			const stageNow = directoryIdentity(await lstat(staging, { bigint: true }));
+			if (!sameDirectoryIdentity(parentIdentity, parentNow) ||
+				!sameDirectoryIdentity(stagingIdentity, stageNow))
+				throw new Error("The managed Bitwarden CLI staging directory changed.");
+			await publishPrivateManagedBitwardenDirectory({
+				sourceBinary: stagedBinary,
+				finalDirectory: this.managedBitwardenRoot(),
+				marker: {
+					tool: "bws",
+					version: BWS_MANIFEST.version,
+					source: BWS_MANIFEST.url,
+					sha256: BWS_MANIFEST.sha256,
+					bytes: BWS_MANIFEST.bytes,
+					installedAt: this.now().toISOString(),
+				},
+				preserveExisting,
+			});
+		} catch {
+			// Keep the unique private staging directory for safe recovery and diagnosis.
+			// Its contents are never recursively removed because ownership may have changed.
+			throw new Error("The Bitwarden CLI could not be installed safely.");
+		}
+	}
+
+	private async inspectVerificationDirectory(
+		create: boolean,
+	): Promise<PrivateDirectoryIdentity | undefined> {
+		const owner = typeof process.getuid === "function" ? process.getuid() : undefined;
+		let rootStat: BigIntStats;
+		try {
+			rootStat = await lstat(this.root, { bigint: true });
 		} catch (error) {
-			await rm(staging, { recursive: true, force: true });
-			throw error;
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+			throw new Error("Secret-source verification storage is unavailable.");
+		}
+		if (!rootStat.isDirectory() || rootStat.isSymbolicLink() ||
+			(owner !== undefined && Number(rootStat.uid) !== owner))
+			throw new Error("Secret-source verification storage is unsafe.");
+
+		const securePath = join(this.root, "secure");
+		let secureStat: BigIntStats;
+		try {
+			secureStat = await lstat(securePath, { bigint: true });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT" || !create) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+				throw new Error("Secret-source verification storage is unavailable.");
+			}
+			try {
+				await mkdir(securePath, { mode: 0o700 });
+			} catch {
+				throw new Error("Secret-source verification storage is unsafe.");
+			}
+			secureStat = await lstat(securePath, { bigint: true });
+		}
+		if (!secureStat.isDirectory() || secureStat.isSymbolicLink() ||
+			(owner !== undefined && Number(secureStat.uid) !== owner) ||
+			(Number(secureStat.mode) & 0o077) !== 0)
+			throw new Error("Secret-source verification storage is unsafe.");
+		return directoryIdentity(secureStat);
+	}
+
+	private async readVerificationSnapshot(
+		createDirectory = false,
+	): Promise<VerificationSnapshot> {
+		let directory: PrivateDirectoryIdentity | undefined;
+		try {
+			directory = await this.inspectVerificationDirectory(createDirectory);
+		} catch {
+			return { verification: {}, valid: false };
+		}
+		if (!directory) return { verification: {}, valid: true };
+		let handle: Awaited<ReturnType<typeof open>> | undefined;
+		try {
+			handle = await open(
+				this.statusPath,
+				constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+			);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT")
+				return { verification: {}, valid: true, directory };
+			return { verification: {}, valid: false };
+		}
+		try {
+			const before = await handle.stat({ bigint: true });
+			const beforeIdentity = fileIdentity(before);
+			const owner = typeof process.getuid === "function" ? process.getuid() : undefined;
+			if (!before.isFile() || before.isSymbolicLink() || beforeIdentity.nlink !== 1 ||
+				(owner !== undefined && Number(beforeIdentity.uid) !== owner) ||
+				beforeIdentity.mode !== 0o600 || beforeIdentity.size > VERIFICATION_MAX_BYTES)
+				return { verification: {}, valid: false };
+			const chunks: Buffer[] = [];
+			let total = 0;
+			while (total <= VERIFICATION_MAX_BYTES) {
+				const buffer = Buffer.alloc(Math.min(8192, VERIFICATION_MAX_BYTES + 1 - total));
+				const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+				if (bytesRead === 0) break;
+				total += bytesRead;
+				if (total > VERIFICATION_MAX_BYTES)
+					return { verification: {}, valid: false };
+				chunks.push(buffer.subarray(0, bytesRead));
+			}
+			const after = fileIdentity(await handle.stat({ bigint: true }));
+			const pathStat = await lstat(this.statusPath, { bigint: true });
+			const parentStat = await lstat(join(this.root, "secure"), { bigint: true });
+			if (!sameFileIdentity(beforeIdentity, after) || total !== beforeIdentity.size ||
+				!pathStat.isFile() || pathStat.isSymbolicLink() ||
+				!sameFileIdentity(beforeIdentity, fileIdentity(pathStat)) ||
+				!sameDirectoryIdentity(directory, directoryIdentity(parentStat)))
+				return { verification: {}, valid: false };
+			const parsed = parseVerificationState(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+			return parsed
+				? { verification: parsed, valid: true, directory, file: beforeIdentity }
+				: { verification: {}, valid: false };
+		} catch {
+			return { verification: {}, valid: false };
+		} finally {
+			await handle.close().catch(() => undefined);
 		}
 	}
 
 	private async readVerification(): Promise<VerificationState> {
-		try {
-			const parsed = JSON.parse(
-				await readFile(this.statusPath, "utf8"),
-			) as VerificationState;
-			return parsed && typeof parsed === "object" ? parsed : {};
-		} catch (error) {
-			if (
-				(error as NodeJS.ErrnoException).code === "ENOENT" ||
-				error instanceof SyntaxError
-			)
-				return {};
-			throw error;
-		}
+		return (await this.readVerificationSnapshot()).verification;
 	}
 
 	private async runSecretProcess(
@@ -923,14 +1469,77 @@ export class ExternalSecretManager {
 
 	private async writeVerification(
 		verification: VerificationState,
+		expected: VerificationSnapshot,
 	): Promise<void> {
-		const temporary = `${this.statusPath}.new`;
-		await mkdir(dirname(this.statusPath), { recursive: true, mode: 0o700 });
-		await writeFile(temporary, `${JSON.stringify(verification, null, 2)}\n`, {
-			mode: 0o600,
-		});
-		await rename(temporary, this.statusPath);
-		await chmod(this.statusPath, 0o600);
+		if (!expected.valid || !expected.directory)
+			throw new Error("Secret-source verification storage is unsafe.");
+		const directoryPath = join(this.root, "secure");
+		const tempPath = join(directoryPath, `.external-secret-status.${randomUUID()}.new`);
+		let tempIdentity: PrivateFileIdentity | undefined;
+		let tempHandle: Awaited<ReturnType<typeof open>> | undefined;
+		try {
+			const currentDirectory = await this.inspectVerificationDirectory(false);
+			if (!currentDirectory || !sameDirectoryIdentity(expected.directory, currentDirectory))
+				throw new Error("Secret-source verification storage changed.");
+			const currentTarget = await this.readVerificationSnapshot();
+			if (!currentTarget.valid ||
+				(expected.file
+					? !currentTarget.file || !sameFileIdentity(expected.file, currentTarget.file)
+					: Boolean(currentTarget.file)))
+				throw new Error("Secret-source verification record changed.");
+			tempHandle = await open(
+				tempPath,
+				constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL |
+					(constants.O_NOFOLLOW ?? 0),
+				0o600,
+			);
+			tempIdentity = fileIdentity(await tempHandle.stat({ bigint: true }));
+			const contents = Buffer.from(`${JSON.stringify(verification, null, 2)}\n`, "utf8");
+			if (contents.byteLength > VERIFICATION_MAX_BYTES)
+				throw new Error("Secret-source verification record exceeds its limit.");
+			await tempHandle.writeFile(contents);
+			await tempHandle.sync();
+			const settledIdentity = fileIdentity(await tempHandle.stat({ bigint: true }));
+			if (settledIdentity.dev !== tempIdentity.dev || settledIdentity.ino !== tempIdentity.ino ||
+				settledIdentity.uid !== tempIdentity.uid || settledIdentity.nlink !== 1 ||
+				settledIdentity.mode !== 0o600 || settledIdentity.size !== contents.byteLength)
+				throw new Error("Secret-source verification record changed.");
+			await tempHandle.close();
+			tempHandle = undefined;
+			const latestDirectory = await this.inspectVerificationDirectory(false);
+			if (!latestDirectory || !sameDirectoryIdentity(expected.directory, latestDirectory))
+				throw new Error("Secret-source verification storage changed.");
+			const latestTarget = await this.readVerificationSnapshot();
+			if (!latestTarget.valid ||
+				(expected.file
+					? !latestTarget.file || !sameFileIdentity(expected.file, latestTarget.file)
+					: Boolean(latestTarget.file)))
+				throw new Error("Secret-source verification record changed.");
+			await rename(tempPath, this.statusPath);
+			const directoryHandle = await open(
+				directoryPath,
+				constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0),
+			);
+			try {
+				const committedDirectory = directoryIdentity(await directoryHandle.stat({ bigint: true }));
+				if (!sameDirectoryIdentity(expected.directory, committedDirectory))
+					throw new Error("Secret-source verification storage changed.");
+				await directoryHandle.sync();
+			} finally {
+				await directoryHandle.close();
+			}
+		} finally {
+			await tempHandle?.close().catch(() => undefined);
+			if (tempIdentity) {
+				try {
+					const current = fileIdentity(await lstat(tempPath, { bigint: true }));
+					if (current.dev === tempIdentity.dev && current.ino === tempIdentity.ino)
+						await rm(tempPath, { force: true });
+				} catch {
+					// A missing or replaced temporary entry is not ours to remove.
+				}
+			}
+		}
 	}
 
 	private async updateVerification(
@@ -946,9 +1555,12 @@ export class ExternalSecretManager {
 		verificationQueues.set(this.statusPath, queued);
 		await previous.catch(() => undefined);
 		try {
-			const verification = await this.readVerification();
+			const snapshot = await this.readVerificationSnapshot(true);
+			if (!snapshot.valid)
+				throw new Error("Secret-source verification storage is unsafe.");
+			const verification = snapshot.verification;
 			update(verification);
-			await this.writeVerification(verification);
+			await this.writeVerification(verification, snapshot);
 		} finally {
 			release();
 			if (verificationQueues.get(this.statusPath) === queued)
@@ -962,10 +1574,11 @@ export class ExternalSecretManager {
 		resolvedCredentialIds: BrokeredCredentialId[],
 		detail: string,
 	): Promise<void> {
+		void detail;
 		await this.updateVerification((verification) => {
 			verification[providerId] = {
 				state,
-				detail,
+				detail: verificationDetail(state),
 				resolvedCredentialIds,
 				lastSyncedAt: this.now().toISOString(),
 			};

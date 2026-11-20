@@ -5,11 +5,50 @@ import type {
 } from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
 import {
+	createStartupSnapshotGate,
 	loadInitialDesktopState,
 	startupFailureMessage,
 } from "./startup-state";
 
 describe("desktop startup state", () => {
+	it("publishes the verified snapshot while saved sessions are still loading", async () => {
+		const workspace = { productName: "Kestrel" } as WorkspaceSnapshot;
+		let finishSessions!: (response: CoreResponse) => void;
+		const sessions = new Promise<CoreResponse>((resolve) => { finishSessions = resolve; });
+		const published: WorkspaceSnapshot[] = [];
+		let finished = false;
+		const loading = loadInitialDesktopState(
+			async (request) => request.type === "snapshot"
+				? ({ ok: true, snapshot: workspace } as CoreResponse)
+				: sessions,
+			(snapshot) => published.push(snapshot),
+		).then((state) => { finished = true; return state; });
+		await Promise.resolve();
+		expect(published).toEqual([workspace]);
+		expect(finished).toBe(false);
+		finishSessions({ ok: false, error: "sessions unavailable" } as CoreResponse);
+		expect((await loading).sessionsLoadError).toBe("sessions unavailable");
+	});
+
+	it("does not replace a newer snapshot event with the initial response", async () => {
+		const old = { productName: "old" } as WorkspaceSnapshot;
+		const newer = { productName: "new" } as WorkspaceSnapshot;
+		let finishSnapshot!: (response: CoreResponse) => void;
+		const pending = new Promise<CoreResponse>((resolve) => { finishSnapshot = resolve; });
+		const published: WorkspaceSnapshot[] = [];
+		const gate = createStartupSnapshotGate((snapshot) => published.push(snapshot));
+		const loading = loadInitialDesktopState(
+			async (request) => request.type === "snapshot"
+				? pending
+				: ({ ok: true, sessions: [] } as CoreResponse),
+			gate.initial,
+		);
+		gate.event(newer);
+		finishSnapshot({ ok: true, snapshot: old } as CoreResponse);
+		await loading;
+		expect(published).toEqual([newer]);
+	});
+
 	it("surfaces a rejected snapshot request instead of leaving the app loading forever", async () => {
 		await expect(
 			loadInitialDesktopState(async () => {

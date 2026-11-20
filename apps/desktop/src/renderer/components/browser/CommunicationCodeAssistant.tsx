@@ -4,7 +4,7 @@ import {
 	type CommunicationSourceStatus,
 	type UserBrowserPageContext,
 } from "@kestrel/shared-types";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import { Icon } from "../Icon";
 
@@ -23,10 +23,12 @@ function sourceDetail(source: CommunicationSourceStatus): string {
 export function CommunicationCodeAssistant({
 	browser,
 	enabled,
+	manual = false,
 	onOpenConnections,
 }: {
 	browser: UserBrowserController;
 	enabled: boolean;
+	manual?: boolean;
 	onOpenConnections(): void;
 }) {
 	const activeTab = browser.state?.tabs.find(
@@ -38,10 +40,19 @@ export function CommunicationCodeAssistant({
 	const [error, setError] = useState("");
 	const [usedCandidate, setUsedCandidate] = useState("");
 	const promptKeyRef = useRef("");
+	const [expanded, setExpanded] = useState(false);
+	const generationRef = useRef(0);
+	const manualSessionRef = useRef<{ tabId: string; open: boolean } | undefined>(undefined);
+	let validHttpTab = false;
+	try {
+		const url = new URL(activeTab?.url ?? "");
+		validHttpTab = url.protocol === "http:" || url.protocol === "https:";
+	} catch { /* No usable page yet. */ }
 
 	const challenge = Boolean(context && isLoginCodeChallenge(context));
 	const tabKey = `${activeTab?.id ?? ""}:${activeTab?.url ?? ""}`;
 	useEffect(() => {
+		if (manual) return;
 		if (!enabled || !activeTab?.url || activeTab.loading || activeTab.error) {
 			setContext(undefined);
 			setScan(undefined);
@@ -72,15 +83,31 @@ export function CommunicationCodeAssistant({
 			cancelled = true;
 			window.clearInterval(timer);
 		};
-	}, [activeTab?.error, activeTab?.id, activeTab?.loading, activeTab?.url, browser, enabled]);
+	}, [activeTab?.error, activeTab?.id, activeTab?.loading, activeTab?.url, browser, enabled, manual]);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
+		generationRef.current += 1;
+		setExpanded(false);
 		setScan(undefined);
+		setBusy(false);
 		setError("");
 		setUsedCandidate("");
-	}, [tabKey]);
+		const session = manual && enabled && validHttpTab && activeTab && !activeTab.loading && !activeTab.error
+			? { tabId: activeTab.id, open: false }
+			: undefined;
+		manualSessionRef.current = session;
+		return () => {
+			generationRef.current += 1;
+			if (session?.open) {
+				session.open = false;
+				void window.kestrel.request({ type: "communication-code-cancel", tabId: session.tabId }).catch(() => undefined);
+			}
+		};
+	}, [tabKey, enabled, manual, validHttpTab, activeTab?.loading, activeTab?.error]);
 
-	const canShow = enabled && challenge && Boolean(activeTab);
+	const canShow = enabled && Boolean(activeTab) && (manual
+		? validHttpTab && !activeTab?.loading && !activeTab?.error
+		: challenge);
 	const activeSources = useMemo(
 		() => scan?.sources.filter((source) => source.state === "connected") ?? [],
 		[scan?.sources],
@@ -88,10 +115,36 @@ export function CommunicationCodeAssistant({
 
 	if (!canShow) return null;
 
+	function closeManual() {
+		generationRef.current += 1;
+		const session = manualSessionRef.current;
+		if (session?.open) {
+			session.open = false;
+			void window.kestrel.request({ type: "communication-code-cancel", tabId: session.tabId }).catch(() => undefined);
+		}
+		setExpanded(false);
+		setScan(undefined);
+		setBusy(false);
+		setError("");
+		setUsedCandidate("");
+	}
+
+	if (manual && !expanded) return (
+		<button className="button secondary" type="button" onClick={() => {
+			if (manualSessionRef.current) manualSessionRef.current.open = true;
+			setExpanded(true);
+		}}>
+			Find verification code
+		</button>
+	);
+
 	async function findCode() {
 		if (!activeTab || busy) return;
+		const generation = generationRef.current;
 		setBusy(true);
 		setError("");
+		setScan(undefined);
+		setUsedCandidate("");
 		try {
 			const response = await window.kestrel.request({
 				type: "communication-code-scan",
@@ -103,15 +156,16 @@ export function CommunicationCodeAssistant({
 						? response.error
 						: "Kestrel could not scan connected messages.",
 				);
-			setScan(response.communicationScan);
+			if (generation === generationRef.current) setScan(response.communicationScan);
 		} catch (cause) {
+			if (generation !== generationRef.current) return;
 			setError(
 				cause instanceof Error
 					? cause.message
 					: "Kestrel could not scan connected messages.",
 			);
 		} finally {
-			setBusy(false);
+			if (generation === generationRef.current) setBusy(false);
 		}
 	}
 
@@ -119,6 +173,7 @@ export function CommunicationCodeAssistant({
 		candidateId: string,
 	): Promise<void> {
 		if (!scan || busy) return;
+		const generation = generationRef.current;
 		setBusy(true);
 		setUsedCandidate(candidateId);
 		setError("");
@@ -134,14 +189,16 @@ export function CommunicationCodeAssistant({
 						? response.error
 						: "Kestrel could not use that code.",
 				);
-			setScan(undefined);
+			if (generation === generationRef.current) setScan(undefined);
 		} catch (cause) {
+			if (generation !== generationRef.current) return;
+			setScan(undefined);
 			setUsedCandidate("");
 			setError(
 				cause instanceof Error ? cause.message : "Kestrel could not use that code.",
 			);
 		} finally {
-			setBusy(false);
+			if (generation === generationRef.current) setBusy(false);
 		}
 	}
 
@@ -157,13 +214,14 @@ export function CommunicationCodeAssistant({
 						<small>{context?.title ?? "Current page"}</small>
 					</span>
 				</div>
-				<span className="communication-code-live">On this page</span>
+				{manual ? (
+					<button className="communication-code-rescan" type="button" onClick={closeManual}>Close</button>
+				) : <span className="communication-code-live">On this page</span>}
 			</header>
 			{!scan ? (
 				<>
 					<p>
-						Find a recent code without sending message text to the agent. Use code
-						only fills the field; it never submits.
+						Choose a code to fill the current field. Some sites continue automatically.
 					</p>
 					<div className="communication-code-actions">
 						<button className="button primary" type="button" disabled={busy} onClick={() => void findCode()}>

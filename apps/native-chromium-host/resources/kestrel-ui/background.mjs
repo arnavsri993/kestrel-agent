@@ -1,0 +1,46 @@
+import { createNativeRequestScope } from "./native-request-scope.mjs";
+import { createBrowserAdapter } from "./browser.mjs";
+import { createNativeConnection } from "./native-connection.mjs";
+import { trackNativePanels } from "./panel-state.mjs";
+import { RendererRequestSchema } from "../../../../packages/shared-types/src/contracts.ts";
+import { NativeLoginCodeBrowserRequestSchema } from "../../../../packages/shared-types/src/native-login-code.ts";
+import { BrowserBackendWireRequestSchema } from "../../../core-service/src/browser-backend-wire.ts";
+import { nativeRendererFrameFits } from "../../../../packages/shared-types/src/native-request-frame.ts";
+
+const ui = new Set();
+const origin = new URL(chrome.runtime.getURL(""));
+const emit = (channel, event) => { for (const port of ui) { try { port.postMessage({ kind: "event", channel, event }); } catch { ui.delete(port); } } };
+const browser = createBrowserAdapter(chrome, { emit, uiUrl: chrome.runtime.getURL("index.html") });
+const core = createNativeConnection({ runtime: chrome.runtime, emit,
+	handleExternalOpenUrl: (url) => browser.openExternalUrl(url),
+	handleOpenNativeWindow: () => browser.openNativeWindow(),
+	handleBrowserRequest: (request, signal) => browser.backend(BrowserBackendWireRequestSchema.parse(request), signal),
+	handleLoginCodeRequest: (request, signal) => browser.loginCode(NativeLoginCodeBrowserRequestSchema.parse(request), signal),
+});
+trackNativePanels(chrome);
+// Register synchronously so a cold startup wakes Chromium's existing worker.
+chrome.runtime.onStartup.addListener(() => core.reconnect());
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+chrome.runtime.onConnect.addListener((port) => {
+	const sender = port.sender;
+	let url;
+	try { url = new URL(sender?.url); } catch { port.disconnect(); return; }
+	if (port.name !== "kestrel-ui" || sender.id !== chrome.runtime.id || url.protocol !== origin.protocol || url.host !== origin.host || url.pathname !== "/index.html" || (sender.frameId !== undefined && sender.frameId !== 0)) { port.disconnect(); return; }
+	ui.add(port);
+	const scope = createNativeRequestScope();
+	port.onDisconnect.addListener(() => { scope.close(); ui.delete(port); });
+	let count = 0;
+	port.onMessage.addListener(async (message) => {
+		if (message?.kind !== "request" || !Number.isSafeInteger(message.id) || ++count > 64 || !nativeRendererFrameFits(JSON.stringify(message), message.request?.type)) { port.disconnect(); return; }
+		let response, owned;
+		try {
+			const parsed = RendererRequestSchema.safeParse(message.request);
+			if (!parsed.success) throw new Error("Invalid Kestrel request.");
+			owned = scope.begin(parsed.data);
+			response = browser.handles(parsed.data.type) ? await browser.request(parsed.data, sender) : await core.request(parsed.data, { signal: owned.signal });
+		}
+		catch (error) { response = { ok: false, error: error instanceof Error ? error.message : "Kestrel could not complete this request." }; }
+		finally { owned?.done(); --count; }
+		try { port.postMessage({ kind: "response", id: message.id, response }); } catch { scope.close(); ui.delete(port); }
+	});
+});

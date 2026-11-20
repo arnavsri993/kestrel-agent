@@ -94,7 +94,7 @@ function parseSkill(path: string): ActivatedSkill {
 export class SkillRegistry {
 	private readonly skills = new Map<string, SkillDescriptor>();
 
-	constructor(private roots: string[]) {}
+	constructor(private roots: string[], private readonly verifyRoot?: (root: string) => void) {}
 
 	setRoots(roots: string[]): void {
 		this.roots = [...new Set(roots)];
@@ -114,6 +114,7 @@ export class SkillRegistry {
 			for (const candidate of candidates) {
 				const skillFile = resolve(candidate, "SKILL.md");
 				if (!existsSync(skillFile) || !statSync(skillFile).isFile()) continue;
+				this.verifyRoot?.(candidate);
 				const { instructions: _instructions, ...descriptor } =
 					parseSkill(skillFile);
 				if (this.skills.has(descriptor.name))
@@ -164,6 +165,7 @@ export class SkillRegistry {
 	activate(name: string): ActivatedSkill {
 		const descriptor = this.skills.get(name);
 		if (!descriptor) throw new Error(`Skill ${name} was not discovered.`);
+		this.verifyRoot?.(descriptor.root);
 		return parseSkill(resolve(descriptor.root, "SKILL.md"));
 	}
 
@@ -173,6 +175,7 @@ export class SkillRegistry {
 	): { path: string; content: string } {
 		const descriptor = this.skills.get(name);
 		if (!descriptor) throw new Error(`Skill ${name} was not discovered.`);
+		this.verifyRoot?.(descriptor.root);
 		const candidate = realpathSync(resolve(descriptor.root, relativePath));
 		if (!within(descriptor.root, candidate))
 			throw new Error("Skill resource escapes its skill root.");

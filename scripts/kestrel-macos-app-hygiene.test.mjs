@@ -1,8 +1,11 @@
 import {
 	existsSync,
+	chmodSync,
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
+	rmSync,
+	symlinkSync,
 	writeFileSync,
 	utimesSync,
 } from "node:fs";
@@ -11,7 +14,11 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import {
 	cleanupDuplicateKestrelApps,
+	allAppCandidates,
+	isKestrelBundle,
 	markDirectoryUnindexed,
+	moveDuplicateKestrelAppsToTrash,
+	moveToTrash,
 	preventSpotlightIndexing,
 	removeStaleInstallStagingDirectories,
 	repositoryReleaseBundle,
@@ -39,6 +46,34 @@ function createBundle(root, name, identifier = "com.kestrel.desktop.dev") {
 const testSuite = process.platform === "darwin" ? describe : describe.skip;
 
 testSuite("kestrel macOS app hygiene", () => {
+	it("preserves cutover bundles and aliases returned by Spotlight during cleanup", () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-hygiene-cutover-"));
+		try {
+			const installRoot = join(root, "Applications"), trashRoot = join(root, "Trash");
+			const backupRoot = join(installRoot, ".Kestrel-cutover-backups", "transaction");
+			const bundles = ["previous", "stage", "candidate"].map((name) => createBundle(join(backupRoot, name), "Kestrel.app"));
+			const aliasRoot = join(root, "alias");
+			symlinkSync(backupRoot, aliasRoot);
+			const alias = join(aliasRoot, "previous", "Kestrel.app");
+			const duplicate = createBundle(installRoot, "Kestrel Duplicate.app");
+			const mdfindPath = join(root, "mdfind");
+			writeFileSync(mdfindPath, `#!/bin/sh\nprintf '%s\\n' ${[...bundles, alias, duplicate].map((path) => `'${path}'`).join(" ")}\n`);
+			chmodSync(mdfindPath, 0o700);
+			const options = { searchRoots: [installRoot, join(backupRoot, "previous")], trashRoot, mdfindPath, documentsRoot: join(root, "Documents") };
+			expect(allAppCandidates(options)).toEqual([duplicate]);
+			expect(() => moveToTrash(alias, { trashRoot, reason: "duplicate" })).toThrow(/retained cutover bundle/);
+			const moved = moveDuplicateKestrelAppsToTrash(options);
+			expect(moved.map((entry) => entry.from)).toEqual([duplicate]);
+			for (const bundle of bundles) expect(existsSync(bundle)).toBe(true);
+			expect(existsSync(alias)).toBe(true);
+			expect(existsSync(duplicate)).toBe(false);
+		} finally { rmSync(root, { recursive: true, force: true }); }
+	});
+	it("recognizes the supported native bundle without accepting unrelated native identifiers", () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-hygiene-native-"));
+		expect(isKestrelBundle(createBundle(root, "Kestrel Native.app", "com.kestrel.native-chromium-host.dev"))).toBe(true);
+		expect(isKestrelBundle(createBundle(root, "Unrelated.app", "com.kestrel.native-unrelated"))).toBe(false);
+	});
 	it("finds Agent worktree release bundles under Documents", () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-hygiene-worktree-"));
 		const documentsRoot = join(root, "Documents");

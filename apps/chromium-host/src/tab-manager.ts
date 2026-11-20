@@ -122,7 +122,7 @@ export class ChromiumTabManager {
       signal.throwIfAborted();
       if (page.url() !== url || this.revisions.get(page) !== revision) throw new Error("The tab changed while being inspected.");
       this.targets.set(id, targets);
-      return { interactive, url: browserEvidenceUrl(url), title: title.slice(0, 500), accessibilityTree: tree, truncated, trust: "untrusted_browser" as const };
+      return { interactive, url: browserEvidenceUrl(url), title: title.slice(0, 500), accessibilityTree: { nodes: tree }, truncated, trust: "untrusted_browser" as const };
     } finally { await client.detach().catch(() => {}); }
   }
 

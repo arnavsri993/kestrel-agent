@@ -1,5 +1,7 @@
 import {
 	mkdirSync,
+	chmodSync,
+	linkSync,
 	mkdtempSync,
 	readFileSync,
 	realpathSync,
@@ -8,10 +10,12 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { open } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { projectIdForPath, WorkspaceGrantStore } from "./workspace-grant-store";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { projectIdForPath, WorkspaceGrantStore, type WorkspaceHandoffConnectionPlan } from "./workspace-grant-store";
 
 const directories: string[] = [];
 const NOW = "2026-09-03T00:00:00.000Z";
@@ -308,4 +312,51 @@ describe("workspace grant store", () => {
 			realpathSync(second),
 		]);
 	});
+});
+
+
+describe("workspace handoff connection", () => {
+ function setup() {
+  const temporary = mkdtempSync(join(tmpdir(), "handoff-grants-")); directories.push(temporary);
+  const root = realpathSync(temporary), folder = join(root, "project"), filename = join(root, "workspace-grants.json"); mkdirSync(folder);
+  return { root, folder, filename, store: new WorkspaceGrantStore(filename) };
+ }
+ const meta = { id: "id stable", name: " Name ", instructions: "line\r\nline", createdAt: NOW, updatedAt: NOW };
+ it("persists intent before adoption and recovers before and after with exact metadata", async () => {
+  const { store, folder, filename } = setup(); let plan!: WorkspaceHandoffConnectionPlan;
+  await expect(store.connectFromHandoff(folder, meta, async p => { plan = p; expect(() => readFileSync(filename)).toThrow(); throw new Error("cancel"); })).rejects.toThrow("Workspace handoff connection failed");
+  expect(await store.handoffConnectionState(plan)).toBe("before");
+  const projects = await store.connectFromHandoff(folder, meta, async p => { plan = p; });
+  expect(projects[0]).toMatchObject({ ...meta, path: folder, order: 0 }); expect(await store.handoffConnectionState(plan)).toBe("after");
+  expect(statSync(filename).mode & 0o777).toBe(0o600);
+ });
+ it("rejects collisions and the 500 limit without changing grants", async () => {
+  const { store, root, folder, filename } = setup();
+  await store.connectFromHandoff(folder, meta, async () => {}); const initial = readFileSync(filename, "utf8");
+  const other = join(root, "other"); mkdirSync(other);
+  await expect(store.connectFromHandoff(other, meta, async () => {})).rejects.toThrow();
+  await expect(store.connectFromHandoff(folder, { ...meta, id: "other" }, async () => {})).rejects.toThrow(); expect(readFileSync(filename, "utf8")).toBe(initial);
+  const records = Array.from({ length: 500 }, (_, order) => ({ ...meta, id: `id-${order}`, name: "name", path: join(root, `absent-${order}`), order }));
+  writeFileSync(filename, JSON.stringify(records)); const bytes = readFileSync(filename, "utf8");
+  await expect(store.connectFromHandoff(other, meta, async () => {})).rejects.toThrow(); expect(readFileSync(filename, "utf8")).toBe(bytes);
+ });
+ it("refuses changed grants after intent and unknown recovery state", async () => {
+  const { store, folder, filename } = setup(); let plan!: WorkspaceHandoffConnectionPlan;
+  await expect(store.connectFromHandoff(folder, meta, async p => { plan = p; writeFileSync(filename, "[]", { mode: 0o600 }); })).rejects.toThrow();
+  expect(readFileSync(filename, "utf8")).toBe("[]"); await expect(store.handoffConnectionState(plan)).rejects.toThrow(); expect(readFileSync(filename, "utf8")).toBe("[]");
+ });
+ it("rejects unsafe target and parent without touching them", async () => {
+  const { store, root, folder, filename } = setup();
+  symlinkSync("/dev/null", filename); await expect(store.connectFromHandoff(folder, meta, async () => {})).rejects.toThrow(); rmSync(filename);
+  execFileSync("mkfifo", [filename]); await expect(store.connectFromHandoff(folder, meta, async () => {})).rejects.toThrow(); rmSync(filename);
+  writeFileSync(filename, "[]", { mode: 0o600 }); const other = join(root, "hardlink"); linkSync(filename, other); await expect(store.connectFromHandoff(folder, meta, async () => {})).rejects.toThrow(); rmSync(other);
+  chmodSync(filename, 0o644); await expect(store.connectFromHandoff(folder, meta, async () => {})).rejects.toThrow(); chmodSync(filename, 0o600);
+  chmodSync(root, 0o755); await expect(store.connectFromHandoff(folder, meta, async () => {})).rejects.toThrow(); chmodSync(root, 0o700);
+ });
+ it("retains grants and reports static errors on durability failure", async () => {
+  const { store, root, folder, filename } = setup(); const handle = await open(root); const proto = Object.getPrototypeOf(handle); await handle.close();
+  const spy = vi.spyOn(proto, "sync").mockRejectedValue(new Error("private detail"));
+  try { await expect(store.connectFromHandoff(folder, meta, async () => {})).rejects.toThrow("Workspace handoff connection failed"); } finally { spy.mockRestore(); }
+  expect(() => readFileSync(filename)).toThrow();
+ });
 });

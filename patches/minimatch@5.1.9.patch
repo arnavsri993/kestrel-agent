@@ -1,0 +1,11 @@
+--- a/minimatch.js
++++ b/minimatch.js
+@@ -16,7 +16,7 @@
+ 
+ const GLOBSTAR = Symbol('globstar **')
+ minimatch.GLOBSTAR = GLOBSTAR
+-const expand = require('brace-expansion')
++const expand = require('brace-expansion').expand
+ 
+ const plTypes = {
+   '!': { open: '(?:(?!(?:', close: '))[^/]*?)'},

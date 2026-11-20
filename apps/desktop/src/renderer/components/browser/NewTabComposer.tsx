@@ -5,6 +5,7 @@ import { ModelSelector } from "./ModelSelector";
 import { createPastedTextAttachment, LARGE_PASTE_MIN_LENGTH, removePastedTextAttachment } from "./composer-paste";
 import { accountForChoice, type ModelSelectorChoice } from "./model-selector";
 import type { NewTabComposerDraft } from "./new-tab-composer";
+import { VoiceCaptureOwner } from "../../voice-capture";
 import "./new-tab-composer.css";
 
 function savedModelChoice(): ModelSelectorChoice {
@@ -24,7 +25,7 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 	projects: Project[];
 	onProjectsChange(projects: Project[]): void;
 	onNavigate(input: string): void;
-	onSubmitDraft(draft: NewTabComposerDraft): boolean;
+	onSubmitDraft(draft: NewTabComposerDraft): boolean | Promise<boolean>;
 }) {
 	const [input, setInput] = useState("");
 	const [expanded, setExpanded] = useState(false);
@@ -37,13 +38,14 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 	const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
 	const [accounts, setAccounts] = useState<ProviderAccountSummary[]>([]);
 	const [choice, setChoice] = useState(savedModelChoice);
-	const [voiceState, setVoiceState] = useState<"idle" | "recording" | "transcribing">("idle");
+	const [voiceState, setVoiceState] = useState<"idle" | "requesting" | "recording" | "transcribing">("idle");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const recorderRef = useRef<MediaRecorder | null>(null);
 	const streamRef = useRef<MediaStream | null>(null);
 	const voiceTimeoutRef = useRef<number | null>(null);
+	const voiceCaptureRef = useRef(new VoiceCaptureOwner());
 	const aliveRef = useRef(true);
 	const accessRef = useRef<HTMLDivElement>(null);
 	const availableProjects = projects.filter((project) => project.available !== false);
@@ -63,9 +65,10 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 		return () => {
 		aliveRef.current = false;
 		if (voiceTimeoutRef.current !== null) window.clearTimeout(voiceTimeoutRef.current);
-		if (recorderRef.current) recorderRef.current.onstop = null;
+		if (recorderRef.current) { recorderRef.current.onstop = null; recorderRef.current.onerror = null; }
 		if (recorderRef.current?.state === "recording") recorderRef.current.stop();
-		streamRef.current?.getTracks().forEach((track) => track.stop());
+		voiceCaptureRef.current.cancel();
+		recorderRef.current = null; streamRef.current = null;
 		};
 	}, []);
 	useEffect(() => {
@@ -156,7 +159,7 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 		} finally { setBusy(false); }
 	}
 
-	function send(event?: FormEvent) {
+	async function send(event?: FormEvent) {
 		event?.preventDefault();
 		if (busy || voiceState !== "idle" || !canSend) return;
 		const prompt = input.trim() || "Review the attached file.";
@@ -169,52 +172,61 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 			setInput("");
 			return;
 		}
-		const accepted = onSubmitDraft({ prompt, ...(workspaceRoot ? { workspaceRoot } : {}), ...(selectedProject ? { projectId: selectedProject.id } : {}), modelChoice: choice, approvalPolicy, attachments });
-		if (!accepted) {
-			setError("Finish or stop the active task before starting this one.");
-			return;
-		}
-		setInput("");
-		setAttachments([]);
+		setBusy(true); setError("");
+		try {
+			const accepted = await onSubmitDraft({ prompt, ...(workspaceRoot ? { workspaceRoot } : {}), ...(selectedProject ? { projectId: selectedProject.id } : {}), modelChoice: choice, approvalPolicy, attachments });
+			if (!accepted) { setError("The agent did not accept this task. Your message is still here."); return; }
+			setInput(""); setAttachments([]);
+		} catch { setError("The agent did not accept this task. Check the current task before trying again."); }
+		finally { if (aliveRef.current) setBusy(false); }
 	}
 
 	async function startVoice() {
-		if (voiceState !== "idle" || busy) return;
-		setError("");
+		if (voiceState !== "idle" || busy || voiceCaptureRef.current.busy) return;
+		setError(""); setVoiceState("requesting");
 		try {
 			if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") throw new Error("Voice capture is unavailable on this device.");
-			const permission = await window.kestrel.request({ type: "request-microphone-access" });
-			if (!permission.ok || !("microphoneAccess" in permission) || !permission.microphoneAccess) throw new Error("Microphone access was not granted.");
-			const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+			const capture = await voiceCaptureRef.current.acquire(async () => {
+				const permission = await window.kestrel.request({ type: "request-microphone-access" });
+				if (!permission.ok || !("microphoneAccess" in permission) || !permission.microphoneAccess) throw new Error("Microphone access was not granted.");
+			}, () => navigator.mediaDevices.getUserMedia({ audio: true, video: false }));
+			if (!capture) return;
+			const { stream } = capture;
 			streamRef.current = stream;
 			const preferred = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((kind) => MediaRecorder.isTypeSupported(kind));
 			const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined);
 			const chunks: Blob[] = [];
 			recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-			recorder.onerror = () => { setError("Voice recording failed."); setVoiceState("idle"); stream.getTracks().forEach((track) => track.stop()); };
+			recorder.onerror = () => {
+				if (!capture.isCurrent()) return;
+				recorder.onstop = null;
+				if (voiceTimeoutRef.current !== null) window.clearTimeout(voiceTimeoutRef.current);
+				voiceTimeoutRef.current = null; recorderRef.current = null; streamRef.current = null;
+				capture.release(); setError("Voice recording failed."); setVoiceState("idle");
+			};
 				recorder.onstop = () => {
 				if (voiceTimeoutRef.current !== null) window.clearTimeout(voiceTimeoutRef.current);
 				voiceTimeoutRef.current = null;
 				stream.getTracks().forEach((track) => track.stop());
 				streamRef.current = null;
 				recorderRef.current = null;
-				if (!aliveRef.current) return;
+				if (!capture.isCurrent()) return;
 				const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-				if (!blob.size || blob.size > 25 * 1024 * 1024) { setError("Voice recording is empty or exceeds 25 MB."); setVoiceState("idle"); return; }
+				if (!blob.size || blob.size > 25 * 1024 * 1024) { capture.release(); setError("Voice recording is empty or exceeds 25 MB."); setVoiceState("idle"); return; }
 				setVoiceState("transcribing");
 				const reader = new FileReader();
-				reader.onerror = () => { if (aliveRef.current) { setError("Could not read the recording."); setVoiceState("idle"); } };
+				reader.onerror = () => { if (capture.isCurrent()) { capture.release(); setError("Could not read the recording."); setVoiceState("idle"); } };
 				reader.onload = () => {
-					if (!aliveRef.current) return;
+					if (!capture.isCurrent()) return;
 					const dataBase64 = String(reader.result).split(",")[1] ?? "";
 					void window.kestrel.request({ type: "media-transcribe", dataBase64, mediaType: blob.type.split(";")[0] || "audio/webm" }).then((response) => {
 						if (!response.ok) throw new Error(response.error);
 						if (!("transcription" in response) || !response.transcription) throw new Error("Transcription returned no text.");
-						if (!aliveRef.current) return;
+						if (!capture.isCurrent()) return;
 						setInput((current) => current ? `${current.trimEnd()} ${response.transcription!.text}` : response.transcription!.text);
 						setExpanded(true);
 						inputRef.current?.focus();
-					}).catch((cause) => { if (aliveRef.current) setError(cause instanceof Error ? cause.message : "Voice transcription failed."); }).finally(() => { if (aliveRef.current) setVoiceState("idle"); });
+					}).catch((cause) => { if (capture.isCurrent()) setError(cause instanceof Error ? cause.message : "Voice transcription failed."); }).finally(() => { if (capture.isCurrent()) { capture.release(); setVoiceState("idle"); } });
 				};
 				reader.readAsDataURL(blob);
 			};
@@ -225,7 +237,9 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 			}, 120_000);
 			setVoiceState("recording");
 		} catch (cause) {
-			streamRef.current?.getTracks().forEach((track) => track.stop());
+			voiceCaptureRef.current.cancel();
+			streamRef.current = null; recorderRef.current = null;
+			if (!aliveRef.current) return;
 			setVoiceState("idle");
 			setError(cause instanceof Error ? cause.message : "Could not start voice capture.");
 		}
@@ -254,10 +268,10 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 						}}><div className="new-tab-access-heading">How should Kestrel actions be approved?</div><button type="button" role="menuitemradio" aria-checked={approvalPolicy === "ask"} onClick={() => applyApprovalPolicy("ask")}>Ask for approval<small>Ask before every action that changes data</small></button><button type="button" role="menuitemradio" aria-checked={approvalPolicy === "auto"} onClick={() => applyApprovalPolicy("auto")}>Approve for me<small>Only ask for sensitive or external actions</small></button><button type="button" className="new-tab-access-full" role="menuitemradio" aria-checked={approvalPolicy === "full_access"} onClick={() => applyApprovalPolicy("full_access")}>Full access<small>Skip routine prompts; hard safety boundaries still apply</small></button></div>}
 					</div>
 				</div>
-				<div className="new-tab-composer-send-actions"><ModelSelector accounts={accounts} choice={choice} onChange={applyChoice} /><button type="button" className={`new-tab-composer-icon${voiceState === "recording" ? " is-recording" : ""}`} aria-label={voiceState === "recording" ? "Stop and transcribe voice" : "Record voice"} title={voiceState === "recording" ? "Stop and transcribe voice" : "Record voice"} disabled={busy || voiceState === "transcribing"} onClick={() => voiceState === "recording" ? recorderRef.current?.stop() : void startVoice()}><Icon name="voice" /></button><button type="submit" className="kestrel-home-send" aria-label={`Send message to ${agentName}`} title={`Send message to ${agentName}`} disabled={!canSend || busy || voiceState !== "idle"}><Icon name="arrow" /></button></div>
+				<div className="new-tab-composer-send-actions"><ModelSelector accounts={accounts} choice={choice} onChange={applyChoice} /><button type="button" className={`new-tab-composer-icon${voiceState === "recording" ? " is-recording" : ""}`} aria-label={voiceState === "recording" ? "Stop and transcribe voice" : voiceState === "requesting" ? "Waiting for microphone permission" : "Record voice"} title={voiceState === "recording" ? "Stop and transcribe voice" : "Record voice"} disabled={busy || voiceState === "transcribing" || voiceState === "requesting"} onClick={() => voiceState === "recording" ? recorderRef.current?.stop() : void startVoice()}><Icon name="voice" /></button><button type="submit" className="kestrel-home-send" aria-label={`Send message to ${agentName}`} title={`Send message to ${agentName}`} disabled={!canSend || busy || voiceState !== "idle"}><Icon name="arrow" /></button></div>
 			</div>
 		</form>
-		{voiceState !== "idle" && <span className="new-tab-composer-status" role="status">{voiceState === "recording" ? "Microphone live · tap to transcribe" : "Transcribing voice…"}</span>}
+		{voiceState !== "idle" && <span className="new-tab-composer-status" role="status">{voiceState === "recording" ? "Microphone live · tap to transcribe" : voiceState === "requesting" ? "Waiting for microphone permission…" : "Transcribing voice…"}</span>}
 		{error && <p className="new-tab-composer-error" role="alert">{error}</p>}
 	</div>;
 }

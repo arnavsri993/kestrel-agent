@@ -125,6 +125,7 @@ export interface BrowserContentBounds {
 export function useUserBrowser(): UserBrowserController {
 	const [state, setState] = useState<UserBrowserState | null>(null);
 	const [error, setError] = useState("");
+	const [historySyncError, setHistorySyncError] = useState("");
 	const [isDetachedWindow, setIsDetachedWindow] = useState(false);
 	const [isConnectionWindow, setIsConnectionWindow] = useState(false);
 	const [findMatch, setFindMatch] = useState<UserBrowserFindMatch | null>(null);
@@ -141,6 +142,7 @@ export function useUserBrowser(): UserBrowserController {
 	const applyState = useCallback((nextState: UserBrowserState) => {
 		stateRef.current = nextState;
 		setState(nextState);
+		setHistorySyncError(nextState.historySyncError || "");
 	}, []);
 	const refresh = useCallback(async () => {
 		try {
@@ -230,7 +232,11 @@ export function useUserBrowser(): UserBrowserController {
 
 	useEffect(() => {
 		const unsubscribe = window.kestrel.onBrowserEvent((event) => {
-			if (event.type === "state") {
+			if (event.type === "error") {
+				setHistorySyncError(event.error);
+			} else if (event.type === "history-sync-recovered") {
+				setHistorySyncError("");
+			} else if (event.type === "state") {
 				applyState(event.state);
 				setError("");
 			} else if (event.type === "zoom") {
@@ -426,7 +432,11 @@ export function useUserBrowser(): UserBrowserController {
 		[requestState],
 	);
 	const clearHistory = useCallback(
-		() => requestState({ type: "browser-clear-history" }),
+		async () => {
+			const next = await requestState({ type: "browser-clear-history" });
+			setHistorySyncError("");
+			return next;
+		},
 		[requestState],
 	);
 	const selectDownloadDirectory = useCallback(
@@ -712,7 +722,7 @@ export function useUserBrowser(): UserBrowserController {
 	return useMemo(
 		() => ({
 			state,
-			error,
+			error: historySyncError || error,
 			isDetachedWindow,
 			isConnectionWindow,
 			refresh,
@@ -779,6 +789,7 @@ export function useUserBrowser(): UserBrowserController {
 		[
 			state,
 			error,
+			historySyncError,
 			isDetachedWindow,
 			isConnectionWindow,
 			refresh,

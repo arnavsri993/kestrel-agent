@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,6 +12,20 @@ afterEach(() => {
 });
 
 describe("plugin publisher trust store", () => {
+	it("cancels at the file commit boundary without changing trust or leaving staging files", async () => {
+		const root=mkdtempSync(join(tmpdir(),"kestrel-plugin-trust-cancel-")); directories.push(root);
+		const document=join(root,"publisher.json"), path=join(root,"trust.json");
+		const publicKey=generateKeyPairSync("ed25519").publicKey.export({type:"spki",format:"pem"}).toString();
+		writeFileSync(document,JSON.stringify({keyId:"publisher.test",publicKey}));
+		const store=new PluginTrustStore(path); let checks=0;
+		await expect(store.importDocument(document,()=>{if(++checks===5) throw new Error("cancelled before rename");})).rejects.toThrow("cancelled before rename");
+		expect(existsSync(path)).toBe(false);
+		expect(readdirSync(root)).toEqual(["publisher.json"]);
+		await store.importDocument(document); const previous=readFileSync(path,"utf8"); checks=0;
+		await expect(store.remove("publisher.test",()=>{if(++checks===3) throw new Error("cancelled before rename");})).rejects.toThrow("cancelled before rename");
+		expect(readFileSync(path,"utf8")).toBe(previous);
+		expect(readdirSync(root).sort()).toEqual(["publisher.json","trust.json"]);
+	});
 	it("imports, persists, deduplicates, and removes Ed25519 publisher keys", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-plugin-trust-"));
 		directories.push(root);

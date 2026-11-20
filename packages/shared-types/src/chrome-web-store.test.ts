@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	isChromeWebStoreUrl,
 	parseChromeWebStoreExtensionId,
 	parseChromeWebStoreListingUrl,
 } from "./chrome-web-store";
@@ -7,6 +8,13 @@ import {
 const EXTENSION_ID = "fmkadmapgofadopljbjfkapdkoienihi";
 
 describe("Chrome Web Store URL parsing", () => {
+	it("matches the exact official origin without lookalikes or embedded credentials", () => {
+		expect(isChromeWebStoreUrl("https://chromewebstore.google.com/")).toBe(true);
+		expect(isChromeWebStoreUrl("https://chromewebstore.google.com/category/extensions")).toBe(true);
+		for (const url of ["https://chromewebstore.google.com.evil.example/", "https://chromewebstore.google.com@evil.example/", "https://user@chromewebstore.google.com/", "http://chromewebstore.google.com/", "https://chromewebstore.google.com:8443/", "invalid"]) {
+			expect(isChromeWebStoreUrl(url)).toBe(false);
+		}
+	});
 	it("accepts current listing URLs and exact extension IDs", () => {
 		expect(parseChromeWebStoreExtensionId(EXTENSION_ID.toUpperCase())).toBe(
 			EXTENSION_ID,

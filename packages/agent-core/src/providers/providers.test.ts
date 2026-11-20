@@ -1,5 +1,5 @@
 import { createServer, type RequestListener, type Server } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnthropicMessagesProvider } from "./anthropic-messages";
 import { createEnvironmentModelProviders } from "./environment";
 import { GeminiGenerateContentProvider } from "./gemini-generate-content";
@@ -33,6 +33,47 @@ afterEach(async () => {
 });
 
 describe("model provider adapters", () => {
+	it.each([undefined, ["completion", "tools"], ["completion", "vision"]])("confirms the selected Ollama model's image support before sending pixels (%s)", async capabilities => {
+		let chatBody: Record<string, unknown> | undefined;
+		const baseUrl = await serve((request, response) => {
+			response.setHeader("content-type", "application/json");
+			if (request.url === "/api/tags") response.end(JSON.stringify({ models: [{ name: "fixture" }] }));
+			else if (request.url === "/api/show") response.end(JSON.stringify({ capabilities }));
+			else {
+				let raw = "";
+				request.on("data", chunk => { raw += chunk; });
+				request.on("end", () => { chatBody = JSON.parse(raw); response.end(JSON.stringify({ message: { content: "Seen" }, done: true }) + "\n"); });
+			}
+		});
+		const provider = new OllamaChatProvider({ baseUrl });
+		const request = { model: "fixture", messages: [{ role: "user" as const, content: [{ type: "image" as const, source: "base64" as const, mediaType: "image/png", data: "generated-image-fixture" }] }] };
+		if (capabilities?.includes("vision")) {
+			await expect(provider.complete(request)).resolves.toMatchObject({ text: "Seen" });
+			expect(chatBody?.messages).toEqual([{ role: "user", content: "", images: ["generated-image-fixture"] }]);
+		} else {
+			await expect(provider.complete(request)).rejects.toThrow(/vision-capable/);
+			expect(chatBody).toBeUndefined();
+		}
+	});
+	it("gives Ollama calls unique identities across turns and within each chunk", async () => {
+		const baseUrl = await serve((request, response) => {
+			response.setHeader("content-type", "application/json");
+			if (request.url === "/api/tags") response.end(JSON.stringify({ models: [{ name: "fixture" }] }));
+			else if (request.url === "/api/show") response.end(JSON.stringify({ capabilities: ["completion", "tools"] }));
+			else response.end(JSON.stringify({ message: { tool_calls: [
+				{ function: { name: "computer.screenshot", arguments: {} } },
+				{ function: { name: "test.other", arguments: {} } },
+			] }, done: true }) + "\n");
+		});
+		const provider = new OllamaChatProvider({ baseUrl });
+		const request = { model: "fixture", messages: [{ role: "user" as const, content: textContent("Generated fixture") }] };
+		const first = await provider.complete(request);
+		const second = await provider.complete(request);
+		const calls = [...first.toolCalls, ...second.toolCalls];
+		expect(calls).toHaveLength(4);
+		expect(new Set(calls.map(call => call.id)).size).toBe(4);
+		expect(calls.map(call => call.name)).toEqual(["computer.screenshot", "test.other", "computer.screenshot", "test.other"]);
+	});
 	it("creates logical credential pools from protected primary and backup environments", () => {
 		const providers = createEnvironmentModelProviders({
 			OPENAI_API_KEY: "primary",
@@ -574,9 +615,196 @@ describe("model provider adapters", () => {
 		});
 	});
 
+	it("discovers confirmed Ollama capabilities without retaining private show fields", async () => {
+		const showRequests: string[] = [];
+		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") {
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(JSON.stringify({ models: [{ name: "smollm2:135m" }, { name: "huihui_ai/qwen3.5-abliterated:9b" }, { name: "oversized-context" }] }));
+				return;
+			}
+			const chunks: Buffer[] = [];
+			request.on("data", (chunk: Buffer) => chunks.push(chunk));
+			request.on("end", () => {
+				const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { model?: string };
+				showRequests.push(String(body.model));
+				const qwen = body.model === "huihui_ai/qwen3.5-abliterated:9b";
+				const oversized = body.model === "oversized-context";
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(JSON.stringify({
+					modelfile: "PRIVATE_MODEL_FILE /private/path",
+					license: "PRIVATE_LICENSE_TEXT",
+				template: "PRIVATE_TEMPLATE_TEXT",
+				system: "PRIVATE_SYSTEM_TEXT",
+				capabilities: qwen ? ["completion", "tools", "vision", "thinking"] : ["completion"],
+					model_info: qwen ? { "general.architecture": "qwen3", "qwen3.context_length": 8_192 } : oversized ? { "general.architecture": "llama", "llama.context_length": 1_000_000 } : { "general.architecture": "smollm" },
+				}));
+			});
+		});
+		const models = await new OllamaChatProvider({ baseUrl }).discoverModels();
+		const completionOnly = models.find((model) => model.id === "smollm2:135m")!;
+		const toolModel = models.find((model) => model.id === "huihui_ai/qwen3.5-abliterated:9b")!;
+		const oversizedContext = models.find((model) => model.id === "oversized-context")!;
+		expect(completionOnly.capabilities).toMatchObject({
+			capabilityProvenance: "confirmed",
+			tools: false,
+			images: false,
+			reasoningEfforts: [],
+			contextWindow: 32_768,
+		});
+		expect(toolModel.capabilities).toMatchObject({
+			capabilityProvenance: "confirmed",
+			tools: true,
+			images: true,
+			reasoningEfforts: ["none", "medium"],
+			contextWindow: 8_192,
+		});
+		expect(toolModel.capabilities).not.toHaveProperty("structuredOutput");
+		expect(oversizedContext.capabilities?.contextWindow).toBe(131_072);
+		expect(showRequests.sort()).toEqual(["huihui_ai/qwen3.5-abliterated:9b", "oversized-context", "smollm2:135m"]);
+		expect(JSON.stringify(models)).not.toMatch(/PRIVATE_(?:MODEL_FILE|LICENSE_TEXT|TEMPLATE_TEXT|SYSTEM_TEXT)/);
+	});
+
+	it("keeps Ollama capabilities unknown when show fails or returns an unrecognized capability", async () => {
+		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") {
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(JSON.stringify({ models: [{ name: "show-fails" }, { name: "show-is-invalid" }] }));
+				return;
+			}
+			const chunks: Buffer[] = [];
+			request.on("data", (chunk: Buffer) => chunks.push(chunk));
+			request.on("end", () => {
+				const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { model?: string };
+				if (body.model === "show-fails") {
+					response.writeHead(503);
+					response.end("PRIVATE_UPSTREAM_BODY");
+					return;
+				}
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(JSON.stringify({ capabilities: ["completion", "future-capability"] }));
+			});
+		});
+		const models = await new OllamaChatProvider({ baseUrl }).discoverModels();
+		expect(models).toHaveLength(2);
+		for (const model of models)
+			expect(model.capabilities).toMatchObject({ capabilityProvenance: "unknown", contextWindow: 32_768 });
+		expect(JSON.stringify(models)).not.toContain("PRIVATE_UPSTREAM_BODY");
+	});
+
+	it("limits Ollama show lookups to 64 models and four concurrent requests", async () => {
+		let showRequests = 0;
+		let activeShows = 0;
+		let maximumActiveShows = 0;
+		const models = Array.from({ length: 70 }, (_, index) => ({ name: `model-${index}` }));
+		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") {
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(JSON.stringify({ models }));
+				return;
+			}
+			showRequests++;
+			activeShows++;
+			maximumActiveShows = Math.max(maximumActiveShows, activeShows);
+			request.resume();
+			request.on("end", () => setTimeout(() => {
+				activeShows--;
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(JSON.stringify({ capabilities: ["completion"] }));
+			}, 5));
+		});
+		const discovered = await new OllamaChatProvider({ baseUrl }).discoverModels();
+		expect(discovered).toHaveLength(64);
+		expect(showRequests).toBe(64);
+		expect(maximumActiveShows).toBeLessThanOrEqual(4);
+	});
+
+	it("propagates caller cancellation from an Ollama show request", async () => {
+		let showStarted!: () => void;
+		const started = new Promise<void>((resolve) => { showStarted = resolve; });
+		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") {
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(JSON.stringify({ models: [{ name: "slow-show" }] }));
+				return;
+			}
+			request.resume();
+			request.on("end", () => showStarted());
+		});
+		const controller = new AbortController();
+		const pending = new OllamaChatProvider({ baseUrl }).discoverModels(controller.signal);
+		await started;
+		controller.abort(new Error("Canary cancellation"));
+		await expect(pending).rejects.toThrow("Canary cancellation");
+	});
+
+	it("bounds each Ollama show lookup to one second", async () => {
+		let showStarted!: () => void;
+		const started = new Promise<void>((resolve) => { showStarted = resolve; });
+		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") {
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(JSON.stringify({ models: [{ name: "timeout-show" }] }));
+				return;
+			}
+			request.resume();
+			request.on("end", () => showStarted());
+		});
+		const provider = new OllamaChatProvider({ baseUrl });
+		const startedAt = Date.now();
+		const pending = provider.discoverModels();
+		await started;
+		const models = await pending;
+		expect(Date.now() - startedAt).toBeLessThan(1_800);
+		expect(models[0]?.capabilities?.capabilityProvenance).toBe("unknown");
+	});
+
+
+	it.each(["tag", "show", "malformed-show", "chat"])("fails closed on remote or malformed Ollama %s metadata without leaking upstream values", async stage => {
+		const calls: string[] = []; const events: unknown[] = [];
+		const baseUrl = await serve((request, response) => {
+			calls.push(request.url!);
+			if (request.url === "/api/tags") { response.end(JSON.stringify({ models: [{ name: "plain-alias", ...(stage === "tag" ? { remote_host: "https://private.invalid" } : {}) }] })); return; }
+			if (request.url === "/api/show") { response.end(JSON.stringify(stage === "show" ? { remote_model: "upstream-secret" } : stage === "malformed-show" ? { remote_host: null } : {})); return; }
+			response.end(JSON.stringify({ message: { content: "private content" }, done: true, remote_model: "upstream-secret" }) + "\n");
+		});
+		const error = await new OllamaChatProvider({ baseUrl }).complete({ model: "plain-alias", messages: [{ role: "user", content: textContent("private prompt") }] }, { onEvent: event => events.push(event) }).catch(error => error);
+		expect(error.message).toContain("remote-backed");
+		expect(error.message).not.toContain("private.invalid"); expect(error.message).not.toContain("upstream-secret");
+		if (stage !== "chat") expect(calls).not.toContain("/api/chat");
+		expect(events).toEqual([]);
+	});
+
+	it("marks a remote Ollama tag unsupported during discovery, regardless of its alias", async () => {
+		let showed = false;
+		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") { response.end(JSON.stringify({ models: [{ name: "plain-alias", remote_model: "upstream-secret" }] })); return; }
+			showed = true; response.end(JSON.stringify({ capabilities: ["completion", "tools"] }));
+		});
+		const result = await new OllamaChatProvider({ baseUrl }).discoverModels();
+		expect(result[0]).toMatchObject({ id: "plain-alias", availability: "unsupported" });
+		expect(showed).toBe(false); expect(JSON.stringify(result)).not.toContain("upstream-secret");
+	});
+
+	it("rechecks an alias before each prompt after previously local discovery", async () => {
+		let remote = false; let chats = 0;
+		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") { response.end(JSON.stringify({ models: [{ name: "plain-alias" }] })); return; }
+			if (request.url === "/api/show") { response.end(JSON.stringify({ capabilities: ["completion", "tools"], ...(remote ? { remote_host: "https://private.invalid" } : {}) })); return; }
+			chats++; response.end(JSON.stringify({ message: { content: "ok" }, done: true }) + "\n");
+		});
+		const provider = new OllamaChatProvider({ baseUrl });
+		expect((await provider.discoverModels())[0]?.availability).toBe("available");
+		remote = true;
+		await expect(provider.complete({ model: "plain-alias", messages: [{ role: "user", content: textContent("private") }] })).rejects.toThrow("remote-backed");
+		expect(chats).toBe(0);
+	});
+
 	it("maps Ollama NDJSON streaming responses and local tool calls", async () => {
 		let requestBody: Record<string, unknown> = {};
 		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") { response.end(JSON.stringify({ models: [{ name: "local-test" }, { name: "thinking-model" }] })); return; }
+			if (request.url === "/api/show") { response.end("{}"); return; }
 			const chunks: Buffer[] = [];
 			request.on("data", (chunk: Buffer) => chunks.push(chunk));
 			request.on("end", () => {
@@ -634,8 +862,93 @@ describe("model provider adapters", () => {
 		expect(requestBody.think).toBe(false);
 	});
 
+	it("allows Ollama chat headers after 20 seconds within the fixed 120 second adapter grace", async () => {
+		vi.useFakeTimers();
+		const originalFetch = globalThis.fetch;
+		let requestSignal: AbortSignal | undefined;
+		globalThis.fetch = async (input, init) => {
+			if (String(input).endsWith("/api/tags")) return Response.json({ models: [{ name: "local-test" }] });
+			if (String(input).endsWith("/api/show")) return Response.json({});
+			return new Promise((resolve, reject) => {
+				requestSignal = init?.signal ?? undefined;
+				const timer = setTimeout(
+					() => resolve(new Response(`${JSON.stringify({ message: { role: "assistant", content: "ready" }, done: true })}\n`)),
+					21_000,
+				);
+				requestSignal?.addEventListener("abort", () => {
+					clearTimeout(timer);
+					reject(requestSignal?.reason ?? new DOMException("Aborted", "AbortError"));
+				}, { once: true });
+			});
+		};
+		try {
+			const pending = new OllamaChatProvider().complete({
+				model: "local-test",
+				messages: [{ role: "user", content: textContent("ready") }],
+			});
+			const settled = expect(pending).resolves.toMatchObject({
+				text: "ready",
+				finishReason: "stop",
+			});
+			await vi.advanceTimersByTimeAsync(20_500);
+			expect(requestSignal?.aborted).toBe(false);
+			await vi.advanceTimersByTimeAsync(500);
+			await settled;
+		} finally {
+			globalThis.fetch = originalFetch;
+			vi.useRealTimers();
+		}
+	});
+
+	it("honors caller abort before the Ollama chat connect grace expires", async () => {
+		const originalFetch = globalThis.fetch;
+		const controller = new AbortController();
+		const abortError = new DOMException("Caller stopped local chat", "AbortError");
+		globalThis.fetch = async (_input, init) =>
+			new Promise((_resolve, reject) => {
+				init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+			});
+		try {
+			const pending = new OllamaChatProvider().complete(
+				{
+					model: "local-test",
+					messages: [{ role: "user", content: textContent("ready") }],
+				},
+				{ signal: controller.signal },
+			);
+			const rejected = expect(pending).rejects.toBe(abortError);
+			controller.abort(abortError);
+			await rejected;
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("maps the supported Ollama thinking effort to the chat request", async () => {
+		let requestBody: Record<string, unknown> = {};
+		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") { response.end(JSON.stringify({ models: [{ name: "local-test" }, { name: "thinking-model" }] })); return; }
+			if (request.url === "/api/show") { response.end("{}"); return; }
+			const chunks: Buffer[] = [];
+			request.on("data", (chunk: Buffer) => chunks.push(chunk));
+			request.on("end", () => {
+				requestBody = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+				response.writeHead(200, { "content-type": "application/x-ndjson" });
+				response.end(`${JSON.stringify({ message: { role: "assistant", content: "reasoned" }, done: true })}\n`);
+			});
+		});
+		await new OllamaChatProvider({ baseUrl }).complete({
+			model: "thinking-model",
+			reasoningEffort: "medium",
+			messages: [{ role: "user", content: textContent("Explain briefly") }],
+		});
+		expect(requestBody.think).toBe(true);
+	});
+
 	it("normalizes malformed Ollama usage metadata", async () => {
-		const baseUrl = await serve((_request, response) => {
+		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") { response.end(JSON.stringify({ models: [{ name: "local-test" }] })); return; }
+			if (request.url === "/api/show") { response.end("{}"); return; }
 			response.writeHead(200, { "content-type": "application/x-ndjson" });
 			response.end(
 				`${JSON.stringify({ message: { role: "assistant", content: "ok" }, done: true, prompt_eval_count: "not-a-number", eval_count: -4 })}\n`,
