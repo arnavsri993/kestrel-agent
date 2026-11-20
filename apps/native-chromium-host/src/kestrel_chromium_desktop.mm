@@ -250,11 +250,12 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
     if (!initial_window_activation_requested_) {
       initial_window_activation_requested_ = true;
       if (window.miniaturized) [window deminiaturize:nil];
-      // A normal LaunchServices or Dock launch carries user intent. Request
-      // activation without the focus-stealing option, then make our own first
-      // browser window key and visible once AppKit accepts the activation.
+      // The first window is created for an explicit app launch. A direct
+      // executable launch has no Launch Services activation handoff, so ask
+      // AppKit to activate the app even when another app is foreground.
+      [NSApp unhide:nil];
       const BOOL activation_requested =
-          [[NSRunningApplication currentApplication] activateWithOptions:0];
+          [[NSRunningApplication currentApplication] activateWithOptions:NSApplicationActivateIgnoringOtherApps];
       [window makeKeyAndOrderFront:nil];
       std::cout << "KESTREL_CHROMIUM_WINDOW_PRESENTATION_REQUESTED activation="
                 << (activation_requested ? 1 : 0) << std::endl;

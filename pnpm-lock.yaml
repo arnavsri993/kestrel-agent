@@ -26,6 +26,7 @@ patchedDependencies:
   minimatch@3.1.5: 705181d6ce27255ac9b9769d779e324711acf7c08b1514e9db7d03a986de7465
   minimatch@5.1.9: 91207d50d68c402b0870e4bcf6e701c5ed32f7ce911083c5a474d2d9054b8d1d
   minimatch@9.0.9: a0c33db4af776735520d1384a1b8ac08d416e1acc831758c26229ef13d592ff6
+  picomatch@4.0.5: 10fa83fe269eaf7d53b39a29ddb989be11962f2da5f3728de19341f784d56976
 
 importers:
 
@@ -4285,9 +4286,9 @@ snapshots:
 
   fast-uri@3.1.9: {}
 
-  fdir@6.5.0(picomatch@4.0.5):
+  fdir@6.5.0(picomatch@4.0.5(patch_hash=10fa83fe269eaf7d53b39a29ddb989be11962f2da5f3728de19341f784d56976)):
     optionalDependencies:
-      picomatch: 4.0.5
+      picomatch: 4.0.5(patch_hash=10fa83fe269eaf7d53b39a29ddb989be11962f2da5f3728de19341f784d56976)
 
   filelist@1.0.6:
     dependencies:
@@ -4777,7 +4778,7 @@ snapshots:
 
   picocolors@1.1.1: {}
 
-  picomatch@4.0.5: {}
+  picomatch@4.0.5(patch_hash=10fa83fe269eaf7d53b39a29ddb989be11962f2da5f3728de19341f784d56976): {}
 
   pkijs@3.4.0:
     dependencies:
@@ -5145,8 +5146,8 @@ snapshots:
 
   tinyglobby@0.2.17:
     dependencies:
-      fdir: 6.5.0(picomatch@4.0.5)
-      picomatch: 4.0.5
+      fdir: 6.5.0(picomatch@4.0.5(patch_hash=10fa83fe269eaf7d53b39a29ddb989be11962f2da5f3728de19341f784d56976))
+      picomatch: 4.0.5(patch_hash=10fa83fe269eaf7d53b39a29ddb989be11962f2da5f3728de19341f784d56976)
 
   tinyrainbow@3.1.0: {}
 
@@ -5217,8 +5218,8 @@ snapshots:
   vite@7.3.7(@types/node@24.10.1)(jiti@2.7.0)(tsx@4.21.0):
     dependencies:
       esbuild: 0.28.1
-      fdir: 6.5.0(picomatch@4.0.5)
-      picomatch: 4.0.5
+      fdir: 6.5.0(picomatch@4.0.5(patch_hash=10fa83fe269eaf7d53b39a29ddb989be11962f2da5f3728de19341f784d56976))
+      picomatch: 4.0.5(patch_hash=10fa83fe269eaf7d53b39a29ddb989be11962f2da5f3728de19341f784d56976)
       postcss: 8.5.23
       rollup: 4.62.2
       tinyglobby: 0.2.17
@@ -5242,7 +5243,7 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.1.4
       pathe: 2.0.3
-      picomatch: 4.0.5
+      picomatch: 4.0.5(patch_hash=10fa83fe269eaf7d53b39a29ddb989be11962f2da5f3728de19341f784d56976)
       std-env: 4.2.0
       tinybench: 2.9.0
       tinyexec: 1.2.4

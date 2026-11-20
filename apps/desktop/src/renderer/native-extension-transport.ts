@@ -20,8 +20,12 @@ interface NativeChromeUi {
 	};
 	windows?: { getCurrent(): Promise<{ id?: number }> };
 	tabs?: {
-		getCurrent(): Promise<{ id?: number } | undefined>;
-		query?(query: { active: boolean; currentWindow: boolean }): Promise<Array<{ id?: number }>>;
+		getCurrent(): Promise<{ id?: number; windowId?: number } | undefined>;
+		query?(query: { active: boolean; currentWindow: boolean }): Promise<Array<{ id?: number; windowId?: number }>>;
+		onActivated?: {
+			addListener(callback: (active: { tabId: number; windowId: number }) => void): void;
+			removeListener(callback: (active: { tabId: number; windowId: number }) => void): void;
+		};
 	};
 	sidePanel?: {
 		open(options: { windowId: number }): Promise<void>;
@@ -46,6 +50,14 @@ const documentTabResolver = nativeChromiumSurface && !nativeChromiumPanel
 				return active?.[0];
 			}
 			return chromeUi?.tabs?.getCurrent() ?? undefined;
+		},
+		subscribeCurrent: callback => {
+			const event = nativeChromiumFrameShell ? chromeUi?.tabs?.onActivated : undefined;
+			if (!event) return () => {};
+			const handler = (active: { tabId: number; windowId: number }) =>
+				callback({ id: active.tabId, windowId: active.windowId });
+			event.addListener(handler);
+			return () => event.removeListener(handler);
 		},
 		readMapping: async () => (await chromeUi?.storage?.session.get(tabIdsKey))?.[tabIdsKey],
 		subscribeMapping: callback => {

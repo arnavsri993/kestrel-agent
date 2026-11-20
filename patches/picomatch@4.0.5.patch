@@ -1,0 +1,32 @@
+diff --git a/lib/parse.js b/lib/parse.js
+index a85bb2d441e5c20331181411f67bef7a2d0a0d88..af4d8a8d823c5e650a217b8111ee066fceb21c47 100644
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -296,14 +296,20 @@ const analyzeRepeatedExtglob = (body, options) => {
+ 
+   const branches = splitTopLevel(body).map(branch => branch.trim());
+ 
+-  if (branches.length > 1) {
+-    if (
+-      branches.some(branch => branch === '') ||
++  if (
++    branches.length > 1 &&
++    (branches.some(branch => branch === '') ||
+       branches.some(branch => /^[*?]+$/.test(branch)) ||
+-      hasRepeatedCharPrefixOverlap(branches)
+-    ) {
+-      return { risky: true };
+-    }
++      hasRepeatedCharPrefixOverlap(branches))
++  ) {
++    return { risky: true };
++  }
++
++  // A wildcard star under a repeated extglob nests unbounded quantifiers.
++  // Literalize the extglob to prevent catastrophic backtracking, including
++  // the single-branch cases +(*) and +(*a).
++  if (branches.some(branch => branch.includes('*'))) {
++    return { risky: true };
+   }
+ 
+   // A repeated extglob is "risky" (prone to catastrophic backtracking) when a

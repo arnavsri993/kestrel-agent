@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ADVISORY, ALLOWED_PATHS, BRACE, EXPIRES, PATCHES, SOURCES, applyAuditPolicy, auditEnvironment, parseAuditResult, verifyManifest, verifySourceHashes } from "./audit-minimatch-policy.mjs";
+import { ADVISORY, ALLOWED_PATHS, BRACE, EXPIRES, PATCHES, PICOMATCH_PATCH, PICOMATCH_SOURCE, PICOMATCH_VERSION, SOURCES, applyAuditPolicy, auditEnvironment, parseAuditResult, verifyManifest, verifySourceHashes } from "./audit-minimatch-policy.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const hash = path => createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -43,11 +43,20 @@ function verifyConfiguration() {
   const yaml = builder("js-yaml");
   const workspace = yaml.load(readFileSync(join(root, "pnpm-workspace.yaml"), "utf8"));
   const lock = yaml.load(readFileSync(join(root, "pnpm-lock.yaml"), "utf8"));
-  verifyManifest(workspace, lock, Object.fromEntries(Object.keys(PATCHES).map(version => [version, hash(join(root, "patches", `minimatch@${version}.patch`))])));
+  verifyManifest(workspace, lock, { ...Object.fromEntries(Object.keys(PATCHES).map(version => [version, hash(join(root, "patches", `minimatch@${version}.patch`))])), picomatch: hash(join(root, "patches", "picomatch@4.0.5.patch")) });
 }
 function verifyInstalled(accepted) {
   const verified = new Set();
   for (const finding of accepted) {
+    if (finding.module === "picomatch") {
+      const storeEntry = readdirSync(join(root, "node_modules/.pnpm")).find(entry => entry.startsWith(`picomatch@${finding.version}_patch_hash=${PICOMATCH_PATCH}`));
+      if (!storeEntry) throw new Error("Patched picomatch store entry is missing.");
+      const packagePath = join(root, "node_modules/.pnpm", storeEntry, "node_modules/picomatch/package.json");
+      const sourcePath = join(dirname(packagePath), "lib/parse.js");
+      if (JSON.parse(readFileSync(packagePath, "utf8")).version !== finding.version || !packagePath.includes(`picomatch@${finding.version}_patch_hash=${PICOMATCH_PATCH}`) || hash(sourcePath) !== PICOMATCH_SOURCE) throw new Error("Installed picomatch is not the exact reviewed ReDoS backport.");
+      verified.add("picomatch");
+      continue;
+    }
     const { consumer, entrypoint, manifest: packagePath } = resolveConsumer(finding.path);
     const installedVersion = JSON.parse(readFileSync(packagePath, "utf8")).version;
     if (installedVersion !== finding.version || !packagePath.includes(`minimatch@${finding.version}_patch_hash=${PATCHES[finding.version]}`)) throw new Error(`Resolved package identity does not match: ${finding.path}.`);
@@ -63,8 +72,8 @@ function verifyInstalled(accepted) {
   }
   // Exercise every reviewed installed version, including versions outside the
   // advisory's current range, regardless of the scanner's reported subset.
-  if (verified.size !== Object.keys(PATCHES).length) throw new Error("Installed evidence does not cover all four reviewed minimatch versions; re-review the changed dependency graph.");
-  const check = pnpm(["exec", "vitest", "run", "scripts/minimatch-compat.test.mjs"]);
+  if (Object.keys(PATCHES).some(version => !verified.has(version)) || !verified.has("picomatch")) throw new Error("Installed evidence does not cover every reviewed minimatch and picomatch backport; re-review the changed dependency graph.");
+  const check = pnpm(["exec", "vitest", "run", "scripts/minimatch-compat.test.mjs", "scripts/picomatch-backport.test.mjs"]);
   process.stdout.write(check.stdout || "");
   process.stderr.write(check.stderr || "");
   if (check.error || check.status !== 0) throw new Error(`Installed backport regression tests failed: ${check.error?.message || `exit ${check.status}`}.`);
@@ -75,12 +84,14 @@ try {
   if (audit.stdout) process.stdout.write(audit.stdout.endsWith("\n") ? audit.stdout : `${audit.stdout}\n`);
   if (audit.stderr) process.stderr.write(audit.stderr);
   const report = parseAuditResult(audit);
-  const accepted = applyAuditPolicy(report, new Date(), () => {
+  const accepted = applyAuditPolicy(report, new Date(), acceptedFindings => {
     verifyConfiguration();
-    verifyInstalled(Object.entries(ALLOWED_PATHS).map(([path, version]) => ({ path, version })));
+    const picomatchFindings = acceptedFindings.filter(finding => finding.module === "picomatch");
+    if (!picomatchFindings.length) picomatchFindings.push({ version: PICOMATCH_VERSION, module: "picomatch" });
+    verifyInstalled([...Object.entries(ALLOWED_PATHS).map(([path, version]) => ({ path, version, module: "minimatch" })), ...picomatchFindings]);
   });
   if (accepted.length) {
-    console.log(`${ADVISORY} remains reported by pnpm; the exact reviewed development-only backports and installed behavior were verified for ${accepted.length} paths. Exception expires ${EXPIRES}.`);
+    console.log(`Reviewed development-only minimatch and picomatch backports and installed behavior were verified for ${accepted.length} paths. Minimatch exception expires ${EXPIRES}.`);
   } else console.log("pnpm audit reported no findings.");
 } catch (error) {
   console.error(`Dependency audit failed: ${error instanceof Error ? error.message : String(error)}`);

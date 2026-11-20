@@ -54,7 +54,24 @@ test('frame readiness clears on bridge errors and cannot revive after pagehide',
 });
 
 test('Chromium patch checks the trusted frame lease and recovers stock controls on loss', () => {
- assert.match(patch, /if \(kestrel_frame_ready_\) \{[\s\S]*?top_container_->SetVisible\(false\)/);
+ assert.match(patch, /if \(show_kestrel_frame\) \{[\s\S]*?extensions->SetBounds\(/);
+ assert.match(patch, /kestrel_extensions_pane_->AddChildView\(toolbar_->extensions_container\(\)\)/);
+ assert.match(patch, /toolbar_->AddChildViewAt\(toolbar_->extensions_container\(\),[\s\S]*?\*kestrel_extensions_index_\)/);
+ assert.match(patch, /toolbar_->SetVisible\(kestrel_toolbar_was_visible_\)/);
+ assert.match(patch, /panes->push_back\(kestrel_extensions_pane_\)/);
+ assert.match(patch, /if \(view\) view->InvalidateLayout\(\)/);
+ assert.match(patch, /void ChildPreferredSizeChanged\(views::View\*\) override \{\n\+    PreferredSizeChanged\(\);\n\+    invalidate_browser_\.Run\(\);/);
+ assert.match(patch, /void ChildVisibilityChanged\(views::View\*\) override \{\n\+    PreferredSizeChanged\(\);\n\+    invalidate_browser_\.Run\(\);/);
+ assert.match(patch, /const bool immersive_frame = IsFullscreen\(\) &&[\s\S]*?IsEnabled\(\)/);
+ assert.match(patch, /void BrowserView::OnImmersiveFullscreenEntered\(\)[\s\S]*?ReparentTopContainerForStartOfImmersive\(\);[\s\S]*?top_container_->AddChildView\(kestrel_frame_view_\.get\(\)\)/);
+ assert.match(patch, /void BrowserView::OnImmersiveFullscreenExited\(\)[\s\S]*?AddChildView\(kestrel_frame_view_\.get\(\)\);[\s\S]*?ReparentTopContainerForEndOfImmersive\(\)/);
+ const layout = patch.slice(patch.indexOf('void BrowserView::Layout(PassKey)'), patch.indexOf('void BrowserView::AddedToWidget()', patch.indexOf('void BrowserView::Layout(PassKey)')));
+ assert.doesNotMatch(layout, /top_container_->SetVisible\(false\)/);
+ assert.match(layout, /if \(show_kestrel_frame\) \{[\s\S]*?toolbar_->SetVisible\(false\)/);
+ assert.match(layout, /if \(!immersive_frame\) \{[\s\S]*?multi_contents_view_->SetBoundsRect/);
+ assert.match(patch, /kestrel_extensions_pane_->SetPaneFocus\(nullptr\)/);
+ assert.match(patch, /gfx::Rect bounds = multi_contents_view_->bounds\(\);[\s\S]*?multi_contents_view_->SetBoundsRect\(bounds\)/);
+ assert.match(patch, /gfx::Rect bounds = side_panel_->bounds\(\);[\s\S]*?side_panel_->SetBoundsRect\(bounds\)/);
  assert.match(patch, /SetVisible\(kestrel_top_was_visible_\)/);
  assert.match(patch, /SetVisible\(kestrel_horizontal_was_visible_\)/);
  assert.match(patch, /SetVisible\(kestrel_vertical_was_visible_\)/);
@@ -91,20 +108,21 @@ test('first native window retries attachment and verifies activation before clai
  const presentation = desktop.slice(start, end);
  assert.match(presentation, /KestrelDispatchToMainRunLoop/);
  assert.match(presentation, /if \(!window\) \{\n      RetryFirstWindowPresentation\(browser, attempt\);/);
+ assert.match(presentation, /\[NSApp unhide:nil\]/);
  assert.match(presentation, /window\.isVisible && NSApp\.isActive && window\.isKeyWindow/);
  assert.match(presentation, /kMaxPresentationAttempts = 30/);
  assert.match(presentation, /100 \* NSEC_PER_MSEC/);
- assert.equal((presentation.match(/activateWithOptions:0/g) ?? []).length, 1,
+ assert.equal((presentation.match(/activateWithOptions:NSApplicationActivateIgnoringOtherApps/g) ?? []).length, 1,
   'the initial app activation request must not repeat during retries');
- assert(presentation.indexOf('if (!window)') < presentation.indexOf('activateWithOptions:0'));
- assert(presentation.indexOf('activateWithOptions:0') < presentation.indexOf('window.isVisible'));
+ assert(presentation.indexOf('if (!window)') < presentation.indexOf('activateWithOptions:NSApplicationActivateIgnoringOtherApps'));
+ assert(presentation.indexOf('activateWithOptions:NSApplicationActivateIgnoringOtherApps') < presentation.indexOf('window.isVisible'));
 });
 
 test('the CEF frame patch uses context anchors on apply and rollback', () => {
  assert.doesNotMatch(preparer, /--unidiff-zero/);
  assert.match(preparer, /run\('git', \['apply', '--check'/);
- assert.match(patch, /@@ -4987,2 \+5113,3 @@ void BrowserView::AddedToWidget\(\) \{\n   if \(initialized_\) \{\n\+    MaybeCreateKestrelBrowserFrame\(\);\n     return;/);
- assert.match(patch, /@@ -5179,2 \+5306,165 @@ void BrowserView::AddedToWidget\(\) \{\n   initialized_ = true;\n\+  MaybeCreateKestrelBrowserFrame\(\);\n\+\}/);
+ assert.match(patch, /@@ -4987,2 \+\d+,3 @@ void BrowserView::AddedToWidget\(\) \{\n   if \(initialized_\) \{\n\+    MaybeCreateKestrelBrowserFrame\(\);\n     return;/);
+ assert.match(patch, /@@ -5179,2 \+\d+,\d+ @@ void BrowserView::AddedToWidget\(\) \{\n   initialized_ = true;\n\+  MaybeCreateKestrelBrowserFrame\(\);\n\+\}/);
  assert.match(patch, /\n void BrowserView::RemovedFromWidget\(\) \{\n\+  DestroyKestrelBrowserFrame\(\);\n   CHECK\(GetFocusManager\(\)\);/);
  let file = '';
  for (const line of patch.split('\n')) {

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { ADVISORY, AFFECTED_PATHS, ALLOWED_PATHS, BRACE, EXPIRES, PATCHES, SOURCES, applyAuditPolicy, assessAudit, auditEnvironment, parseAuditResult, verifyManifest, verifySourceHashes } from "./audit-minimatch-policy.mjs";
+import { ADVISORY, AFFECTED_PATHS, ALLOWED_PATHS, BRACE, EXPIRES, PATCHES, PICOMATCH_ADVISORY, PICOMATCH_PATCH, PICOMATCH_AUDIT_PATCHED_VERSIONS, PICOMATCH_VERSION, SOURCES, applyAuditPolicy, assessAudit, auditEnvironment, parseAuditResult, verifyManifest, verifySourceHashes } from "./audit-minimatch-policy.mjs";
 const now = new Date("2026-11-01T12:00:00Z");
 const knownPath = "apps__desktop>electron-builder>app-builder-lib>minimatch";
 const report = () => ({
@@ -14,16 +14,34 @@ function manifest() {
   const patchedDependencies = Object.fromEntries(Object.keys(PATCHES).map(version => [`minimatch@${version}`, `patches/minimatch@${version}.patch`]));
   const locked = Object.fromEntries(Object.entries(PATCHES).map(([version, hash]) => [`minimatch@${version}`, hash]));
   const snapshots = Object.fromEntries(Object.entries(PATCHES).map(([version, hash]) => [`minimatch@${version}(patch_hash=${hash})`, {}]));
-  return [{ overrides: { "brace-expansion": "5.0.12" }, patchedDependencies }, { patchedDependencies: locked, snapshots }, { ...PATCHES }];
+  snapshots[`picomatch@${PICOMATCH_VERSION}(patch_hash=${PICOMATCH_PATCH})`] = {};
+  patchedDependencies[`picomatch@${PICOMATCH_VERSION}`] = `patches/picomatch@${PICOMATCH_VERSION}.patch`;
+  locked[`picomatch@${PICOMATCH_VERSION}`] = PICOMATCH_PATCH;
+  return [{ overrides: { "brace-expansion": "5.0.12" }, patchedDependencies }, { patchedDependencies: locked, snapshots }, { ...PATCHES, picomatch: PICOMATCH_PATCH }];
 }
 describe("temporary minimatch audit policy", () => {
   it("accepts only the reviewed dev-only path before expiry", () => {
     expect(assessAudit(report(), now)).toHaveLength(4);
     expect(Object.keys(AFFECTED_PATHS)).toHaveLength(4);
-    expect(assessAudit(report(), now)).toContainEqual({ path: knownPath, version: "10.2.5" });
+    expect(assessAudit(report(), now)).toContainEqual({ path: knownPath, version: "10.2.5", module: "minimatch" });
     expect(Object.keys(ALLOWED_PATHS)).toHaveLength(23);
     expect(() => assessAudit(report(), new Date(EXPIRES))).toThrow(/expired/);
     expect(() => assessAudit(report(), new Date("invalid"))).toThrow(/time/);
+  });
+  it("accepts only the exact development picomatch backport paths", () => {
+    const r = report();
+    r.advisories["1247710"] = { id: 1247710, github_advisory_id: PICOMATCH_ADVISORY, module_name: "picomatch", severity: "high", vulnerable_versions: "<=4.0.7", patched_versions: ">=4.0.8", findings: [{ version: PICOMATCH_VERSION, paths: [".>vitest>picomatch"], dev: true, optional: false, bundled: false }] };
+    r.metadata.vulnerabilities.high = 1;
+    expect(assessAudit(r, now)).toContainEqual({ path: ".>vitest>picomatch", version: PICOMATCH_VERSION, module: "picomatch" });
+    expect(() => applyAuditPolicy(r, now, () => { throw new Error("missing installed backport evidence"); })).toThrow(/missing installed backport evidence/);
+    expect(PICOMATCH_AUDIT_PATCHED_VERSIONS).toEqual([">=4.0.8"]);
+    r.advisories["1247710"].patched_versions = "None";
+    expect(() => assessAudit(r, now)).toThrow(/Unapproved audit finding/);
+    r.advisories["1247710"].patched_versions = ">=4.0.9";
+    expect(() => assessAudit(r, now)).toThrow(/Unapproved audit finding/);
+    r.advisories["1247710"].patched_versions = ">=4.0.8";
+    r.advisories["1247710"].findings[0].paths = ["apps__website>runtime>picomatch"];
+    expect(() => assessAudit(r, now)).toThrow(/dependency path/);
   });
   it.each([
     ["old scanner ID", r => { const a = r.advisories["1244623"]; delete r.advisories["1244623"]; a.id = 1244012; r.advisories["1244012"] = a; }],

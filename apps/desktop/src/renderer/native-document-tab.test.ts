@@ -2,12 +2,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNativeDocumentTabResolver } from "./native-document-tab";
 
 const id = "tab-12345678-1234-1234-1234-123456789abc";
+const selectedId = "tab-abcdefab-cdef-abcd-efab-cdefabcdefab";
 const map = { "17": id };
-function harness(getCurrent: () => Promise<{ id?: number } | undefined> = vi.fn(async () => ({ id: 17 })), readMapping: () => Promise<unknown> = vi.fn(async () => map)) {
+function harness(
+ getCurrent: () => Promise<{ id?: number; windowId?: number } | undefined> = vi.fn(async () => ({ id: 17, windowId: 4 })),
+ readMapping: () => Promise<unknown> = vi.fn(async () => map),
+) {
  let change: (value: unknown) => void = () => {};
+ let activate: (value: { id?: number; windowId?: number }) => void = () => {};
  const unsubscribe = vi.fn();
- const resolver = createNativeDocumentTabResolver({ getCurrent, readMapping, subscribeMapping(callback) { change = callback; return unsubscribe; } });
- return { resolver, change: (value: unknown) => change(value), unsubscribe };
+ const unsubscribeCurrent = vi.fn();
+ const resolver = createNativeDocumentTabResolver({
+  getCurrent,
+  readMapping,
+  subscribeMapping(callback) { change = callback; return unsubscribe; },
+  subscribeCurrent(callback) { activate = callback; return unsubscribeCurrent; },
+ });
+ return {
+  resolver,
+  change: (value: unknown) => change(value),
+  activate: (value: { id?: number; windowId?: number }) => activate(value),
+  unsubscribe,
+  unsubscribeCurrent,
+ };
 }
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
@@ -21,6 +38,35 @@ describe("native document identity", () => {
   const read = vi.fn().mockRejectedValueOnce(new Error("unavailable")).mockResolvedValue(map);
   const { resolver } = harness(undefined, read); await vi.advanceTimersByTimeAsync(100);
   expect(resolver.getSnapshot()).toEqual({ state: "ready", id }); resolver.close();
+ });
+ it("follows native tab selection in its own window and ignores other windows", async () => {
+  const read = vi.fn(async () => ({ "17": id, "18": selectedId }));
+  const { resolver, activate, unsubscribeCurrent } = harness(vi.fn(async () => ({ id: 17, windowId: 4 })), read);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(resolver.getSnapshot()).toEqual({ state: "ready", id });
+
+  activate({ id: 25, windowId: 9 });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(resolver.getSnapshot()).toEqual({ state: "ready", id });
+
+  activate({ id: 18, windowId: 4 });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(resolver.getSnapshot()).toEqual({ state: "ready", id: selectedId });
+  resolver.close();
+  expect(unsubscribeCurrent).toHaveBeenCalledOnce();
+ });
+ it("keeps a same-window selection that arrives during initial tab lookup", async () => {
+  let release!: (value: { id: number; windowId: number }) => void;
+  const get = vi.fn(() =>
+   new Promise<{ id: number; windowId: number }>(resolve => { release = resolve; }),
+  );
+  const read = vi.fn(async () => ({ "17": id, "18": selectedId }));
+  const { resolver, activate } = harness(get, read);
+  activate({ id: 18, windowId: 4 });
+  release({ id: 17, windowId: 4 });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(resolver.getSnapshot()).toEqual({ state: "ready", id: selectedId });
+  resolver.close();
  });
  it("uses a mapping received before getCurrent completes without waiting for a hung storage read", async () => {
   let release!: (value: { id: number }) => void;

@@ -1,6 +1,15 @@
 // Temporary, exact backport policy for GHSA-g3hv-75wg-m249.
 // Upstream v11.0.1 fix: https://github.com/isaacs/minimatch/commit/77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8
 export const ADVISORY = "GHSA-g3hv-75wg-m249";
+export const PICOMATCH_ADVISORY = "GHSA-fc5q-39xc-vjpf";
+export const PICOMATCH_VERSION = "4.0.5";
+// The authoritative GitHub advisory has no fixed-version event, but the live
+// pnpm audit report says ">=4.0.8" even though npm has no 4.0.8 release.
+// Pin that scanner metadata to require review if it changes; it is not evidence
+// of remediation. The exact installed backport source and tests below are.
+export const PICOMATCH_AUDIT_PATCHED_VERSIONS = Object.freeze([">=4.0.8"]);
+export const PICOMATCH_PATCH = "10fa83fe269eaf7d53b39a29ddb989be11962f2da5f3728de19341f784d56976";
+export const PICOMATCH_SOURCE = "45742d6ecac83d9dc0a85230c866260d846a1dc8ea462939414f9ab641333129";
 export const EXPIRES = "2026-12-01T00:00:00.000Z";
 export const PATCHES = Object.freeze({
   "3.1.5": "705181d6ce27255ac9b9769d779e324711acf7c08b1514e9db7d03a986de7465",
@@ -66,18 +75,22 @@ export function assessAudit(report, now) {
   for (const [key, advisory] of findings) {
     if (!advisory || !Object.hasOwn(counts, advisory.severity)) fail("Audit severity is missing or unrecognized.");
     counts[advisory.severity]++;
-    if (key !== "1244623" || advisory.id !== 1244623 || advisory.github_advisory_id !== ADVISORY || advisory.module_name !== "minimatch" || advisory.severity !== "moderate" || advisory.vulnerable_versions !== ">=7.0.0 <11.0.1" || advisory.patched_versions !== ">=11.0.1") fail(`Unapproved audit finding: ${advisory.github_advisory_id || key}.`);
+    const minimatchFinding = key === "1244623" && advisory.id === 1244623 && advisory.github_advisory_id === ADVISORY && advisory.module_name === "minimatch" && advisory.severity === "moderate" && advisory.vulnerable_versions === ">=7.0.0 <11.0.1" && advisory.patched_versions === ">=11.0.1";
+    const picomatchFinding = key === "1247710" && advisory.id === 1247710 && advisory.github_advisory_id === PICOMATCH_ADVISORY && advisory.module_name === "picomatch" && advisory.severity === "high" && advisory.vulnerable_versions === "<=4.0.7" && PICOMATCH_AUDIT_PATCHED_VERSIONS.includes(advisory.patched_versions);
+    if (!minimatchFinding && !picomatchFinding) fail(`Unapproved audit finding: ${advisory.github_advisory_id || key}.`);
     if (!Array.isArray(advisory.findings) || !advisory.findings.length) fail("Advisory has no findings.");
     const seenPaths = new Set();
     for (const finding of advisory.findings) {
-      if (!finding || !Object.hasOwn(PATCHES, finding.version) || finding.dev !== true || finding.optional !== false || finding.bundled !== false || !Array.isArray(finding.paths) || !finding.paths.length) fail("Unapproved version or audit dependency flags.");
+      const versionAllowed = minimatchFinding ? Object.hasOwn(PATCHES, finding?.version) : finding?.version === PICOMATCH_VERSION;
+      if (!finding || !versionAllowed || finding.dev !== true || finding.optional !== false || finding.bundled !== false || !Array.isArray(finding.paths) || !finding.paths.length) fail("Unapproved version or audit dependency flags.");
       for (const path of finding.paths) {
-        if (typeof path !== "string" || AFFECTED_PATHS[path] !== finding.version || seenPaths.has(path)) fail(`Unapproved or duplicate dependency path: ${path}.`);
+        const pathAllowed = minimatchFinding ? AFFECTED_PATHS[path] === finding.version : typeof path === "string" && path.endsWith(">picomatch") && new Set([".", "apps__cli", "apps__desktop", "packages__agent-core", "packages__logger"]).has(path.split(">", 1)[0]);
+        if (!pathAllowed || seenPaths.has(path)) fail(`Unapproved or duplicate dependency path: ${path}.`);
         seenPaths.add(path);
-        accepted.push({ path, version: finding.version });
+        accepted.push({ path, version: finding.version, module: minimatchFinding ? "minimatch" : "picomatch" });
       }
     }
-    if (seenPaths.size !== Object.keys(AFFECTED_PATHS).length) fail("Audit dependency paths are incomplete or changed; re-review the dependency graph.");
+    if (minimatchFinding && seenPaths.size !== Object.keys(AFFECTED_PATHS).length) fail("Audit dependency paths are incomplete or changed; re-review the dependency graph.");
   }
   const actual = report.metadata?.vulnerabilities;
   if (!actual || Object.keys(actual).length !== Object.keys(counts).length || Object.entries(counts).some(([key, count]) => actual[key] !== count)) fail("Audit vulnerability counts are inconsistent.");
@@ -87,7 +100,7 @@ export function assessAudit(report, now) {
 // Evidence is mandatory even when the scanner returns no advisories.
 export function applyAuditPolicy(report, now, verifyEvidence) {
   const accepted = assessAudit(report, now);
-  verifyEvidence();
+  verifyEvidence(accepted);
   return accepted;
 }
 
@@ -99,6 +112,9 @@ export function verifyManifest(workspace, lock, patchHashes) {
   if (!declared || !locked || Object.keys(declared).filter(key => key.startsWith("minimatch@")).length !== 4 || Object.keys(locked).filter(key => key.startsWith("minimatch@")).length !== 4) fail("Minimatch patch declaration or lock is incomplete.");
   const snapshots = Object.keys(lock.snapshots || {}).filter(key => key.startsWith("minimatch@"));
   if (snapshots.length !== 4) fail("Unexpected minimatch version or snapshot in lockfile.");
+  if (declared["picomatch@4.0.5"] !== "patches/picomatch@4.0.5.patch" || locked["picomatch@4.0.5"] !== PICOMATCH_PATCH || !lock.snapshots?.[`picomatch@4.0.5(patch_hash=${PICOMATCH_PATCH})`]) fail("Picomatch ReDoS backport declaration or lock mismatch.");
+  if (Object.keys(lock.snapshots || {}).filter(key => key.startsWith("picomatch@4.0.5")).length !== 1) fail("Unexpected picomatch version or snapshot in lockfile.");
+  if (patchHashes.picomatch !== PICOMATCH_PATCH) fail("Picomatch patch hash changed; re-review the ReDoS backport.");
   for (const [version, expected] of Object.entries(PATCHES)) {
     const name = `minimatch@${version}`;
     if (declared[name] !== `patches/${name}.patch` || locked[name] !== expected || patchHashes[version] !== expected || !lock.snapshots?.[`${name}(patch_hash=${expected})`] || lock.snapshots?.[name]) fail(`Patch, lock, or snapshot mismatch for ${name}.`);
