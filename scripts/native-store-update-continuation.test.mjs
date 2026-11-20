@@ -14,15 +14,15 @@ describe("Store continuation accepts only private evidence for the exact pending
   beforeAll(async () => {
     directory = await realpath(await mkdtemp(join(tmpdir(), "kestrel-store-continuation-test-")));
     options = { candidate: join(directory, "Candidate.app"), candidateSha256: candidateHash,
-      checkpoint: join(directory, "checkpoint.json"), fixtureReceiptSha256: fixtureHash, actionExtensionId: action };
+      checkpoint: join(directory, "checkpoint.json"), checkpointSha256: "e".repeat(64), fixtureReceiptSha256: fixtureHash, actionExtensionId: action };
   });
   afterAll(async () => { if (directory) await rm(directory, { recursive: true, force: true }); });
   function valid() {
     return { kind: "native-store-update-resume", version: 1, mode: "update-acceptance",
       candidate: options.candidate, candidateSha256: candidateHash, candidateSha256After: candidateHash,
-      fixture: { checkpoint: options.checkpoint, receiptSha256: fixtureHash, originalCandidateSha256: "c".repeat(64) },
+      fixture: { checkpoint: options.checkpoint, checkpointSha256: options.checkpointSha256, receiptSha256: fixtureHash, originalCandidateSha256: "c".repeat(64) },
       result: "failed", failedStage: "official-update-check", updateQueryRequested: true, profileRetained: true,
-      updateCheck: { status: "update_available", checkSucceeded: true, reportedVersion: "1.10.0" },
+      updateCheck: { extensionId: action, status: "update_available", checkSucceeded: true, reportedVersion: "1.10.0" },
       diskVersionsBefore: { [formatter]: "1.7", [action]: "1.9.9" },
       initial: { [formatter]: { id: formatter, version: "1.7", enabled: true, installType: "normal" },
         [action]: { id: action, version: "1.9.9", enabled: true, installType: "normal" } },
@@ -48,7 +48,7 @@ describe("Store continuation accepts only private evidence for the exact pending
     const { path } = await save(value);
     await assert.rejects(loadStoreUpdateContinuation(path, options));
     await loadStoreUpdateContinuation(path, { ...options, fixtureStorageMode: "production-vault", fixtureStorage });
-    for (const mutate of [v => { v.fixtureStorage.vaultSha256 = "f".repeat(64); }, v => { v.stops = []; },
+    for (const mutate of [v => { v.fixtureStorage.vaultSha256 = "f".repeat(64); }, v => { v.fixture.checkpointSha256 = "f".repeat(64); }, v => { v.stops = []; },
       v => { v.stops[0].forced = true; }, v => { v.stops[0].candidateProcessesStopped = false; }]) {
       const changed = JSON.parse(JSON.stringify(value)); mutate(changed);
       await assert.rejects(loadStoreUpdateContinuation((await save(changed)).path, { ...options, fixtureStorageMode: "production-vault", fixtureStorage }));
@@ -75,6 +75,7 @@ describe("Store continuation accepts only private evidence for the exact pending
     "different failure stage": value => { value.failedStage = "official-update-check-result"; },
     "query never requested": value => { value.updateQueryRequested = false; },
     "profile not retained": value => { value.profileRetained = false; },
+    "different extension query": value => { value.updateCheck.extensionId = formatter; },
     "no update": value => { value.updateCheck.status = "no_update"; },
     "query timed out": value => { value.updateCheck.status = "timeout"; },
     "query failed": value => { value.updateCheck.checkSucceeded = false; },

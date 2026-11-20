@@ -79,7 +79,11 @@ export async function retainStoreUpdateFixture({ profile, receiptPath, checkpoin
 
 // Revalidate actual filesystem state; a saved path alone is not a live wait or
 // proof the temporary profile still exists. No browser or Keychain is opened.
-export async function loadRetainedStoreUpdateFixture(checkpointPath, { root = repositoryRoot, candidateCopy } = {}) {
+export async function loadRetainedStoreUpdateFixture(checkpointPath, options) {
+	return (await readRetainedStoreUpdateFixture(checkpointPath, options)).value;
+}
+
+export async function readRetainedStoreUpdateFixture(checkpointPath, { root = repositoryRoot, candidateCopy } = {}) {
 	const checkpoint = resolve(checkpointPath);
 	for (const name of [storeFixturePendingName, storeFixtureFailureName]) {
 		const marker = join(dirname(checkpoint), name);
@@ -87,7 +91,7 @@ export async function loadRetainedStoreUpdateFixture(checkpointPath, { root = re
 		try { await lstat(marker); } catch (error) { if (error.code === "ENOENT") exists = false; else throw error; }
 		assert(!exists, `Store fixture finalization is incomplete or failed: ${name}.`);
 	}
-	const { value } = await boundedJson(checkpoint);
+	const { value, sha256 } = await boundedJson(checkpoint);
 	assert.equal(value.kind, "native-store-update-fixture"); assert.equal(value.version, 1);
 	assert.equal(value.profileRoot, value.fixtureStorage
 		? await validateRetainedNativeBrowserFixtureStorage({ profile: value.profileRoot, candidate: value.candidate,
@@ -105,5 +109,5 @@ export async function loadRetainedStoreUpdateFixture(checkpointPath, { root = re
 	else assert(!receipt.value.fixtureStorage || receipt.value.fixtureStorage.mode === "test-key", "Production fixture storage evidence is missing.");
 	assert.equal(value.upgradeObserved, receipt.value.extensionParity.checks.storeVersionUpgrade);
 	assert.deepEqual(value.extensions, extensions);
-	return value;
+	return { value, sha256 };
 }

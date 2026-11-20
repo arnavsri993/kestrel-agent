@@ -1,3 +1,6 @@
+import { hasSingleToolbarInvocation, invocationHistogram } from "./native-toolbar-invocation.mjs";
+import { validateStoreResumeLink } from "./native-store-resume-evidence.mjs";
+import { storeActionUpgrade, storeActionId as UBLOCK_ORIGIN_LITE_STORE_ID } from "./native-store-version.mjs";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, readFile, readdir, readlink, realpath } from "node:fs/promises";
@@ -23,7 +26,6 @@ const MAX_RECEIPT_BYTES = 4 * 1024 * 1024;
 const MAX_ARTIFACT_BYTES = 256 * 1024 * 1024;
 const MAX_NATIVE_DESKTOP_RECEIPT_BYTES = 16 * 1024 * 1024;
 const JSON_FORMATTER_STORE_ID = "bcjindcccaagfpapjjmafapmmgkkhgoa";
-const UBLOCK_ORIGIN_LITE_STORE_ID = "ddkjiahejlhfcafbddmgiahcphecmpfh";
 const digest = () => createHash("sha256");
 function isContainedPath(parent, child) {
   const rel = relativePath(parent, child);
@@ -240,37 +242,51 @@ export async function validateNativeExtensionParityEvidence(candidate, manifestP
   }
   const desktopArtifacts = wrapper.artifacts.filter(artifact => artifact?.kind === "native-chromium-desktop-receipt");
   if (desktopArtifacts.length !== 1) return fail("native-extension-parity: expected exactly one native Chromium desktop receipt artifact");
-  const artifact = desktopArtifacts[0];
-  if (typeof artifact.path !== "string" || !artifact.path || isAbsolute(artifact.path) || !SHA256.test(artifact.sha256 ?? "")) {
-    return fail("native-extension-parity: invalid native desktop receipt artifact path or digest");
+  async function readArtifact(artifact, label) {
+    if (typeof artifact.path !== "string" || !artifact.path || isAbsolute(artifact.path) || !SHA256.test(artifact.sha256 ?? ""))
+      throw new Error(`invalid ${label} path or digest`);
+    const base = dirname(wrapperPath);
+    const path = resolve(base, artifact.path);
+    if (!isContainedPath(base, path)) throw new Error(`${label} path escapes its receipt directory`);
+    const canonicalPath = await realpath(path);
+    if (!isContainedPath(await realpath(base), canonicalPath))
+      throw new Error(`${label} parent path escapes its receipt directory through a symlink`);
+    const stat = await lstat(path);
+    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_NATIVE_DESKTOP_RECEIPT_BYTES)
+      throw new Error(`${label} is not a regular file or exceeds the size limit`);
+    const bytes = await readFile(canonicalPath);
+    if (digest().update(bytes).digest("hex") !== artifact.sha256) throw new Error(`${label} digest mismatch`);
+    return JSON.parse(bytes.toString("utf8"));
   }
-  const desktopPath = resolve(dirname(wrapperPath), artifact.path);
-  const desktopRelative = relativePath(dirname(wrapperPath), desktopPath);
-  if (!desktopRelative || desktopRelative === ".." || desktopRelative.startsWith(`..${sep}`) || isAbsolute(desktopRelative)) {
-    return fail("native-extension-parity: desktop receipt artifact path escapes its receipt directory");
-  }
-  let desktop;
+  let desktop, resumed = false;
   try {
-    const stat = await lstat(desktopPath);
-    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_NATIVE_DESKTOP_RECEIPT_BYTES) throw new Error("desktop receipt artifact is not a regular file or exceeds the size limit");
-    const canonicalWrapperDir = await realpath(dirname(wrapperPath));
-    const canonicalDesktopPath = await realpath(desktopPath);
-    if (!isContainedPath(canonicalWrapperDir, canonicalDesktopPath)) throw new Error("desktop receipt artifact parent path escapes its receipt directory through a symlink");
-    const bytes = await readFile(canonicalDesktopPath);
-    if (digest().update(bytes).digest("hex") !== artifact.sha256) throw new Error("desktop receipt artifact digest mismatch");
-    desktop = JSON.parse(bytes.toString("utf8"));
+    const artifact = desktopArtifacts[0];
+    desktop = await readArtifact(artifact, "desktop receipt artifact");
+    const checkpoints = wrapper.artifacts.filter(item => item?.kind === "native-store-update-fixture");
+    const resumes = wrapper.artifacts.filter(item => item?.kind === "native-store-update-resume");
+    if (checkpoints.length || resumes.length) {
+      if (checkpoints.length !== 1 || resumes.length !== 1) throw new Error("expected one Store checkpoint and one Store resume receipt");
+      const checkpoint = await readArtifact(checkpoints[0], "Store checkpoint");
+      const resume = await readArtifact(resumes[0], "Store resume receipt");
+      validateStoreResumeLink(desktop, artifact.sha256, checkpoint, checkpoints[0].sha256, resume, candidateSha256);
+      resumed = true;
+    }
   } catch (error) { return fail(`native-extension-parity: ${error.message}`); }
-  if (desktop?.kind !== "native-chromium-desktop-receipt" || desktop?.candidateSha256 !== candidateSha256 || desktop?.storeRequested !== true || desktop?.extensionParityRequired !== true ||
+  const strictRun = !resumed;
+  if (desktop?.kind !== "native-chromium-desktop-receipt" || desktop?.candidateSha256 !== candidateSha256 || desktop.candidateSha256After !== candidateSha256 ||
+      desktop.storeRequested !== true || desktop.extensionParityRequired !== strictRun ||
       desktop.failed !== undefined || desktop.awaitingNativeInstall === true || desktop.awaitingExtensionId !== undefined) {
     return fail("native-extension-parity: desktop receipt is not a Store parity run for this exact candidate");
   }
   const parity = desktop.extensionParity;
-  const requiredChecks = ["storeInstall", "extensionCreatedTabs", "toolbarActionPopup", "chromeManagerDisableReenable", "storePersistence", "storeVersionUpgrade"];
+  const requiredChecks = ["storeInstall", "extensionCreatedTabs", "toolbarActionPopup", "chromeManagerDisableReenable", "storePersistence"];
+  if (!resumed) requiredChecks.push("storeVersionUpgrade");
   if (!parity || requiredChecks.some(check => parity.checks?.[check] !== true)) {
     const missing = requiredChecks.filter(check => parity?.checks?.[check] !== true);
     problems.push(`native-extension-parity: required Chromium Store checks are incomplete (${missing.join(", ") || "invalid checks"})`);
   }
-  if (parity?.passed !== true || !Array.isArray(parity.missing) || parity.missing.length !== 0) {
+  const allowedMissing = resumed && parity?.missing?.length === 1 && parity.missing[0]?.capability === "published-store-version-upgrade";
+  if (parity?.passed !== strictRun || !Array.isArray(parity.missing) || (resumed ? !allowedMissing : parity.missing.length !== 0)) {
     problems.push("native-extension-parity: desktop parity receipt is not a clean passed result");
   }
   const contentExtension = parity?.extensions?.content;
@@ -286,7 +302,13 @@ export async function validateNativeExtensionParityEvidence(candidate, manifestP
     problems.push("native-extension-parity: action-extension tab ownership evidence is incomplete");
   }
   const popup = parity?.toolbarActionPopupEvidence?.popup;
-  if (parity?.toolbarActionPopupEvidence?.actionResult?.ok !== true || popup?.observed !== true || popup.isolated !== true ||
+  const action = parity?.toolbarActionPopupEvidence?.actionResult;
+  if (parity?.toolbarActionPopupEvidence?.extensionId !== UBLOCK_ORIGIN_LITE_STORE_ID || action?.ok !== true ||
+      action.histogram !== invocationHistogram || action.bucket !== 1 || !hasSingleToolbarInvocation(action.before, action.after) ||
+      !Number.isSafeInteger(action.chromeWindowId) || action.chromeWindowId !== tabEvidence?.chromeWindowId ||
+      !Number.isSafeInteger(action.activeTabId) || action.activeTabId < 0 || popup?.observed !== true || popup.isolated !== true ||
+      popup.popupView !== true || typeof popup.targetId !== "string" || !popup.targetId ||
+      popup.url !== parity.toolbarActionPopupEvidence.declaredPopup ||
       typeof popup.url !== "string" || !popup.url.startsWith(`chrome-extension://${UBLOCK_ORIGIN_LITE_STORE_ID}/`)) {
     problems.push("native-extension-parity: isolated action popup evidence is incomplete or belongs to another extension");
   }
@@ -301,13 +323,13 @@ export async function validateNativeExtensionParityEvidence(candidate, manifestP
     problems.push("native-extension-parity: JSON Formatter persistence and functional restart evidence is incomplete");
   }
   const actionRestart = restart?.actionExtension;
-  if (!actionRestart || actionRestart.id !== UBLOCK_ORIGIN_LITE_STORE_ID || actionRestart.enabled !== true ||
+  if (!actionRestart || actionRestart.id !== UBLOCK_ORIGIN_LITE_STORE_ID || actionRestart.enabled !== true || actionRestart.installType !== "normal" ||
       typeof actionRestart.version !== "string" || !actionRestart.version) {
     problems.push("native-extension-parity: uBlock Origin Lite persistence and enabled restart evidence is incomplete");
   }
   const actionRestartPhase = (desktop.phases ?? []).find(phase => phase?.phase === "native-extension-restart");
   if (actionRestartPhase?.passed !== true || actionRestartPhase.actionExtension?.id !== UBLOCK_ORIGIN_LITE_STORE_ID ||
-      actionRestartPhase.actionExtension.enabled !== true || actionRestartPhase.actionExtension.version !== actionRestart?.version) {
+      actionRestartPhase.actionExtension.enabled !== true || actionRestartPhase.actionExtension.installType !== "normal" || actionRestartPhase.actionExtension.version !== actionRestart?.version) {
     problems.push("native-extension-parity: uBlock Origin Lite restart phase evidence is missing or inconsistent");
   }
   const durableRestart = (desktop.phases ?? []).find(phase => phase?.phase === "durable-core-and-clean-restart");
@@ -319,7 +341,7 @@ export async function validateNativeExtensionParityEvidence(candidate, manifestP
     }
   }
   const finalPhase = [...(desktop.phases ?? [])].reverse().find(phase => phase?.phase === "native-chromium-extension-parity-final");
-  if (!finalPhase || finalPhase.passed !== true || requiredChecks.some(check => finalPhase.checks?.[check] !== true)) {
+  if (!finalPhase || finalPhase.passed !== strictRun || requiredChecks.some(check => finalPhase.checks?.[check] !== true)) {
     problems.push("native-extension-parity: final post-restart parity phase is missing or incomplete");
   }
   const update = parity?.updateCheck;
@@ -328,11 +350,13 @@ export async function validateNativeExtensionParityEvidence(candidate, manifestP
         (update.reportedVersion != null && update.reportedVersion !== update.installedVersionBefore) ||
         actionExtension?.version !== update.installedVersionBefore || actionRestart?.version !== update.installedVersionAfter) {
       problems.push("native-extension-parity: malformed no_update result; installed version must remain unchanged");
-    } else {
+    } else if (!resumed) {
       problems.push("native-extension-parity: no_update confirms the installed version but does not prove a published version upgrade");
     }
-  } else if (update?.status === "update_available") {
-    if (update.extensionId !== UBLOCK_ORIGIN_LITE_STORE_ID || typeof update.installedVersionBefore !== "string" || typeof update.reportedVersion !== "string" ||
+  } else if (!resumed && update?.status === "update_available") {
+    let upgraded = false;
+    try { upgraded = storeActionUpgrade(update, update.installedVersionBefore, actionRestart); } catch { /* Malformed versions fail the gate below. */ }
+    if (!upgraded || typeof update.installedVersionBefore !== "string" || typeof update.reportedVersion !== "string" ||
         !update.reportedVersion || update.reportedVersion === update.installedVersionBefore || actionExtension?.version !== update.installedVersionBefore ||
         update.installedVersionAfter !== update.reportedVersion || update.observedVersionUpgrade !== true || parity?.checks?.storeVersionUpgrade !== true ||
         actionRestart?.version !== update.installedVersionAfter || actionRestart?.enabled !== true) {

@@ -56,13 +56,13 @@ const parityChecks = {
   storeVersionUpgrade: true,
 };
 function desktopReceipt(candidateSha256, updateCheck = {
-  extensionId: "ddkjiahejlhfcafbddmgiahcphecmpfh", status: "update_available", installedVersionBefore: "1.0", reportedVersion: "1.1",
+  extensionId: "ddkjiahejlhfcafbddmgiahcphecmpfh", status: "update_available", checkSucceeded: true, installedVersionBefore: "1.0", reportedVersion: "1.1",
   installedVersionAfter: "1.1", observedVersionUpgrade: true,
 }) {
   const checks = { ...parityChecks };
   return {
     kind: "native-chromium-desktop-receipt",
-    candidateSha256,
+    candidateSha256, candidateSha256After: candidateSha256,
     storeRequested: true,
     extensionParityRequired: true,
     extensionParity: {
@@ -75,19 +75,24 @@ function desktopReceipt(candidateSha256, updateCheck = {
         action: { id: "ddkjiahejlhfcafbddmgiahcphecmpfh", version: "1.0", storeInstalled: true },
       },
       extensionCreatedTabEvidence: { extensionId: "ddkjiahejlhfcafbddmgiahcphecmpfh", created: true, adoptedByKestrel: true, sameWindow: true, updated: true, updateAdopted: true, removedFromKestrel: true, chromeWindowId: 1 },
-      toolbarActionPopupEvidence: { actionResult: { ok: true }, popup: { observed: true, isolated: true, url: "chrome-extension://ddkjiahejlhfcafbddmgiahcphecmpfh/popup.html" } },
+      toolbarActionPopupEvidence: {
+        extensionId: "ddkjiahejlhfcafbddmgiahcphecmpfh", declaredPopup: "chrome-extension://ddkjiahejlhfcafbddmgiahcphecmpfh/popup.html",
+        actionResult: { ok: true, chromeWindowId: 1, activeTabId: 7, histogram: "Extensions.Toolbar.InvocationSource", bucket: 1,
+          before: { total: 0, toolbar: 0 }, after: { total: 1, toolbar: 1 } },
+        popup: { observed: true, isolated: true, popupView: true, targetId: "popup-target", url: "chrome-extension://ddkjiahejlhfcafbddmgiahcphecmpfh/popup.html" },
+      },
       chromeManagerEvidence: { extensionId: "bcjindcccaagfpapjjmafapmmgkkhgoa", disabledVisibleInKestrel: true, disabledWorkerStopped: true, disabledRuntimeInactive: true, reenabledVisibleInKestrel: true, reenabledWorkerStarted: true, runtimeRestored: true },
       restartEvidence: {
         extensionId: "bcjindcccaagfpapjjmafapmmgkkhgoa", installed: true, enabled: true,
         version: "0.10.2", functionalAfterRestart: true,
-        actionExtension: { id: "ddkjiahejlhfcafbddmgiahcphecmpfh", enabled: true, version: updateCheck.installedVersionAfter },
+        actionExtension: { id: "ddkjiahejlhfcafbddmgiahcphecmpfh", enabled: true, installType: "normal", version: updateCheck.installedVersionAfter },
       },
     },
     phases: [
       { phase: "native-extension-functional", passed: true },
       { phase: "native-extension-functional-after-chrome-manager-toggle", passed: true },
       { phase: "native-extension-functional-after-restart", passed: true },
-      { phase: "native-extension-restart", passed: true, actionExtension: { id: "ddkjiahejlhfcafbddmgiahcphecmpfh", enabled: true, version: updateCheck.installedVersionAfter } },
+      { phase: "native-extension-restart", passed: true, actionExtension: { id: "ddkjiahejlhfcafbddmgiahcphecmpfh", enabled: true, installType: "normal", version: updateCheck.installedVersionAfter } },
       { phase: "native-chromium-extension-parity-final", passed: true, checks },
       { phase: "durable-core-and-clean-restart", passed: true },
     ],
@@ -238,7 +243,7 @@ test("native desktop Store receipt requires candidate-bound checks and a real pu
   assert(result.problems.some(problem => problem.includes("no_update confirms the installed version")), JSON.stringify(result.problems));
 
   await writeDesktopParityArtifact(f, desktopReceipt(f.candidateSha256, {
-    extensionId: "ddkjiahejlhfcafbddmgiahcphecmpfh", status: "update_available", installedVersionBefore: "1.0", reportedVersion: "1.1",
+    extensionId: "ddkjiahejlhfcafbddmgiahcphecmpfh", status: "update_available", checkSucceeded: true, installedVersionBefore: "1.0", reportedVersion: "1.1",
     installedVersionAfter: "1.0", observedVersionUpgrade: false,
   }));
   result = await validateNativeExtensionParityEvidence(f.candidate, f.manifestPath, f.candidateSha256);
@@ -409,4 +414,100 @@ test("native app update proof cannot read artifacts outside its receipt director
   await pointArtifact("canary-link.json");
   result = await validateRetirementEvidence(f.candidate, f.manifestPath);
   assert(result.problems.some(problem => problem.includes("update canary artifact escapes through a symlink")));
+});
+
+test("rejects invalid Store versions, equivalent versions, and popup API calls without toolbar input", async t => {
+  const f = await fixture(t);
+  for (const version of ["0.9", "1", "1.0.0.0", "2.000", "65536", "2\n", "2.0.0.0.1", "0.0"]) {
+    const desktop = desktopReceipt(f.candidateSha256);
+    const parity = desktop.extensionParity;
+    parity.updateCheck.reportedVersion = parity.updateCheck.installedVersionAfter = version;
+    parity.restartEvidence.actionExtension.version = desktop.phases[3].actionExtension.version = version;
+    await writeDesktopParityArtifact(f, desktop);
+    const result = await validateNativeExtensionParityEvidence(f.candidate, f.manifestPath, f.candidateSha256);
+    assert(result.problems.some(problem => problem.includes("version transition")), version);
+  }
+  for (const mutate of [
+    e => { e.actionResult = { ok: true }; },
+    e => { e.actionResult.after.toolbar = 0; },
+    e => { e.actionResult.after.total = 2; },
+    e => { e.popup.popupView = false; },
+    e => { e.actionResult.chromeWindowId = 2; },
+    e => { e.declaredPopup = e.popup.url + "wrong"; },
+  ]) {
+    const desktop = desktopReceipt(f.candidateSha256);
+    mutate(desktop.extensionParity.toolbarActionPopupEvidence);
+    await writeDesktopParityArtifact(f, desktop);
+    const result = await validateNativeExtensionParityEvidence(f.candidate, f.manifestPath, f.candidateSha256);
+    assert(result.problems.some(problem => problem.includes("isolated action popup")));
+  }
+});
+
+test("accepts an independently hashed retained Store transition for the same candidate and generated production profile", async t => {
+  const f = await fixture(t);
+  const formatter = "bcjindcccaagfpapjjmafapmmgkkhgoa", action = "ddkjiahejlhfcafbddmgiahcphecmpfh";
+  const desktop = desktopReceipt(f.candidateSha256);
+  const profile = join(f.root, "kestrel-chromium-desktop-canary-example");
+  const checkpointPath = join(f.root, "store-update-checkpoint.json");
+  const active = (id, version) => ({ id, version, enabled: true, installType: "normal" });
+  const storage = { kind: "native-browser-fixture-storage", version: 1, mode: "production-vault", profile,
+    candidate: f.candidate, candidateSha256: f.candidateSha256, profileDev: 1, profileIno: 20, vaultSha256: "b".repeat(64) };
+  const stops = [1,2,3].map(pid => ({pid, exitCode: 0, signal: null, forced: false, candidateProcessesStopped: true}));
+  Object.assign(desktop, {candidate: f.candidate, candidateSha256After: f.candidateSha256, extensionParityRequired:false,
+    fixtureStorageMode:"production-vault", storeAcceptanceMode:"full-extension-parity", exactCandidateAbsent:true,
+    generatedProfilesRemoved:false, stops, fixtureStorage:storage, storeUpdateFixture:{profileRoot:profile,checkpointPath}});
+  const parity = desktop.extensionParity;
+  parity.passed = false;
+  parity.checks.storeVersionUpgrade = false;
+  parity.missing = [{capability:"published-store-version-upgrade"}];
+  Object.assign(parity.updateCheck, {status:"no_update",reportedVersion:null,installedVersionAfter:"1.0",observedVersionUpgrade:false});
+  parity.restartEvidence.actionExtension.version = "1.0";
+  desktop.phases[3].actionExtension.version = "1.0";
+  desktop.phases[4].passed = false;
+  const initial = {[formatter]:active(formatter,"0.10.2"), [action]:active(action,"1.0")};
+  desktop.phases.push({phase:"native-web-store-install",passed:true},{phase:"native-action-extension-web-store-install",passed:true});
+  desktop.phases.push({phase:"native-store-update-fixture-provenance",passed:true,extensions:Object.values(initial)});
+  const deskFile = await writeDesktopParityArtifact(f, desktop);
+  const desktopHash = sha(await readFile(deskFile));
+  const checkpoint = {kind:"native-store-update-fixture", version:1, profileRoot:profile, receiptPath:join(f.root,"receipt.json"),
+    receiptSha256:desktopHash,candidate:f.candidate,candidateSha256:f.candidateSha256,extensions:Object.values(initial),upgradeObserved:false,fixtureStorage:storage};
+  await writeFile(checkpointPath, JSON.stringify(checkpoint)); const checkpointHash = sha(await readFile(checkpointPath));
+  const versions = {[formatter]:"0.10.2",[action]:"1.0"};
+  const after = {...initial, [action]:active(action,"1.1")};
+  const resume = {kind:"native-store-update-resume", version:1, mode:"update-acceptance", result:"passed", observedVersionUpgrade:true,
+    profileRetained:true, candidate:f.candidate, candidateSha256:f.candidateSha256,candidateSha256After:f.candidateSha256,
+    fixtureStorageMode:"production-vault",fixtureStorage:storage, fixture:{checkpoint:checkpointPath,checkpointSha256:checkpointHash,
+      receiptSha256:desktopHash, originalCandidate:f.candidate, originalCandidateSha256:f.candidateSha256},
+    updateCheckSource:"current-invocation",updateQueryRequested:true,actionDocumentUsed:true,
+    updateActivation:{method:"clean-browser-restart",missingOriginalSessions:0},missingOriginalSessions:0,initialSessionCount:1,restartedSessionCount:1,stops,
+    upgradeBaselineVersions:versions,diskVersionsBefore:versions,initial,afterCheck:after,afterRestart:after,
+    updateCheck:{extensionId:action,status:"update_available",checkSucceeded:true,reportedVersion:"1.1"},
+    phases:["updated-formatter-function-and-extension-owned-tab-isolation","retained-formatter-function-after-clean-restart",
+      "retained-Core-and-normal-Store-versions-survive-clean-restart"].map(phase=>({phase,passed:true}))};
+  for (const mutate of [null,
+    r => { r.fixture.checkpointSha256 = "f".repeat(64); },
+    r => { r.fixture.receiptSha256 = "e".repeat(64); },
+    r => { r.fixture.checkpoint = "/different/store-update-checkpoint.json"; },
+    r => { r.fixtureStorage.profileIno++; },
+    r => { r.candidateSha256After = "d".repeat(64); },
+    r => { r.updateCheck.extensionId = formatter; },
+    r => { r.updateCheck.status = "no_update"; },
+    r => { r.updateCheck.reportedVersion = "1.0.0"; },
+    r => { r.afterRestart[action].installType = "development"; },
+    r => { r.stops[0].forced = true; },
+    r => { r.phases.pop(); },
+  ]) {
+    const example = JSON.parse(JSON.stringify(resume));
+    if (mutate) mutate(example);
+    const resumeFile = join(f.root,"resume.json"); await writeFile(resumeFile,JSON.stringify(example));
+    const wrapperPath = join(f.root,"native-extension-parity.json");
+    const wrapper = JSON.parse(await readFile(wrapperPath));
+    wrapper.artifacts = [wrapper.artifacts.find(x=>x.kind==="native-chromium-desktop-receipt"),
+      {kind:"native-store-update-fixture",path:"store-update-checkpoint.json",sha256:checkpointHash},
+      {kind:"native-store-update-resume",path:"resume.json",sha256:sha(await readFile(resumeFile))}];
+    const bytes=Buffer.from(JSON.stringify(wrapper));await writeFile(wrapperPath,bytes);
+    f.manifest.gates["native-extension-parity"].sha256=sha(bytes); await f.save();
+    const result=await validateNativeExtensionParityEvidence(f.candidate,f.manifestPath,f.candidateSha256);
+    if (mutate) assert(result.problems.length, String(mutate)); else assert.deepEqual(result.problems,[]);
+  }
 });

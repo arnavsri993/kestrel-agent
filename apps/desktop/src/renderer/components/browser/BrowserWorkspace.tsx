@@ -936,6 +936,7 @@ export function BrowserWorkspace({
       />}
       {(!nativeChromiumSurface || nativeChromiumFrameShell) && <BrowserToolbar
         tab={activeTab}
+        showExtensionButtons={!nativeChromiumFrameShell}
         history={state.history}
         bookmarks={state.bookmarks}
         tabs={state.tabs}

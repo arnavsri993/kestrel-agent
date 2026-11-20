@@ -263,6 +263,7 @@ function BrowserDownloadsPopover({
 
 export function BrowserToolbar({
   tab,
+  showExtensionButtons,
   history,
   bookmarks,
   tabs,
@@ -315,6 +316,7 @@ export function BrowserToolbar({
   onMenuOpenChange,
 }: {
   tab: UserBrowserTab;
+  showExtensionButtons: boolean;
   history: readonly UserBrowserHistoryEntry[];
   bookmarks: readonly UserBrowserBookmark[];
   tabs: readonly UserBrowserTab[];
@@ -1205,31 +1207,33 @@ export function BrowserToolbar({
             </motion.div>
           )}
         </AnimatePresence>
-        <div className="browser-extension-cluster browser-toolbar-secondary">
-          <button
-            type="button"
-            className={`browser-toolbar-menu-trigger ${openMenu === "extensions" ? "active" : ""}`}
-            aria-label="Extensions"
-            aria-haspopup="menu"
-            aria-expanded={openMenu === "extensions"}
-            title="Extensions"
-            onClick={(event) => toggleMenu("extensions", event)}
-          >
-            <Icon name="extensions" />
-          </button>
-          {pinnedExtensions.map((extension) => (
+        {showExtensionButtons && (
+          <div className="browser-extension-cluster browser-toolbar-secondary">
             <button
               type="button"
-              className="browser-pinned-extension"
-              key={extension.id}
-              aria-label={`Open extensions menu for ${extension.name}`}
-              title={`${extension.name}${extension.enabled ? "" : " (disabled)"}`}
+              className={`browser-toolbar-menu-trigger ${openMenu === "extensions" ? "active" : ""}`}
+              aria-label="Extensions"
+              aria-haspopup="menu"
+              aria-expanded={openMenu === "extensions"}
+              title="Extensions"
               onClick={(event) => toggleMenu("extensions", event)}
             >
               <Icon name="extensions" />
             </button>
-          ))}
-        </div>
+            {pinnedExtensions.map((extension) => (
+              <button
+                type="button"
+                className="browser-pinned-extension"
+                key={extension.id}
+                aria-label={`Open extensions menu for ${extension.name}`}
+                title={`${extension.name}${extension.enabled ? "" : " (disabled)"}`}
+                onClick={(event) => toggleMenu("extensions", event)}
+              >
+                <Icon name="extensions" />
+              </button>
+            ))}
+          </div>
+        )}
         <button
           ref={toolsTriggerRef}
           type="button"

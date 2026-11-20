@@ -7,8 +7,9 @@ import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { candidateDigest } from "./native-retirement-evidence.mjs";
-import { loadRetainedStoreUpdateFixture } from "./native-store-update-profile.mjs";
+import { readRetainedStoreUpdateFixture } from "./native-store-update-profile.mjs";
 import { loadStoreUpdateContinuation } from "./native-store-update-continuation.mjs";
+import { parseStoreVersion, storeVersionIsNewer, storeActionUpgrade, storeActionId as action } from "./native-store-version.mjs";
 import { CEF_VERSION } from "./prepare-native-chromium-runtime.mjs";
 import { selectNativeBrowserFixtureStorage, nativeBrowserFixtureStorageArgs,
   nativeBrowserFixtureStorageEnv, assertNativeBrowserFixtureStopped, validateRetainedNativeBrowserFixtureStorage } from "./native-browser-fixture-storage.mjs";
@@ -20,7 +21,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const app = await realpath(resolve(process.env.KESTREL_NATIVE_TEST_APP));
 assert.notEqual(app, await realpath("/Applications/Kestrel.app").catch(() => "/Applications/Kestrel.app"));
 const storage = await selectNativeBrowserFixtureStorage({ candidate: app, root });
-const fixture = await loadRetainedStoreUpdateFixture(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT, { root,
+const { value: fixture, sha256: checkpointSha256 } = await readRetainedStoreUpdateFixture(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT, { root,
   ...(storage.mode === "production-vault" ? { candidateCopy: app } : {}) });
 assert.equal(storage.mode, fixture.fixtureStorage?.mode ?? "test-key", "Select the retained fixture's explicit storage mode before launch.");
 if (storage.mode === "production-vault") {
@@ -32,14 +33,14 @@ assert.equal((await readdir(evidence)).length, 0, "Use a new evidence directory;
 const profile = fixture.profileRoot;
 const processRows = execFileSync("/bin/ps", ["-axo", "pid=,command="], { encoding: "utf8" }).split("\n");
 assert(!processRows.some(row => row.includes(`--kestrel-cache-path ${profile}`)), "The retained profile is already in use.");
-const formatter = "bcjindcccaagfpapjjmafapmmgkkhgoa", action = "ddkjiahejlhfcafbddmgiahcphecmpfh";
+const formatter = "bcjindcccaagfpapjjmafapmmgkkhgoa";
 const ids = [formatter, action];
 const expectedChromium = CEF_VERSION.split("+chromium-")[1];
 const extensionId = [...createHash("sha256").update(join(profile, "kestrel-ui-bundle")).digest("hex").slice(0, 32)].map(digit => "abcdefghijklmnop"[parseInt(digit, 16)]).join("");
 const homeUrl = `chrome-extension://${extensionId}/index.html`;
 const receipt = { kind: "native-store-update-resume", version: 1, startedAt: new Date().toISOString(), candidate: app,
   mode: compatibilityOnly ? "compatibility-only" : "update-acceptance", updateQueryRequested: false,
-  candidateSha256: storage.candidateSha256, fixture: { checkpoint: resolve(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT), receiptSha256: fixture.receiptSha256,
+  candidateSha256: storage.candidateSha256, fixture: { checkpointSha256, checkpoint: resolve(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT), receiptSha256: fixture.receiptSha256,
     originalCandidate: fixture.candidate, originalCandidateSha256: fixture.candidateSha256,
     selectedCandidateIsIdenticalCopy: storage.mode === "production-vault" && app !== fixture.candidate },
   fixtureStorageMode: storage.mode,
@@ -47,7 +48,7 @@ const receipt = { kind: "native-store-update-resume", version: 1, startedAt: new
 const continuation = process.env.KESTREL_NATIVE_STORE_PRIOR_ATTEMPT
   ? await loadStoreUpdateContinuation(process.env.KESTREL_NATIVE_STORE_PRIOR_ATTEMPT, {
     candidate: app, candidateSha256: receipt.candidateSha256,
-    checkpoint: receipt.fixture.checkpoint, fixtureReceiptSha256: fixture.receiptSha256,
+    checkpoint: receipt.fixture.checkpoint, checkpointSha256, fixtureReceiptSha256: fixture.receiptSha256,
     actionExtensionId: action, fixtureStorageMode: storage.mode, fixtureStorage: fixture.fixtureStorage,
   }) : undefined;
 assert(!continuation || !compatibilityOnly, "A prior update query cannot turn a compatibility run into update acceptance.");
@@ -56,11 +57,6 @@ if (continuation) receipt.continuation = { path: continuation.path, sha256: cont
 let running, browser, home, actionDocumentId, actionDocumentUrl, interrupted = false, stage = "read-prelaunch-versions";
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => { interrupted = true; });
 function phase(name, details = {}) { receipt.phases.push({ phase: name, passed: true, ...details }); console.log(`PASS ${name}`); }
-function newer(left, right) {
-  const a = left.split(".").map(Number), b = right.split(".").map(Number);
-  for (let index = 0; index < 4; index++) { if ((a[index] || 0) !== (b[index] || 0)) return (a[index] || 0) > (b[index] || 0); }
-  return false;
-}
 async function eventually(fn, label, milliseconds = 30000) {
   const end = Date.now() + milliseconds;
   while (Date.now() < end) { if (interrupted) throw Error("Interrupted generated Store check."); try { const value = await fn(); if (value) return value; } catch { } await delay(150); }
@@ -77,7 +73,8 @@ async function prelaunchVersions() {
   }
   return Object.fromEntries(ids.map(id => {
     const versions = [...new Set(records.map(record => record.extensions?.settings?.[id]?.manifest?.version).filter(value => value !== undefined))];
-    assert(versions.length === 1 && typeof versions[0] === "string" && /^\d+(?:\.\d+){0,3}$/.test(versions[0]), "Cannot establish the active on-disk Store version before launch.");
+    assert(versions.length === 1, "Cannot establish the active on-disk Store version before launch.");
+    parseStoreVersion(versions[0]);
     return [id, versions[0]];
   }));
 }
@@ -179,7 +176,11 @@ async function provenance() {
     if (chrome.runtime.lastError) rejectItem(Error("Store provenance unavailable."));
     else resolveItem({ id: item.id, version: item.version, enabled: item.enabled, installType: item.installType });
   })))), ids);
-  for (const entry of entries) assert(entry.enabled && entry.installType === "normal" && /^\d+(?:\.\d+){0,3}$/.test(entry.version));
+  assert.deepEqual(entries.map(entry => entry.id), ids);
+  for (const entry of entries) {
+    assert(entry.enabled === true && entry.installType === "normal");
+    parseStoreVersion(entry.version);
+  }
   return Object.fromEntries(entries.map(entry => [entry.id, entry]));
 }
 async function actionContext() {
@@ -241,14 +242,14 @@ try {
     receipt.updateQueryRequested = true;
     receipt.updateCheck = await extension.evaluate(() => new Promise(resolveCheck => {
       const timer = setTimeout(() => resolveCheck({ status: "timeout" }), 30000);
-      chrome.runtime.requestUpdateCheck((status, details) => { clearTimeout(timer); resolveCheck({ status, reportedVersion: details?.version ?? null }); });
+      chrome.runtime.requestUpdateCheck((status, details) => { clearTimeout(timer); resolveCheck({ extensionId: chrome.runtime.id, status, reportedVersion: details?.version ?? null }); });
     }));
     receipt.updateCheck.checkSucceeded = ["no_update", "update_available"].includes(receipt.updateCheck.status);
   }
   if (!compatibilityOnly && receipt.updateCheck.status === "update_available") {
     stage = "activate-published-update-after-clean-restart";
-    assert(typeof receipt.updateCheck.reportedVersion === "string" && /^\d+(?:\.\d+){0,3}$/.test(receipt.updateCheck.reportedVersion));
-    assert(newer(receipt.updateCheck.reportedVersion, receipt.upgradeBaselineVersions[action]), "The reported version must be newer than the immutable upgrade baseline.");
+    assert.equal(receipt.updateCheck.extensionId, action);
+    assert(storeVersionIsNewer(receipt.updateCheck.reportedVersion, receipt.upgradeBaselineVersions[action]), "The reported version must be newer than the immutable upgrade baseline.");
     // An open extension view can defer an ordinary Chrome update. Release the
     // view we opened and restart normally; do not reload, edit or reinstall it.
     await closeActionDocument();
@@ -260,10 +261,10 @@ try {
   }
   receipt.afterCheck = await provenance();
   for (const id of ids) for (const baseline of [receipt.upgradeBaselineVersions[id], receipt.diskVersionsBefore[id], receipt.initial[id].version])
-    assert(!newer(baseline, receipt.afterCheck[id].version), "A normal Store installation was downgraded.");
-  receipt.observedVersionUpgrade = ids.some(id => newer(receipt.afterCheck[id].version, receipt.upgradeBaselineVersions[id]));
+    assert(!storeVersionIsNewer(baseline, receipt.afterCheck[id].version), "A normal Store installation was downgraded.");
+  const activeUpgrade = storeActionUpgrade(receipt.updateCheck, receipt.upgradeBaselineVersions[action], receipt.afterCheck[action]);
   phase(compatibilityOnly ? "existing-normal-Store-installations-preserved-without-update-query" : "existing-normal-Store-installations-preserved-after-update-request");
-  if (!compatibilityOnly && receipt.observedVersionUpgrade) await functionalProbe("updated-formatter-function-and-extension-owned-tab-isolation");
+  if (activeUpgrade) await functionalProbe("updated-formatter-function-and-extension-owned-tab-isolation");
   await stop();
   const restartedSessions = await start();
   receipt.restartedSessionCount = restartedSessions.length;
@@ -271,6 +272,7 @@ try {
   assert.equal(receipt.missingOriginalSessions, 0, "An original retained Core session was lost.");
   receipt.afterRestart = await provenance();
   assert.deepEqual(receipt.afterRestart, receipt.afterCheck);
+  receipt.observedVersionUpgrade = activeUpgrade && storeActionUpgrade(receipt.updateCheck, receipt.upgradeBaselineVersions[action], receipt.afterRestart[action]);
   await functionalProbe("retained-formatter-function-after-clean-restart", false);
   await stop(); phase("retained-Core-and-normal-Store-versions-survive-clean-restart");
   stage = "official-update-check-result";

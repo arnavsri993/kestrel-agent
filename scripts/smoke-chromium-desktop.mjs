@@ -18,6 +18,8 @@ import {assertNativeBrowserFixtureStopped,captureNativeBrowserFixtureStorage,nat
 import {candidateDigest} from './native-retirement-evidence.mjs';
 import {createIsolatedDownloadFixtures,nativeIsolatedDownloadsCanary} from './native-isolated-downloads-canary.mjs';
 import {validateDisposableNativeTestProfile} from './native-test-profile.mjs';
+import {hasSingleToolbarInvocation,invocationHistogram,readToolbarInvocation} from './native-toolbar-invocation.mjs';
+import {storeVersionIsNewer} from './native-store-version.mjs';
 import {finalizeStoreUpdateFixture} from './native-store-update-finalization.mjs';
 import {CEF_VERSION} from './prepare-native-chromium-runtime.mjs';
 
@@ -220,14 +222,14 @@ async function inspectActionPopup(endpoint, expectedUrl){
   if(!target)return{observed:false,reason:'The extension action popup target did not open.'};
   popupTargetId=target.targetId;
   const attached=await send('Target.attachToTarget',{targetId:target.targetId,flatten:true});
-  const evaluated=await send('Runtime.evaluate',{expression:'({title:document.title,body:document.body?.innerText||"",kestrel:typeof window.kestrel,nativeQuery:typeof window.__kestrelNativeQuery,nativeTransport:typeof window.__kestrelHostTransport})',returnByValue:true},attached.sessionId);
+  const evaluated=await send('Runtime.evaluate',{expression:'({title:document.title,body:document.body?.innerText||"",kestrel:typeof window.kestrel,nativeQuery:typeof window.__kestrelNativeQuery,nativeTransport:typeof window.__kestrelHostTransport,popupView:chrome.extension.getViews({type:"popup"}).includes(window)})',returnByValue:true},attached.sessionId);
   const value=evaluated.result?.value;
   const isolated=value&&value.kestrel==='undefined'&&value.nativeQuery==='undefined'&&value.nativeTransport==='undefined';
   const screenshot=await send('Page.captureScreenshot',{format:'png'},attached.sessionId).catch(()=>undefined);
   if(screenshot?.data)await writeFile(join(evidence,'native-extension-action-popup.png'),Buffer.from(screenshot.data,'base64'));
   await send('Target.detachFromTarget',{sessionId:attached.sessionId}).catch(()=>{});
   await send('Target.closeTarget',{targetId:target.targetId}).catch(()=>{});
-  return{observed:true,targetId:target.targetId,url:target.url,title:value?.title,isolated,bridgeTypes:value};
+  return{observed:true,targetId:target.targetId,url:target.url,title:value?.title,isolated,popupView:value?.popupView===true,bridgeTypes:value};
  }finally{if(popupTargetId)await send('Target.closeTarget',{targetId:popupTargetId}).catch(()=>{});for(const waiter of pending.values()){clearTimeout(waiter.timer);waiter.reject(Error('Popup inspector closed'));}socket.close();}
 }
 async function extensionTabWindowId(endpoint,targetId,url){
@@ -611,18 +613,51 @@ try{
    }
   }
   const popupPath=manifest?.action?.default_popup??manifest?.browser_action?.default_popup;
-  if(!extensionWorker||!popupPath)missing('toolbar-action-popup',!extensionWorker?'No observable extension worker was available to open the real action popup.':'Installed uBO Lite manifest does not declare a popup page.');
-  else if(!extensionWorker.evaluate)missing('toolbar-action-popup','The installed service worker cannot be inspected.');
-  else if(!Number.isSafeInteger(popupWindowId))missing('toolbar-action-popup','No actual Chrome window id was available for the popup probe.');
+  if(!popupPath||!Number.isSafeInteger(popupWindowId)||!nativeFrame)missing('toolbar-action-popup','The owned Kestrel frame, extension popup declaration and owning window are required.');
   else{
-   let actionResult;
-   try{actionResult=await extensionWorker.evaluate(async windowId=>{try{if(typeof chrome.action?.openPopup!=='function')return{ok:false,error:'chrome.action.openPopup is unavailable.'};await chrome.windows.update(windowId,{focused:true});const targetWindow=await chrome.windows.get(windowId);if(!targetWindow.focused)return{ok:false,error:'The native browser window did not become focused.'};await chrome.action.openPopup({windowId});return{ok:true,windowFocused:true,chromeWindowId:windowId};}catch(error){return{ok:false,error:String(error)};}},popupWindowId);}catch(error){actionResult={ok:false,error:String(error)};}
    const expectedPopup=new URL(popupPath,`chrome-extension://${actionExtension}/`).toString();
-   let popup;
-   if(actionResult.ok)popup=await inspectActionPopup(endpoint,expectedPopup);
-   extensionParity.checks.toolbarActionPopup=Boolean(actionResult.ok&&popup?.observed&&popup.isolated);
-   extensionParity.toolbarActionPopupEvidence={extensionId:actionExtension,actionResult,popup:popup??{observed:false,reason:'Popup action was not opened.'}};
-   if(!extensionParity.checks.toolbarActionPopup)missing('toolbar-action-popup',JSON.stringify(extensionParity.toolbarActionPopupEvidence));
+   let probeTabId,probeSession;
+   try{
+    const probeUrl=`http://127.0.0.1:${server.address().port}/canary?toolbar-popup=${Date.now()}`;
+    const probe=await home.evaluate(async ({url,windowId})=>{
+     await chrome.windows.update(windowId,{focused:true});
+     const tab=await chrome.tabs.create({url,windowId,active:true});return {id:tab.id,windowId:tab.windowId};
+    },{url:probeUrl,windowId:popupWindowId});
+    probeTabId=probe.id;assert(Number.isSafeInteger(probeTabId)&&probe.windowId===popupWindowId);
+    await home.waitForFunction(async ({id,windowId,url})=>{
+     const [active]=await chrome.tabs.query({active:true,windowId});
+     return (await chrome.windows.get(windowId)).focused&&active?.id===id&&active.url===url;
+    },{id:probeTabId,windowId:popupWindowId,url:probeUrl},{timeout:10000});
+    probeSession=await browser.newBrowserCDPSession();
+    const existing=(await probeSession.send('Target.getTargets')).targetInfos;
+    assert(!existing.some(item=>item.url===expectedPopup),'A previous popup or extension tab is already present.');
+    const before=await readToolbarInvocation(probeSession);
+    console.log('OWNED_CHROMIUM_TOOLBAR_ACTION_READY: Pin uBlock Origin Lite using Extensions, dismiss the menu, then click its pinned icon once on the active loopback page. Leave the popup open.');
+    let after,popupTarget;
+    for(let i=0;i<1800;i++){
+     assert.equal(child.exitCode,null,output);
+     const targets=(await probeSession.send('Target.getTargets')).targetInfos;
+     popupTarget=targets.find(item=>item.type==='page'&&item.url===expectedPopup);
+     if(popupTarget){
+      after=await readToolbarInvocation(probeSession);
+      if(hasSingleToolbarInvocation(before,after))break;
+      if(after.total>before.total)throw Error('Observed a popup without a single native toolbar-button invocation.');
+     }
+     await delay(250);
+    }
+    assert(popupTarget&&hasSingleToolbarInvocation(before,after),'Timed out waiting for the native pinned toolbar action.');
+    const popup=await inspectActionPopup(endpoint,expectedPopup);
+    assert(popup.observed&&popup.targetId===popupTarget.targetId&&popup.isolated&&popup.popupView,'The extension popup view did not match the new isolated target.');
+    const active=await home.evaluate(async windowId=>(await chrome.tabs.query({windowId,active:true}))[0]?.id,popupWindowId);
+    assert.equal(active,probeTabId,'The action changed the active browser tab.');
+    extensionParity.toolbarActionPopupEvidence={extensionId:actionExtension,declaredPopup:expectedPopup,popup,
+     actionResult:{ok:true,chromeWindowId:popupWindowId,activeTabId:probeTabId,histogram:invocationHistogram,bucket:1,before,after}};
+    extensionParity.checks.toolbarActionPopup=true;
+   }catch(error){missing('toolbar-action-popup',String(error));}
+   finally{
+    await probeSession?.detach().catch(()=>{});
+    if(Number.isSafeInteger(probeTabId))await home.evaluate(id=>chrome.tabs.remove(id),probeTabId).catch(()=>{});
+   }
   }
 
   let manager,managerFailure,managerState,activateManager;
@@ -699,7 +734,7 @@ try{
    extensionParity.updateCheck={extensionId:actionExtension,...updateResult,installedVersionBefore:actionInstalled.version,installedVersionAfter:actionInstalled.version};
    if(updateResult.status==='update_available'&&typeof updateResult.reportedVersion==='string'){
     for(let i=0;i<180;i++){const result=await home.evaluate(()=>window.kestrel.request({type:'browser-list-extensions'}));const current=result.extensions?.find(item=>item.id===actionExtension);if(current?.version===updateResult.reportedVersion){extensionParity.updateCheck.installedVersionAfter=current.version;break;}await delay(1000);}
-    extensionParity.checks.storeVersionUpgrade=extensionParity.updateCheck.installedVersionAfter===updateResult.reportedVersion&&extensionParity.updateCheck.installedVersionAfter!==actionInstalled.version;
+    extensionParity.checks.storeVersionUpgrade=extensionParity.updateCheck.installedVersionAfter===updateResult.reportedVersion&&storeVersionIsNewer(extensionParity.updateCheck.installedVersionAfter,actionInstalled.version);
    }else missing('published-store-version-upgrade',`Observed requestUpdateCheck status=${updateResult.status}; reportedVersion=${updateResult.reportedVersion??'none'}; no version upgrade was observed.`);
    const afterCheck=await home.evaluate(()=>window.kestrel.request({type:'browser-list-extensions'}));
    extensionParity.updateCheck.installedVersionAfter=afterCheck.extensions?.find(item=>item.id===actionExtension)?.version??extensionParity.updateCheck.installedVersionAfter;
@@ -747,11 +782,17 @@ try{
   if(!storeFormatterOnly)assert(actionInstalled?.enabled,'Chrome-installed action extension must survive full restart.');
   await formatterRuns('native-extension-functional-after-restart');
   const restartPhase={phase:'native-extension-restart',passed:true,id:installed.id,version:installed.version};
-  if(actionInstalled)restartPhase.actionExtension={id:actionInstalled.id,version:actionInstalled.version,enabled:actionInstalled.enabled};
+  let provenance;
+  if(!storeFormatterOnly){
+   provenance=await home.evaluate(ids=>Promise.all(ids.map(id=>new Promise((resolve,reject)=>chrome.management.get(id,item=>{const error=chrome.runtime.lastError;if(error)reject(Error(error.message));else resolve({id:item.id,version:item.version,enabled:item.enabled,installType:item.installType});})))),[formatter,actionExtension]);
+   assert(provenance.every(item=>item.enabled===true&&item.installType==='normal'),'Both official Store installs must remain enabled and normal after restart.');
+   assert.equal(provenance[1].id, actionInstalled.id);
+   assert.equal(provenance[1].version, actionInstalled.version);
+   restartPhase.actionExtension=provenance[1];
+  }
   receipt.phases.push(restartPhase);
-  if(receipt.extensionParity){receipt.extensionParity.checks.storePersistence=true;receipt.extensionParity.restartEvidence={extensionId:formatter,installed:true,enabled:installed.enabled,version:installed.version,functionalAfterRestart:true,actionExtension:{id:actionInstalled.id,version:actionInstalled.version,enabled:actionInstalled.enabled}};receipt.extensionParity.passed=Object.values(receipt.extensionParity.checks).every(Boolean);receipt.phases.push({phase:'native-chromium-extension-parity-final',passed:receipt.extensionParity.passed,checks:receipt.extensionParity.checks,missing:receipt.extensionParity.missing,updateCheck:receipt.extensionParity.updateCheck,restartEvidence:receipt.extensionParity.restartEvidence});}
+  if(receipt.extensionParity){receipt.extensionParity.checks.storePersistence=true;receipt.extensionParity.restartEvidence={extensionId:formatter,installed:true,enabled:installed.enabled,version:installed.version,functionalAfterRestart:true,actionExtension:restartPhase.actionExtension};receipt.extensionParity.passed=Object.values(receipt.extensionParity.checks).every(Boolean);receipt.phases.push({phase:'native-chromium-extension-parity-final',passed:receipt.extensionParity.passed,checks:receipt.extensionParity.checks,missing:receipt.extensionParity.missing,updateCheck:receipt.extensionParity.updateCheck,restartEvidence:receipt.extensionParity.restartEvidence});}
   if(retainUpdateProfile){
-   const provenance=await home.evaluate(ids=>Promise.all(ids.map(id=>new Promise((resolve,reject)=>chrome.management.get(id,item=>{const error=chrome.runtime.lastError;if(error)reject(Error(error.message));else resolve({id:item.id,version:item.version,enabled:item.enabled,installType:item.installType});})))),[formatter,actionExtension]);
    receipt.phases.push({phase:'native-store-update-fixture-provenance',passed:provenance.every(item=>item.enabled&&item.installType==='normal'),extensions:provenance});
   }
  }
